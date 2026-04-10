@@ -460,6 +460,10 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
     if (processing) return
     setProcessing(true)
 
+    // Timeout 15 detik agar tidak stuck selamanya
+    const withTimeout = (promise, ms = 15000) =>
+      Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout - cek koneksi internet')), ms))])
+
     try {
       const selectedMember = members.find(m => m.id === memberId)
       const customerName = selectedMember?.name || 'Umum'
@@ -478,23 +482,25 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
         caraBayar,
         cashier: 'user',
       }
-      await saveTransaction(tx)
 
-      // Kalau KREDIT, catat piutang
+      // Simpan transaksi + piutang secara PARALLEL
+      const saveOps = [withTimeout(saveTransaction(tx))]
       if (caraBayar === 'KREDIT' && savePiutang) {
-        await savePiutang({
+        saveOps.push(withTimeout(savePiutang({
           noNota, date: today(), memberId: memberId || null,
           customerName,
           total, dp: Number(dp) || 0, totalBayar: Number(dp) || 0,
           sisa: total - (Number(dp) || 0), status: 'KREDIT', payments: Number(dp) > 0 ? [{ date: today(), amount: Number(dp) }] : []
-        })
+        })))
       }
+      await Promise.all(saveOps)
 
-      // Kurangi stok
-      for (const item of cart) {
+      // Kurangi stok secara PARALLEL (bukan satu-satu)
+      const stockOps = cart.map(item => {
         const prod = products.find(p => p.id === item.productId)
-        if (prod) await updateProductStock(prod.id, prod.stock - item.qty)
-      }
+        return prod ? withTimeout(updateProductStock(prod.id, prod.stock - item.qty)) : null
+      }).filter(Boolean)
+      await Promise.all(stockOps)
 
       // Cetak struk otomatis
       try { cetakStruk(tx, settings, members) } catch(e) { console.log('Struk print skipped:', e) }
@@ -509,7 +515,7 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
         : 'Transaksi KREDIT dicatat. Sisa piutang: ' + formatRp(savedTotal - (Number(savedDp) || 0)))
     } catch (err) {
       console.error('Checkout error:', err)
-      showToast('Gagal menyimpan transaksi: ' + (err.message || 'Cek koneksi internet'), 'error')
+      showToast('Gagal: ' + (err.message || 'Cek koneksi internet'), 'error')
     } finally {
       setProcessing(false)
     }
