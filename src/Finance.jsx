@@ -3,6 +3,7 @@
 // Kas, Jurnal Umum, Laba Rugi, SHU, Kwitansi
 // =============================================
 import { useState, useRef } from 'react'
+import { cetakLaporanPDF } from './Extra'
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7) }
 function formatRp(n) { return 'Rp ' + Number(n || 0).toLocaleString('id-ID') }

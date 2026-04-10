@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { db } from './firebase'
 import {
-  getAll, getOne, setOne, addOne, removeOne, listenCollection, seedIfEmpty, seedInventoryIfEmpty
+  getAll, getOne, setOne, addOne, removeOne, listenCollection, seedIfEmpty, seedInventoryIfEmpty, batchSet
 } from './db'
 import { Products, Suppliers, StockIn, POS } from './Inventory'
 import { KasMasukKeluar, JurnalUmum, LabaRugi, HitungSHU, CetakKwitansi } from './Finance'
 import { ExportData, RekapBulanan, GrafikTrend, AuditTrail, createAuditLog } from './Reporting'
 import { ReturBarang, PiutangPage, HargaBertingkat, MutasiStok, SetoranHarian } from './Legacy'
+import { HutangSupplier, BackupRestore, DashboardCharts, cetakStruk, cetakLaporanPDF, KartuAnggota } from './Extra'
 import logoSrc from '/logo.png?url'
 
 // =============================================
@@ -74,6 +75,7 @@ export default function App() {
   const [piutangs, setPiutangs] = useState([])
   const [mutasis, setMutasis] = useState([])
   const [setorans, setSetorans] = useState([])
+  const [hutangs, setHutangs] = useState([])
   const [settings, setSettings] = useState({
     name: 'KOPERASI YONIF 527/BY', simpPokok: 500000, simpWajib: 100000, bungaPinjaman: 1.5, maxPinjaman: 10000000
   })
@@ -118,6 +120,7 @@ export default function App() {
         unsubs.push(listenCollection('piutangs', setPiutangs))
         unsubs.push(listenCollection('mutasis', setMutasis))
         unsubs.push(listenCollection('setorans', setSetorans))
+        unsubs.push(listenCollection('hutangs', setHutangs))
 
         try {
           const s = await Promise.race([getOne('settings', 'main'), timeout(5000)])
@@ -226,6 +229,15 @@ export default function App() {
   }
   async function saveMutasi(m) { m.id = genId(); await setOne('mutasis', m.id, m); await logAction('Mutasi', 'create', `Mutasi ${m.noMutasi}: ${m.productName} ${m.tipe} ${m.qty}`) }
   async function saveSetoran(s) { s.id = genId(); await setOne('setorans', s.id, s); await logAction('Setoran', 'create', `Setoran ${s.date}: cash=${s.penjualanCash}`) }
+  async function saveHutang(h) { h.id = genId(); await setOne('hutangs', h.id, h); await logAction('Hutang', 'create', `Hutang ${h.noFaktur}: ${h.supplierName} Rp ${h.total}`) }
+  async function bayarHutang(hutang, amount) {
+    const payments = hutang.payments || []
+    payments.push({ date: new Date().toISOString().slice(0, 10), amount })
+    const totalBayar = (hutang.totalBayar || 0) + amount
+    const sisa = hutang.total - totalBayar
+    await setOne('hutangs', hutang.id, { ...hutang, totalBayar, sisa: Math.max(0, sisa), payments })
+    await logAction('Hutang', 'bayar', `Bayar hutang ${hutang.noFaktur}: ${amount}`)
+  }
 
   // ---- Finance CRUD ----
   async function saveKas(k) { k.id = genId(); await setOne('kas', k.id, k); await logAction('Kas', 'create', `Kas ${k.type}: ${k.category} - Rp ${k.amount}`) }
@@ -284,6 +296,7 @@ export default function App() {
     { id: 'jurnal', label: 'Jurnal Umum', icon: I.chart, roles: ['admin','bendahara'] },
     { id: 'piutang', label: 'Piutang Pelanggan', icon: I.loan, roles: ['admin','bendahara'] },
     { id: 'setoran', label: 'Setoran Harian', icon: I.wallet, roles: ['admin','bendahara'] },
+    { id: 'hutang', label: 'Hutang Supplier', icon: I.truck, roles: ['admin','bendahara'] },
     { id: 'labarugi', label: 'Laba Rugi', icon: I.chart, roles: ['admin','bendahara','ketua'] },
     { id: 'shu', label: 'Hitung SHU', icon: I.loan, roles: ['admin','ketua'] },
     { id: 'kwitansi', label: 'Cetak Kwitansi', icon: I.home, roles: ['admin','bendahara','staff'] },
@@ -295,6 +308,7 @@ export default function App() {
     { id: 'audit', label: 'Audit Trail', icon: I.gear, roles: ['admin'] },
     { id: 'notif', label: 'Notifikasi', icon: I.home, roles: ['admin','bendahara','ketua'] },
     { id: '_sep4', label: 'SISTEM', sep: true, roles: ['admin'] },
+    { id: 'backup', label: 'Backup & Restore', icon: I.gear, roles: ['admin'] },
     { id: 'settings', label: 'Pengaturan', icon: I.gear, roles: ['admin'] },
   ]
   // Filter nav berdasarkan role user
@@ -372,14 +386,14 @@ export default function App() {
 
       {/* MAIN */}
       <main className="app-main" style={S.main}>
-        {page === 'dashboard' && <Dashboard {...{ totalMembers, totalSavings, totalLoansOut, members, savings, loans, getMember, setPage, products, transactions }} />}
-        {page === 'members' && <Members {...{ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings }} />}
+        {page === 'dashboard' && <Dashboard {...{ totalMembers, totalSavings, totalLoansOut, members, savings, loans, getMember, setPage, products, transactions, kasData }} />}
+        {page === 'members' && <Members {...{ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc }} />}
         {page === 'savings' && <Savings {...{ savings, saveSaving, deleteSaving, members, getMember, setModal, showToast }} />}
         {page === 'loans' && <Loans {...{ loans, saveLoan, payLoan, members, getMember, setModal, showToast, settings }} />}
         {page === 'reports' && <Reports {...{ members, savings, loans, getMember }} />}
         {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast }} />}
         {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, products, suppliers, updateProductStock, setModal, showToast }} />}
-        {page === 'pos' && <POS {...{ products, transactions, saveTransaction, updateProductStock, members, showToast, savePiutang }} />}
+        {page === 'pos' && <POS {...{ products, transactions, saveTransaction, updateProductStock, members, showToast, savePiutang, settings }} />}
         {page === 'suppliers' && <Suppliers {...{ suppliers, saveSupplier, deleteSupplier, products, setModal, showToast }} />}
         {page === 'retur' && <ReturBarang {...{ returs, saveRetur, products, suppliers, updateProductStock, setModal, showToast }} />}
         {page === 'harga' && <HargaBertingkat {...{ products, saveProduct, setModal, showToast }} />}
@@ -388,18 +402,23 @@ export default function App() {
         {page === 'jurnal' && <JurnalUmum {...{ jurnalData, saveJurnal, deleteJurnal, setModal, showToast }} />}
         {page === 'piutang' && <PiutangPage {...{ piutangs, savePiutang, bayarPiutang, members, getMember, setModal, showToast }} />}
         {page === 'setoran' && <SetoranHarian {...{ setorans, saveSetoran, transactions, kasData, loans, setModal, showToast }} />}
+        {page === 'hutang' && <HutangSupplier {...{ hutangs, saveHutang, bayarHutang, suppliers, setModal, showToast }} />}
         {page === 'labarugi' && <LabaRugi {...{ kasData, transactions, loans, products, settings }} />}
         {page === 'shu' && <HitungSHU {...{ members, savings, loans, transactions, kasData, products, settings }} />}
         {page === 'kwitansi' && <CetakKwitansi {...{ transactions, savings, loans, members, getMember, settings, setModal }} />}
         {page === 'rekap' && <RekapBulanan {...{ members, savings, loans, transactions, kasData, products, settings }} />}
         {page === 'grafik' && <GrafikTrend {...{ savings, loans, transactions, kasData, products }} />}
         {page === 'export' && <ExportData {...{ members, savings, loans, products, transactions, kasData, settings,
-          saveImportedMembers: async (items) => { for (const m of items) { await setOne('members', m.id, m) } },
-          saveImportedProducts: async (items) => { for (const p of items) { await setOne('products', p.id, p) } },
+          saveImportedMembers: async (items, onProgress) => { return await batchSet('members', items, onProgress) },
+          saveImportedProducts: async (items, onProgress) => { return await batchSet('products', items, onProgress) },
           showToast
         }} />}
         {page === 'audit' && <AuditTrail {...{ auditLogs, members, getMember }} />}
         {page === 'notif' && <NotifikasiPage loans={loans} members={members} getMember={getMember} />}
+        {page === 'backup' && <BackupRestore {...{ members, savings, loans, products, suppliers, kasData, jurnalData, transactions, settings, showToast,
+          saveImportedProducts: async (items, onProgress) => { return await batchSet('products', items, onProgress) },
+          saveImportedMembers: async (items, onProgress) => { return await batchSet('members', items, onProgress) }
+        }} />}
         {page === 'settings' && <SettingsPage {...{ settings, saveSettings, showToast, users, saveUser, deleteUser, user }} />}
       </main>
 
@@ -499,7 +518,7 @@ function LoginScreen({ onLogin }) {
 // =============================================
 // DASHBOARD
 // =============================================
-function Dashboard({ totalMembers, totalSavings, totalLoansOut, members, savings, loans, getMember, setPage, products, transactions }) {
+function Dashboard({ totalMembers, totalSavings, totalLoansOut, members, savings, loans, getMember, setPage, products, transactions, kasData }) {
   const totalInventory = products.reduce((a, p) => a + (p.stock * p.buyPrice), 0)
   const todaySales = transactions.filter(t => t.date === today()).reduce((a, t) => a + t.total, 0)
   const lowStock = products.filter(p => p.stock <= p.minStock).length
@@ -566,6 +585,9 @@ function Dashboard({ totalMembers, totalSavings, totalLoansOut, members, savings
           )}
         </div>
       </div>
+
+      {/* Grafik Detail */}
+      <DashboardCharts transactions={transactions} kasData={kasData || []} savings={savings} loans={loans} products={products} />
     </div>
   )
 }
@@ -573,7 +595,7 @@ function Dashboard({ totalMembers, totalSavings, totalLoansOut, members, savings
 // =============================================
 // MEMBERS
 // =============================================
-function Members({ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings }) {
+function Members({ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc }) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
 
@@ -623,6 +645,9 @@ function Members({ members, saveMember, deleteMember, memberSavings, memberLoans
               <td style={S.td}><span style={{ ...S.badge, background: m.status === 'active' ? 'var(--g)20' : '#eee', color: m.status === 'active' ? 'var(--g)' : '#888' }}>{m.status === 'active' ? 'Aktif' : 'Nonaktif'}</span></td>
               <td style={S.td}>
                 <button style={S.smallBtn} onClick={() => openForm(m)}>{I.edit}</button>
+                <button style={{ ...S.smallBtn, color: 'var(--b)' }} onClick={() => setModal({ title: 'Kartu Anggota - ' + m.name, content: <KartuAnggota member={m} settings={settings} logoSrc={logoSrc} /> })}>
+                  <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 10h4M7 14h2"/><circle cx="16" cy="11" r="2"/></svg>
+                </button>
                 <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus anggota ' + m.name + '?')) { await deleteMember(m.id); showToast('Anggota dihapus', 'error') } }}>{I.trash}</button>
               </td>
             </tr>

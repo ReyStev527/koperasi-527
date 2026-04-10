@@ -4,6 +4,7 @@
 // =============================================
 import { useState } from 'react'
 import { BarcodeScanner, ScanButton } from './BarcodeScanner'
+import { cetakStruk } from './Extra'
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7) }
 function formatRp(n) { return 'Rp ' + Number(n || 0).toLocaleString('id-ID') }
@@ -384,7 +385,7 @@ function StockInForm({ products, suppliers, onSave }) {
 // =============================================
 // KASIR / POS (Barang Keluar = Penjualan)
 // =============================================
-export function POS({ products, transactions, saveTransaction, updateProductStock, members, showToast, savePiutang }) {
+export function POS({ products, transactions, saveTransaction, updateProductStock, members, showToast, savePiutang, settings }) {
   const [cart, setCart] = useState([])
   const [search, setSearch] = useState('')
   const [memberId, setMemberId] = useState('')
@@ -487,6 +488,9 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
       const prod = products.find(p => p.id === item.productId)
       if (prod) await updateProductStock(prod.id, prod.stock - item.qty)
     }
+
+    // Cetak struk otomatis
+    try { cetakStruk(tx, settings, members) } catch(e) { console.log('Struk print skipped:', e) }
 
     setCart([]); setPayment(''); setDp(''); setMemberId(''); setCaraBayar('LUNAS')
     showToast(caraBayar === 'LUNAS'
@@ -643,20 +647,23 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
         /* Riwayat Penjualan */
         <div style={S.card}>
           <table style={S.table}>
-            <thead><tr>{['Tanggal', 'Pembeli', 'Item', 'Total', 'Bayar', 'Kembali'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <thead><tr>{['Tanggal', 'No Nota', 'Pembeli', 'Item', 'Total', 'Bayar', 'Kembali', 'Status'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
             <tbody>{sortedTx.map(tx => {
               const m = members.find(mm => mm.id === tx.memberId)
+              const isKredit = tx.caraBayar === 'KREDIT'
               return (
                 <tr key={tx.id} style={S.tr}>
                   <td style={S.td}>{fmtDate(tx.date)}</td>
-                  <td style={S.td}>{m?.name || 'Umum'}</td>
-                  <td style={S.td}>{tx.items.map((it, i) => <div key={i} style={{ fontSize: 12 }}>{it.name} × {it.qty}</div>)}</td>
+                  <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{tx.noNota || '-'}</td>
+                  <td style={S.td}>{m?.name || tx.customerName || 'Umum'}</td>
+                  <td style={S.td}>{(tx.items || []).map((it, i) => <div key={i} style={{ fontSize: 12 }}>{it.name} × {it.qty}{it.diskon > 0 ? ' (-' + it.diskon + '%)' : ''}</div>)}</td>
                   <td style={{ ...S.td, fontWeight: 600 }}>{formatRp(tx.total)}</td>
                   <td style={S.td}>{formatRp(tx.payment)}</td>
-                  <td style={{ ...S.td, color: 'var(--g)' }}>{formatRp(tx.change)}</td>
+                  <td style={{ ...S.td, color: isKredit ? '#e65100' : 'var(--g)' }}>{isKredit ? formatRp(tx.total - (tx.payment || 0)) : formatRp(tx.change || 0)}</td>
+                  <td style={S.td}><span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600, background: isKredit ? '#fff3e0' : '#e8f5e9', color: isKredit ? '#e65100' : '#2e7d32' }}>{isKredit ? 'KREDIT' : 'LUNAS'}</span></td>
                 </tr>
               )
-            })}{sortedTx.length === 0 && <tr><td colSpan={6} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Belum ada transaksi</td></tr>}</tbody>
+            })}{sortedTx.length === 0 && <tr><td colSpan={8} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Belum ada transaksi</td></tr>}</tbody>
           </table>
         </div>
       )}

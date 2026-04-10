@@ -32,6 +32,26 @@ export async function removeOne(col, id) {
 }
 
 // =============================================
+// BATCH WRITE (untuk import massal - max 500/batch)
+// =============================================
+export async function batchSet(col, items, onProgress) {
+  const BATCH_SIZE = 450 // Firestore max 500, pakai 450 untuk aman
+  let done = 0
+  for (let i = 0; i < items.length; i += BATCH_SIZE) {
+    const batch = writeBatch(db)
+    const chunk = items.slice(i, i + BATCH_SIZE)
+    for (const item of chunk) {
+      const ref = doc(db, col, item.id)
+      batch.set(ref, item, { merge: true })
+    }
+    await batch.commit()
+    done += chunk.length
+    if (onProgress) onProgress(done, items.length)
+  }
+  return done
+}
+
+// =============================================
 // REALTIME LISTENER
 // =============================================
 export function listenCollection(col, callback) {

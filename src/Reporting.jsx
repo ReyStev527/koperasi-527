@@ -3,6 +3,7 @@
 // Export, Rekap Bulanan, Grafik Trend, Audit Trail
 // =============================================
 import { useState, useEffect, useRef } from 'react'
+import { cetakLaporanPDF } from './Extra'
 
 function formatRp(n) { return 'Rp ' + Number(n || 0).toLocaleString('id-ID') }
 function fmtDate(d) { if (!d) return '-'; return new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) }
@@ -79,6 +80,10 @@ export function ExportData({ members, savings, loans, products, transactions, ka
     setImporting(true)
     setImportProgress('Mempersiapkan data...')
 
+    const onProgress = (done, total) => {
+      setImportProgress(`Menyimpan ke database... ${done}/${total} (${Math.round(done/total*100)}%)`)
+    }
+
     try {
       if (importType === 'members') {
         items = rows.map((r, i) => ({
@@ -90,7 +95,7 @@ export function ExportData({ members, savings, loans, products, transactions, ka
         })).filter(m => m.name)
 
         setImportProgress('Menyimpan ' + items.length + ' anggota ke database...')
-        if (saveImportedMembers) await saveImportedMembers(items)
+        if (saveImportedMembers) await saveImportedMembers(items, onProgress)
 
       } else if (importType === 'products') {
         items = rows.map((r, i) => ({
@@ -106,7 +111,7 @@ export function ExportData({ members, savings, loans, products, transactions, ka
         })).filter(p => p.name)
 
         setImportProgress('Menyimpan ' + items.length + ' produk ke database...')
-        if (saveImportedProducts) await saveImportedProducts(items)
+        if (saveImportedProducts) await saveImportedProducts(items, onProgress)
       }
 
       setImportProgress('')
@@ -274,7 +279,31 @@ export function RekapBulanan({ members, savings, loans, transactions, kasData, p
         </div>
       </div>
 
-      <button style={{ ...S.primaryBtn, marginTop: 16, justifyContent: 'center', width: '100%' }} onClick={() => window.print()}>{IC.print} Cetak Rekap</button>
+      <button style={{ ...S.primaryBtn, marginTop: 16, justifyContent: 'center', width: '100%' }} onClick={() => {
+        cetakLaporanPDF('Rekap Bulanan - ' + monthFull(m - 1) + ' ' + y,
+          ['Keterangan', 'Jumlah'],
+          [
+            ['Simpanan Masuk', formatRp(totalSimpananMasuk)],
+            ['Penarikan Simpanan', '- ' + formatRp(totalSimpananKeluar)],
+            ['Neto Simpanan', formatRp(totalSimpananMasuk - totalSimpananKeluar)],
+            ['', ''],
+            ['Angsuran Pokok', formatRp(totalAngsuranPokok)],
+            ['Pendapatan Bunga', formatRp(totalAngsuranBunga)],
+            ['Total Angsuran', formatRp(totalAngsuran)],
+            ['', ''],
+            ['Kas Masuk', formatRp(kasMasuk)],
+            ['Kas Keluar', '- ' + formatRp(kasKeluar)],
+            ['Saldo Kas', formatRp(kasMasuk - kasKeluar)],
+            ['', ''],
+            ['Jumlah Transaksi Toko', monthTx.length],
+            ['Total Penjualan', formatRp(totalPenjualan)],
+            ['Anggota Baru', newMembers],
+            ['Pinjaman Aktif', activeLoanCount],
+          ], settings,
+          'Total Pemasukan: ' + formatRp(totalSimpananMasuk + totalAngsuran + kasMasuk + totalPenjualan) +
+          ' | Total Pengeluaran: ' + formatRp(totalSimpananKeluar + kasKeluar)
+        )
+      }}>{IC.print} Cetak Rekap (PDF)</button>
     </div>
   )
 }
