@@ -56,9 +56,23 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
     })
   }
 
+  function exportCSV() {
+    const header = 'SKU,Nama Produk,Kategori,Harga Beli,Harga Jual 1,Harga Jual 2,Stok,Satuan,Min Stok,Status\n'
+    const rows = products.map(p => {
+      const status = p.stock <= 0 ? 'Habis' : p.stock <= p.minStock ? 'Menipis' : 'Aman'
+      return [p.sku, '"'+p.name+'"', p.category, p.buyPrice, p.sellPrice, p.sellPrice2||'', p.stock, p.unit, p.minStock, status].join(',')
+    }).join('\n')
+    const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'stok_barang_' + new Date().toISOString().slice(0,10) + '.csv'
+    a.click()
+    showToast('Export ' + products.length + ' produk berhasil')
+  }
+
   return (
     <div>
-      <div style={S.pageHead}><h2 style={S.title}>Stok Barang</h2><div style={{ display: 'flex', gap: 8 }}><ScanButton onClick={() => setShowScanner(true)} label="Scan" /><button style={S.primaryBtn} onClick={() => openForm(null)}>{IC.plus} Tambah Produk</button></div></div>
+      <div style={S.pageHead}><h2 style={S.title}>Stok Barang</h2><div style={{ display: 'flex', gap: 8 }}><button style={{ ...S.primaryBtn, background: '#2e7d32' }} onClick={exportCSV}><svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg> Export CSV</button><ScanButton onClick={() => setShowScanner(true)} label="Scan" /><button style={S.primaryBtn} onClick={() => openForm(null)}>{IC.plus} Tambah Produk</button></div></div>
 
       {showScanner && <BarcodeScanner onScan={(code) => { setSearch(code); setShowScanner(false); showToast('Mencari: ' + code) }} onClose={() => setShowScanner(false)} />}
 
