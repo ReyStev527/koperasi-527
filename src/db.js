@@ -31,6 +31,10 @@ export async function removeOne(col, id) {
   await deleteDoc(doc(db, col, id))
 }
 
+export async function updateField(col, id, fields) {
+  await updateDoc(doc(db, col, id), fields)
+}
+
 // =============================================
 // BATCH WRITE (untuk import massal - max 500/batch)
 // =============================================

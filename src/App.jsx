@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { db } from './firebase'
 import {
-  getAll, getOne, setOne, addOne, removeOne, listenCollection, seedIfEmpty, seedInventoryIfEmpty, batchSet
+  getAll, getOne, setOne, addOne, removeOne, listenCollection, seedIfEmpty, seedInventoryIfEmpty, batchSet, updateField
 } from './db'
 import { Products, Suppliers, StockIn, POS } from './Inventory'
 import { KasMasukKeluar, JurnalUmum, LabaRugi, HitungSHU, CetakKwitansi } from './Finance'
@@ -205,8 +205,7 @@ export default function App() {
   }
   async function deleteProduct(id) { await removeOne('products', id) }
   async function updateProductStock(id, newStock) {
-    const p = products.find(pr => pr.id === id)
-    if (p) await setOne('products', id, { ...p, stock: newStock })
+    await updateField('products', id, { stock: newStock })
   }
   async function saveSupplier(s, isEdit) {
     if (isEdit) await setOne('suppliers', s.id, s)

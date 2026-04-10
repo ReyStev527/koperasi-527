@@ -461,7 +461,7 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
     setProcessing(true)
 
     // Timeout 15 detik agar tidak stuck selamanya
-    const withTimeout = (promise, ms = 15000) =>
+    const withTimeout = (promise, ms = 30000) =>
       Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout - cek koneksi internet')), ms))])
 
     try {

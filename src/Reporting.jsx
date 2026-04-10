@@ -60,14 +60,45 @@ export function ExportData({ members, savings, loans, products, transactions, ka
     if (!file) return
     setImporting(true); setPreview(null)
     try {
-      const XLSX = await loadSheetJS()
-      const data = await file.arrayBuffer()
-      const wb = XLSX.read(data, { type: 'array' })
-      const ws = wb.Sheets[wb.SheetNames[0]]
-      const json = XLSX.utils.sheet_to_json(ws, { defval: '' })
-      if (json.length === 0) { setImporting(false); return }
-      setPreview({ headers: Object.keys(json[0]), rows: json, filename: file.name, count: json.length })
-    } catch (err) { console.error(err) }
+      const ext = file.name.split('.').pop().toLowerCase()
+
+      // Parse XML file
+      if (ext === 'xml') {
+        const text = await file.text()
+        const parser = new DOMParser()
+        const xmlDoc = parser.parseFromString(text, 'text/xml')
+        const parseError = xmlDoc.querySelector('parsererror')
+        if (parseError) { showToast('Format XML tidak valid', 'error'); setImporting(false); return }
+
+        // Ambil semua child element dari root
+        const root = xmlDoc.documentElement
+        const items = root.children
+        if (items.length === 0) { showToast('File XML kosong', 'error'); setImporting(false); return }
+
+        // Konversi XML ke JSON array
+        const json = []
+        for (let i = 0; i < items.length; i++) {
+          const row = {}
+          const children = items[i].children
+          for (let j = 0; j < children.length; j++) {
+            row[children[j].tagName] = children[j].textContent || ''
+          }
+          if (Object.keys(row).length > 0) json.push(row)
+        }
+        if (json.length === 0) { setImporting(false); return }
+        setPreview({ headers: Object.keys(json[0]), rows: json, filename: file.name, count: json.length })
+
+      } else {
+        // Parse XLSX / XLS / CSV via SheetJS
+        const XLSX = await loadSheetJS()
+        const data = await file.arrayBuffer()
+        const wb = XLSX.read(data, { type: 'array' })
+        const ws = wb.Sheets[wb.SheetNames[0]]
+        const json = XLSX.utils.sheet_to_json(ws, { defval: '' })
+        if (json.length === 0) { setImporting(false); return }
+        setPreview({ headers: Object.keys(json[0]), rows: json, filename: file.name, count: json.length })
+      }
+    } catch (err) { console.error(err); showToast('Gagal membaca file: ' + err.message, 'error') }
     setImporting(false)
   }
 
@@ -143,7 +174,7 @@ export function ExportData({ members, savings, loans, products, transactions, ka
       {tab === 'import' ? (
         <div style={S.card}>
           <h3 style={{ ...S.cardTitle, marginBottom: 12 }}>Import dari Excel / CSV</h3>
-          <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>Upload file <b>.xlsx</b>, <b>.xls</b>, atau <b>.csv</b></p>
+          <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>Upload file <b>.xlsx</b>, <b>.xls</b>, <b>.csv</b>, atau <b>.xml</b></p>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
             <label style={S.formLabel}>Tipe Data
               <select style={S.input} value={importType} onChange={e => setImportType(e.target.value)}>
@@ -151,7 +182,7 @@ export function ExportData({ members, savings, loans, products, transactions, ka
               </select>
             </label>
             <label style={S.formLabel}>Pilih File
-              <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleFile} style={{ ...S.input, padding: 8, fontSize: 13 }} />
+              <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,.xml" onChange={handleFile} style={{ ...S.input, padding: 8, fontSize: 13 }} />
             </label>
           </div>
           <div style={{ background: '#f0f7ff', borderRadius: 10, padding: '14px 16px', marginBottom: 16 }}>
