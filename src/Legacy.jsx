@@ -205,7 +205,7 @@ function BayarPiutangForm({ piutang, onSave }) {
 // =============================================
 export function HargaBertingkat({ products, saveProduct, setModal, showToast }) {
   const [search, setSearch] = useState('')
-  const filtered = products.filter(p => !search || (p.name||'').toLowerCase().includes(search.toLowerCase()) || (p.sku||'').toLowerCase().includes(search.toLowerCase()))
+  const filtered = products.filter(p => !search || String(p.name||'').toLowerCase().includes(search.toLowerCase()) || String(p.sku||'').toLowerCase().includes(search.toLowerCase()))
 
   function editHarga(product) {
     setModal({

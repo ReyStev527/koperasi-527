@@ -37,7 +37,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   const filtered = products.filter(p => {
     if (catFilter === '_low') return p.stock <= (p.minStock || 10)
     if (catFilter !== 'all' && p.category !== catFilter) return false
-    if (search && !(p.name||'').toLowerCase().includes(search.toLowerCase()) && !(p.sku||'').toLowerCase().includes(search.toLowerCase())) return false
+    if (search && !String(p.name||'').toLowerCase().includes(search.toLowerCase()) && !String(p.sku||'').toLowerCase().includes(search.toLowerCase())) return false
     return true
   })
   const totalPages = Math.ceil(filtered.length / pageSize)
@@ -397,15 +397,15 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   const [dp, setDp] = useState('')
 
   const filteredProducts = products.filter(p =>
-    p.stock > 0 && (search === '' || (p.name||'').toLowerCase().includes(search.toLowerCase()) || (p.sku||'').toLowerCase().includes(search.toLowerCase()))
+    p.stock > 0 && (search === '' || String(p.name||'').toLowerCase().includes(search.toLowerCase()) || String(p.sku||'').toLowerCase().includes(search.toLowerCase()))
   )
 
   function handleBarcodeScan(code) {
     // Cari produk berdasarkan SKU atau nama
     const found = products.find(p =>
-      (p.sku||'').toLowerCase() === code.toLowerCase() ||
-      (p.name||'').toLowerCase() === code.toLowerCase() ||
-      (p.sku||'').toLowerCase().includes(code.toLowerCase())
+      String(p.sku||'').toLowerCase() === code.toLowerCase() ||
+      String(p.name||'').toLowerCase() === code.toLowerCase() ||
+      String(p.sku||'').toLowerCase().includes(code.toLowerCase())
     )
     if (found) {
       if (found.stock <= 0) {

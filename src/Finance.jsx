@@ -567,7 +567,7 @@ function ReceiptView({ receipt, member, settings }) {
 
         <table style={{ width: '100%', fontSize: 12 }}>
           <tbody>
-            <tr><td>No</td><td style={{ textAlign: 'right' }}>{(receipt.id||'').toUpperCase()}</td></tr>
+            <tr><td>No</td><td style={{ textAlign: 'right' }}>{String(receipt.id||'').toUpperCase()}</td></tr>
             <tr><td>Tanggal</td><td style={{ textAlign: 'right' }}>{fmtDate(receipt.date)}</td></tr>
             <tr><td>Diterima dari</td><td style={{ textAlign: 'right' }}>{member?.name || 'Umum'}</td></tr>
             <tr><td>Tipe</td><td style={{ textAlign: 'right', textTransform: 'capitalize' }}>{receipt.type}</td></tr>
