@@ -29,13 +29,18 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   const [search, setSearch] = useState('')
   const [catFilter, setCatFilter] = useState('all')
   const [showScanner, setShowScanner] = useState(false)
+  const [page_, setPage_] = useState(1)
+  const pageSize = 50
 
   const categories = [...new Set(products.map(p => p.category))].sort()
   const filtered = products.filter(p => {
+    if (catFilter === '_low') return p.stock <= (p.minStock || 10)
     if (catFilter !== 'all' && p.category !== catFilter) return false
     if (search && !p.name.toLowerCase().includes(search.toLowerCase()) && !p.sku.toLowerCase().includes(search.toLowerCase())) return false
     return true
   })
+  const totalPages = Math.ceil(filtered.length / pageSize)
+  const paginated = filtered.slice((page_ - 1) * pageSize, page_ * pageSize)
 
   const totalValue = products.reduce((a, p) => a + (p.stock * p.buyPrice), 0)
   const lowStock = products.filter(p => p.stock <= p.minStock)
@@ -85,26 +90,47 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
         </div>
       </div>
 
-      {lowStock.length > 0 && (
+      {lowStock.length > 0 && lowStock.length <= 10 && (
         <div style={{ background: '#fff3e0', border: '1px solid #ffe0b2', borderRadius: 10, padding: '12px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#e65100' }}>
           {IC.warn} <strong>Stok menipis:</strong> {lowStock.map(p => p.name).join(', ')}
         </div>
       )}
+      {lowStock.length > 10 && (
+        <div style={{ background: '#fff3e0', border: '1px solid #ffe0b2', borderRadius: 10, padding: '12px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#e65100' }}>
+          {IC.warn} <strong>{lowStock.length} produk stok menipis!</strong> Gunakan filter "Stok Menipis" untuk melihat detail.
+        </div>
+      )}
 
       <div style={S.toolbar}>
-        <div style={S.searchBox}>{IC.search}<input style={S.searchInput} placeholder="Cari produk / SKU..." value={search} onChange={e => setSearch(e.target.value)} /></div>
-        <div style={S.filterGroup}>
-          <button style={{ ...S.filterBtn, ...(catFilter === 'all' ? S.filterActive : {}) }} onClick={() => setCatFilter('all')}>Semua</button>
-          {categories.map(c => (
-            <button key={c} style={{ ...S.filterBtn, ...(catFilter === c ? S.filterActive : {}) }} onClick={() => setCatFilter(c)}>{c}</button>
-          ))}
+        <div style={S.searchBox}>{IC.search}<input style={S.searchInput} placeholder="Cari produk / SKU..." value={search} onChange={e => { setSearch(e.target.value); setPage_(1) }} /></div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <button style={{ ...S.filterBtn, ...(catFilter === 'all' ? S.filterActive : {}) }} onClick={() => { setCatFilter('all'); setPage_(1) }}>Semua</button>
+          <button style={{ ...S.filterBtn, ...(catFilter === '_low' ? { background: '#c62828', color: '#fff', borderColor: '#c62828' } : { color: '#c62828' }) }} onClick={() => { setCatFilter('_low'); setPage_(1) }}>Stok Menipis ({lowStock.length})</button>
+          {categories.length <= 8 ? (
+            categories.map(c => <button key={c} style={{ ...S.filterBtn, ...(catFilter === c ? S.filterActive : {}) }} onClick={() => { setCatFilter(c); setPage_(1) }}>{c}</button>)
+          ) : (
+            <select style={{ ...S.input, padding: '5px 10px', fontSize: 12, minWidth: 140 }} value={catFilter === 'all' || catFilter === '_low' ? '' : catFilter} onChange={e => { setCatFilter(e.target.value || 'all'); setPage_(1) }}>
+              <option value="">-- Kategori --</option>
+              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          )}
         </div>
       </div>
 
       <div style={S.card}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <span style={{ fontSize: 13, color: '#6b7280' }}>Menampilkan {Math.min(pageSize, filtered.length - (page_ - 1) * pageSize)} dari {filtered.length} produk</span>
+          {totalPages > 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <button style={{ ...S.smallBtn, border: '1px solid #e5e7eb', borderRadius: 4, padding: '4px 8px', fontSize: 12 }} disabled={page_ <= 1} onClick={() => setPage_(page_ - 1)}>← Prev</button>
+              <span style={{ fontSize: 12, fontWeight: 600, padding: '0 8px' }}>{page_} / {totalPages}</span>
+              <button style={{ ...S.smallBtn, border: '1px solid #e5e7eb', borderRadius: 4, padding: '4px 8px', fontSize: 12 }} disabled={page_ >= totalPages} onClick={() => setPage_(page_ + 1)}>Next →</button>
+            </div>
+          )}
+        </div>
         <table style={S.table}>
           <thead><tr>{['SKU', 'Nama Produk', 'Kategori', 'Harga Beli', 'Harga Jual', 'Stok', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-          <tbody>{filtered.map(p => {
+          <tbody>{paginated.map(p => {
             const isLow = p.stock <= p.minStock
             return (
               <tr key={p.id} style={S.tr}>
@@ -126,6 +152,17 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
             )
           })}{filtered.length === 0 && <tr><td colSpan={8} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Tidak ada data</td></tr>}</tbody>
         </table>
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 4, marginTop: 16 }}>
+            <button style={{ ...S.smallBtn, border: '1px solid #e5e7eb', borderRadius: 4, padding: '4px 8px', fontSize: 12 }} disabled={page_ <= 1} onClick={() => setPage_(page_ - 1)}>← Prev</button>
+            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+              let pg = page_ <= 3 ? i + 1 : page_ >= totalPages - 2 ? totalPages - 4 + i : page_ - 2 + i
+              if (pg < 1 || pg > totalPages) return null
+              return <button key={pg} style={{ ...S.smallBtn, border: '1px solid', borderColor: pg === page_ ? '#1565c0' : '#e5e7eb', background: pg === page_ ? '#1565c0' : '#fff', color: pg === page_ ? '#fff' : '#333', borderRadius: 4, padding: '4px 10px', fontSize: 12, fontWeight: 600 }} onClick={() => setPage_(pg)}>{pg}</button>
+            })}
+            <button style={{ ...S.smallBtn, border: '1px solid #e5e7eb', borderRadius: 4, padding: '4px 8px', fontSize: 12 }} disabled={page_ >= totalPages} onClick={() => setPage_(page_ + 1)}>Next →</button>
+          </div>
+        )}
       </div>
     </div>
   )
