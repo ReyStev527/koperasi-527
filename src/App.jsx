@@ -394,8 +394,9 @@ export default function App() {
         {page === 'rekap' && <RekapBulanan {...{ members, savings, loans, transactions, kasData, products, settings }} />}
         {page === 'grafik' && <GrafikTrend {...{ savings, loans, transactions, kasData, products }} />}
         {page === 'export' && <ExportData {...{ members, savings, loans, products, transactions, kasData, settings,
-          setMembers: (fn) => { const newList = fn(members); newList.slice(members.length).forEach(m => setOne('members', m.id, m)) },
-          setProducts: (fn) => { const newList = fn(products); newList.slice(products.length).forEach(p => setOne('products', p.id, p)) }
+          saveImportedMembers: async (items) => { for (const m of items) { await setOne('members', m.id, m) } },
+          saveImportedProducts: async (items) => { for (const p of items) { await setOne('products', p.id, p) } },
+          showToast
         }} />}
         {page === 'audit' && <AuditTrail {...{ auditLogs, members, getMember }} />}
         {page === 'notif' && <NotifikasiPage loans={loans} members={members} getMember={getMember} />}

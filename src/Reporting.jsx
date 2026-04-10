@@ -18,11 +18,12 @@ const IC = {
 // =============================================
 // IMPORT & EXPORT DATA
 // =============================================
-export function ExportData({ members, savings, loans, products, transactions, kasData, settings, setMembers, setProducts }) {
+export function ExportData({ members, savings, loans, products, transactions, kasData, settings, saveImportedMembers, saveImportedProducts, showToast }) {
   const [tab, setTab] = useState('import')
   const [preview, setPreview] = useState(null)
   const [importType, setImportType] = useState('members')
   const [importing, setImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState('')
   const [exporting, setExporting] = useState(null)
   const fileRef = useRef()
 
@@ -74,32 +75,51 @@ export function ExportData({ members, savings, loans, products, transactions, ka
   async function doImport() {
     if (!preview) return
     const rows = preview.rows
-    let count = 0
-    if (importType === 'members' && setMembers) {
-      const newItems = rows.map((r, i) => ({
-        id: genId(), no: String(r['No']||r['no']||r['NO']||'').padStart(3,'0'),
-        name: r['Nama']||r['nama']||r['NAMA']||r['Name']||'',
-        phone: String(r['Telepon']||r['telepon']||r['Phone']||r['HP']||''),
-        address: r['Alamat']||r['alamat']||r['Address']||'',
-        joinDate: r['Tgl Gabung']||r['tanggal']||today(), status: 'active'
-      })).filter(m => m.name)
-      setMembers(prev => [...prev, ...newItems]); count = newItems.length
-    } else if (importType === 'products' && setProducts) {
-      const newItems = rows.map((r, i) => ({
-        id: genId(), sku: r['SKU']||r['sku']||r['Kode']||('BRG-'+String(i+1).padStart(3,'0')),
-        name: r['Nama']||r['nama']||r['Produk']||'',
-        category: r['Kategori']||r['kategori']||'Lainnya',
-        buyPrice: Number(r['Harga Beli']||r['harga_beli']||0),
-        sellPrice: Number(r['Harga Jual']||r['harga_jual']||0),
-        stock: Number(r['Stok']||r['stok']||r['Stock']||0),
-        unit: r['Satuan']||r['satuan']||r['Unit']||'pcs',
-        minStock: Number(r['Min Stok']||r['min_stok']||10), supplierId: ''
-      })).filter(p => p.name)
-      setProducts(prev => [...prev, ...newItems]); count = newItems.length
+    let items = []
+    setImporting(true)
+    setImportProgress('Mempersiapkan data...')
+
+    try {
+      if (importType === 'members') {
+        items = rows.map((r, i) => ({
+          id: genId(), no: String(r['No']||r['no']||r['NO']||i+1).padStart(3,'0'),
+          name: r['Nama']||r['nama']||r['NAMA']||r['Name']||'',
+          phone: String(r['Telepon']||r['telepon']||r['Phone']||r['HP']||''),
+          address: r['Alamat']||r['alamat']||r['Address']||'',
+          joinDate: r['Tgl Gabung']||r['tanggal']||today(), status: 'active'
+        })).filter(m => m.name)
+
+        setImportProgress('Menyimpan ' + items.length + ' anggota ke database...')
+        if (saveImportedMembers) await saveImportedMembers(items)
+
+      } else if (importType === 'products') {
+        items = rows.map((r, i) => ({
+          id: genId(), sku: r['SKU']||r['sku']||r['Kode']||r['KodeBrg']||('BRG-'+String(i+1).padStart(3,'0')),
+          name: r['Nama']||r['nama']||r['Produk']||r['NamaBrg']||'',
+          category: r['Kategori']||r['kategori']||r['Rak']||r['Jenis']||'Lainnya',
+          buyPrice: Number(r['Harga Beli']||r['harga_beli']||r['Hpp']||r['buyPrice']||0),
+          sellPrice: Number(r['Harga Jual']||r['harga_jual']||r['Harga1']||r['sellPrice']||0),
+          sellPrice2: Number(r['Harga Jual 2']||r['harga_jual_2']||r['Harga2']||r['sellPrice2']||0),
+          stock: Number(r['Stok']||r['stok']||r['Stock']||r['JmlStock']||r['stock']||0),
+          unit: r['Satuan']||r['satuan']||r['Unit']||r['Sat']||r['unit']||'pcs',
+          minStock: Number(r['Min Stok']||r['min_stok']||r['minStock']||2), supplierId: ''
+        })).filter(p => p.name)
+
+        setImportProgress('Menyimpan ' + items.length + ' produk ke database...')
+        if (saveImportedProducts) await saveImportedProducts(items)
+      }
+
+      setImportProgress('')
+      setPreview(null)
+      if (fileRef.current) fileRef.current.value = ''
+      if (showToast) showToast('Import berhasil: ' + items.length + ' data tersimpan ke database')
+    } catch (err) {
+      console.error('Import error:', err)
+      setImportProgress('Error: ' + err.message)
+      if (showToast) showToast('Import gagal: ' + err.message, 'error')
     }
-    setPreview(null)
-    if (fileRef.current) fileRef.current.value = ''
-    return count
+    setImporting(false)
+    return items.length
   }
 
   const importTemplates = [
@@ -133,7 +153,7 @@ export function ExportData({ members, savings, loans, products, transactions, ka
             <div style={{ fontSize: 12, fontWeight: 700, color: '#1565c0', marginBottom: 6 }}>Format kolom: {importTemplates.find(t => t.type === importType)?.l}</div>
             <div style={{ fontSize: 13, fontFamily: 'monospace' }}>{importTemplates.find(t => t.type === importType)?.cols}</div>
           </div>
-          {importing && <div style={{ textAlign: 'center', padding: 20, color: '#6b7280' }}>Membaca file...</div>}
+          {importing && <div style={{ textAlign: 'center', padding: 20, color: '#6b7280' }}>{importProgress || 'Membaca file...'}</div>}
           {preview && (
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
