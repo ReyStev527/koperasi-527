@@ -50,8 +50,8 @@ export function KasMasukKeluar({ kasData, saveKas, deleteKas, setModal, showToas
   if (monthFilter) filtered = filtered.filter(k => k.date.startsWith(monthFilter))
   const sorted = [...filtered].sort((a, b) => b.date.localeCompare(a.date))
 
-  const totalMasuk = kasData.filter(k => k.type === 'masuk').reduce((a, b) => a + b.amount, 0)
-  const totalKeluar = kasData.filter(k => k.type === 'keluar').reduce((a, b) => a + b.amount, 0)
+  const totalMasuk = kasData.filter(k => k.type === 'masuk').reduce((a, b) => a + (b.amount||0), 0)
+  const totalKeluar = kasData.filter(k => k.type === 'keluar').reduce((a, b) => a + (b.amount||0), 0)
   const saldo = totalMasuk - totalKeluar
 
   function openForm(type) {
@@ -202,8 +202,8 @@ export function JurnalUmum({ jurnalData, saveJurnal, deleteJurnal, setModal, sho
             <tfoot>
               <tr style={{ background: '#f5f6fa' }}>
                 <td colSpan={4} style={{ ...S.td, fontWeight: 700, textAlign: 'right' }}>TOTAL</td>
-                <td style={{ ...S.td, fontWeight: 700, color: 'var(--b)' }}>{formatRp(sorted.reduce((a, j) => a + j.entries.filter(e => e.type === 'debit').reduce((s, e) => s + e.amount, 0), 0))}</td>
-                <td style={{ ...S.td, fontWeight: 700, color: 'var(--g)' }}>{formatRp(sorted.reduce((a, j) => a + j.entries.filter(e => e.type === 'kredit').reduce((s, e) => s + e.amount, 0), 0))}</td>
+                <td style={{ ...S.td, fontWeight: 700, color: 'var(--b)' }}>{formatRp(sorted.reduce((a, j) => a + (j.entries||[]).filter(e => e.type === 'debit').reduce((s, e) => s + (e.amount||0), 0), 0))}</td>
+                <td style={{ ...S.td, fontWeight: 700, color: 'var(--g)' }}>{formatRp(sorted.reduce((a, j) => a + (j.entries||[]).filter(e => e.type === 'kredit').reduce((s, e) => s + (e.amount||0), 0), 0))}</td>
               </tr>
             </tfoot>
           )}
@@ -282,25 +282,25 @@ export function LabaRugi({ kasData, transactions, loans, products, settings }) {
 
   const monthKas = kasData.filter(k => k.date.startsWith(period))
   const monthTx = transactions.filter(t => t.date.startsWith(period))
-  const monthLoans = loans.flatMap(l => l.installments.filter(i => i.date.startsWith(period)))
+  const monthLoans = loans.flatMap(l => (l.installments||[]).filter(i => i.date.startsWith(period)))
 
   // Pendapatan
-  const pendapatanToko = monthTx.reduce((a, t) => a + t.total, 0)
+  const pendapatanToko = monthTx.reduce((a, t) => a + (t.total||0), 0)
   const hpp = monthTx.reduce((a, t) => {
-    return a + t.items.reduce((s, it) => {
+    return a + (t.items||[]).reduce((s, it) => {
       const prod = products.find(p => p.id === it.productId)
-      return s + ((prod?.buyPrice || 0) * it.qty)
+      return s + ((prod?.buyPrice || 0) * (it.qty||0))
     }, 0)
   }, 0)
   const labaKotor = pendapatanToko - hpp
-  const pendapatanBunga = monthLoans.reduce((a, i) => a + i.interest, 0)
-  const pendapatanLain = monthKas.filter(k => k.type === 'masuk' && k.category === 'Lain-lain').reduce((a, k) => a + k.amount, 0)
+  const pendapatanBunga = monthLoans.reduce((a, i) => a + (i.interest||0), 0)
+  const pendapatanLain = monthKas.filter(k => k.type === 'masuk' && k.category === 'Lain-lain').reduce((a, k) => a + (k.amount||0), 0)
   const totalPendapatan = labaKotor + pendapatanBunga + pendapatanLain
 
   // Beban
-  const bebanOps = monthKas.filter(k => k.type === 'keluar' && ['Gaji/Honor', 'Listrik/Air', 'Transport', 'Operasional'].includes(k.category)).reduce((a, k) => a + k.amount, 0)
-  const bebanAdmin = monthKas.filter(k => k.type === 'keluar' && k.category === 'Perlengkapan').reduce((a, k) => a + k.amount, 0)
-  const bebanLain = monthKas.filter(k => k.type === 'keluar' && k.category === 'Lain-lain').reduce((a, k) => a + k.amount, 0)
+  const bebanOps = monthKas.filter(k => k.type === 'keluar' && ['Gaji/Honor', 'Listrik/Air', 'Transport', 'Operasional'].includes(k.category)).reduce((a, k) => a + (k.amount||0), 0)
+  const bebanAdmin = monthKas.filter(k => k.type === 'keluar' && k.category === 'Perlengkapan').reduce((a, k) => a + (k.amount||0), 0)
+  const bebanLain = monthKas.filter(k => k.type === 'keluar' && k.category === 'Lain-lain').reduce((a, k) => a + (k.amount||0), 0)
   const totalBeban = bebanOps + bebanAdmin + bebanLain
 
   const labaBersih = totalPendapatan - totalBeban
@@ -367,16 +367,16 @@ export function HitungSHU({ members, savings, loans, transactions, kasData, prod
   const yearStr = String(year)
   const yearKas = kasData.filter(k => k.date.startsWith(yearStr))
   const yearTx = transactions.filter(t => t.date.startsWith(yearStr))
-  const yearInstallments = loans.flatMap(l => l.installments.filter(i => i.date.startsWith(yearStr)))
+  const yearInstallments = loans.flatMap(l => (l.installments||[]).filter(i => i.date.startsWith(yearStr)))
 
   // Pendapatan tahunan
-  const pendapatanToko = yearTx.reduce((a, t) => a + t.total, 0)
-  const hpp = yearTx.reduce((a, t) => a + t.items.reduce((s, it) => { const p = products.find(pr => pr.id === it.productId); return s + ((p?.buyPrice || 0) * it.qty) }, 0), 0)
+  const pendapatanToko = yearTx.reduce((a, t) => a + (t.total||0), 0)
+  const hpp = yearTx.reduce((a, t) => a + (t.items||[]).reduce((s, it) => { const p = products.find(pr => pr.id === it.productId); return s + ((p?.buyPrice || 0) * (it.qty||0)) }, 0), 0)
   const labaKotorToko = pendapatanToko - hpp
-  const pendapatanBunga = yearInstallments.reduce((a, i) => a + i.interest, 0)
-  const pendapatanLain = yearKas.filter(k => k.type === 'masuk' && k.category === 'Lain-lain').reduce((a, k) => a + k.amount, 0)
+  const pendapatanBunga = yearInstallments.reduce((a, i) => a + (i.interest||0), 0)
+  const pendapatanLain = yearKas.filter(k => k.type === 'masuk' && k.category === 'Lain-lain').reduce((a, k) => a + (k.amount||0), 0)
 
-  const totalBeban = yearKas.filter(k => k.type === 'keluar').reduce((a, k) => a + k.amount, 0)
+  const totalBeban = yearKas.filter(k => k.type === 'keluar').reduce((a, k) => a + (k.amount||0), 0)
   const shuTotal = labaKotorToko + pendapatanBunga + pendapatanLain - totalBeban
 
   // Distribusi SHU standar koperasi
@@ -392,15 +392,15 @@ export function HitungSHU({ members, savings, loans, transactions, kasData, prod
 
   // Hitung SHU per anggota
   const activeMembers = members.filter(m => m.status === 'active')
-  const totalSimpananAll = activeMembers.reduce((a, m) => a + savings.filter(s => s.memberId === m.id).reduce((s, sv) => s + sv.amount, 0), 0)
-  const totalTxAll = activeMembers.reduce((a, m) => a + yearTx.filter(t => t.memberId === m.id).reduce((s, t) => s + t.total, 0), 0)
+  const totalSimpananAll = activeMembers.reduce((a, m) => a + savings.filter(s => s.memberId === m.id).reduce((s, sv) => s + (sv.amount||0), 0), 0)
+  const totalTxAll = activeMembers.reduce((a, m) => a + yearTx.filter(t => t.memberId === m.id).reduce((s, t) => s + (t.total||0), 0), 0)
 
   const shuJasaSimpanan = shuTotal * 0.25
   const shuJasaTx = shuTotal * 0.25
 
   const perMember = activeMembers.map(m => {
-    const simpananM = savings.filter(s => s.memberId === m.id).reduce((a, s) => a + s.amount, 0)
-    const txM = yearTx.filter(t => t.memberId === m.id).reduce((a, t) => a + t.total, 0)
+    const simpananM = savings.filter(s => s.memberId === m.id).reduce((a, s) => a + (s.amount||0), 0)
+    const txM = yearTx.filter(t => t.memberId === m.id).reduce((a, t) => a + (t.total||0), 0)
     const jasaSimpanan = totalSimpananAll > 0 ? (simpananM / totalSimpananAll) * shuJasaSimpanan : 0
     const jasaTx = totalTxAll > 0 ? (txM / totalTxAll) * shuJasaTx : 0
     return { ...m, simpanan: simpananM, transaksi: txM, jasaSimpanan, jasaTx, totalSHU: jasaSimpanan + jasaTx }
@@ -567,7 +567,7 @@ function ReceiptView({ receipt, member, settings }) {
 
         <table style={{ width: '100%', fontSize: 12 }}>
           <tbody>
-            <tr><td>No</td><td style={{ textAlign: 'right' }}>{receipt.id.toUpperCase()}</td></tr>
+            <tr><td>No</td><td style={{ textAlign: 'right' }}>{(receipt.id||'').toUpperCase()}</td></tr>
             <tr><td>Tanggal</td><td style={{ textAlign: 'right' }}>{fmtDate(receipt.date)}</td></tr>
             <tr><td>Diterima dari</td><td style={{ textAlign: 'right' }}>{member?.name || 'Umum'}</td></tr>
             <tr><td>Tipe</td><td style={{ textAlign: 'right', textTransform: 'capitalize' }}>{receipt.type}</td></tr>

@@ -40,7 +40,7 @@ export function ExportData({ members, savings, loans, products, transactions, ka
 
   const exports = [
     { id: 'members', label: 'Data Anggota', desc: 'No, Nama, Telepon, Alamat, Status', run: () => exportCSV('anggota.csv', ['No','Nama','Telepon','Alamat','Tgl Gabung','Status'], members.map(m => [m.no, m.name, m.phone, m.address, m.joinDate, m.status])) },
-    { id: 'products', label: 'Stok Barang', desc: 'SKU, Nama, Harga, Stok', run: () => exportCSV('stok_barang.csv', ['SKU','Nama','Kategori','Harga Beli','Harga Jual','Stok','Satuan','Min Stok'], products.map(p => [p.sku, p.name, p.category, p.buyPrice, p.sellPrice, p.stock, p.unit, p.minStock])) },
+    { id: 'products', label: 'Stok Barang', desc: 'SKU, Nama, Harga Beli/Jual, Stok', run: () => exportCSV('stok_barang.csv', ['SKU','Nama','Kategori','Harga Beli','Harga Jual 1','Harga Jual 2','Stok','Satuan','Min Stok'], products.map(p => [p.sku, p.name, p.category, p.buyPrice, p.sellPrice, p.sellPrice2||'', p.stock, p.unit, p.minStock])) },
     { id: 'kas', label: 'Data Kas', desc: 'Kas masuk & keluar', run: () => exportCSV('kas.csv', ['Tanggal','Tipe','Kategori','Jumlah','Keterangan'], kasData.map(k => [k.date, k.type, k.category, k.amount, k.note])) },
   ]
 
@@ -200,16 +200,16 @@ export function RekapBulanan({ members, savings, loans, transactions, kasData, p
   const monthSavings = savings.filter(s => s.date.startsWith(period))
   const monthTx = transactions.filter(t => t.date.startsWith(period))
   const monthKas = kasData.filter(k => k.date.startsWith(period))
-  const monthInstallments = loans.flatMap(l => l.installments.filter(i => i.date.startsWith(period)))
+  const monthInstallments = loans.flatMap(l => (l.installments||[]).filter(i => i.date.startsWith(period)))
 
-  const totalSimpananMasuk = monthSavings.filter(s => s.amount > 0).reduce((a, s) => a + s.amount, 0)
-  const totalSimpananKeluar = monthSavings.filter(s => s.amount < 0).reduce((a, s) => a + Math.abs(s.amount), 0)
-  const totalPenjualan = monthTx.reduce((a, t) => a + t.total, 0)
-  const totalAngsuran = monthInstallments.reduce((a, i) => a + i.amount, 0)
-  const totalAngsuranPokok = monthInstallments.reduce((a, i) => a + i.principal, 0)
-  const totalAngsuranBunga = monthInstallments.reduce((a, i) => a + i.interest, 0)
-  const kasMasuk = monthKas.filter(k => k.type === 'masuk').reduce((a, k) => a + k.amount, 0)
-  const kasKeluar = monthKas.filter(k => k.type === 'keluar').reduce((a, k) => a + k.amount, 0)
+  const totalSimpananMasuk = monthSavings.filter(s => (s.amount||0) > 0).reduce((a, s) => a + (s.amount||0), 0)
+  const totalSimpananKeluar = monthSavings.filter(s => (s.amount||0) < 0).reduce((a, s) => a + Math.abs(s.amount||0), 0)
+  const totalPenjualan = monthTx.reduce((a, t) => a + (t.total||0), 0)
+  const totalAngsuran = monthInstallments.reduce((a, i) => a + (i.amount||0), 0)
+  const totalAngsuranPokok = monthInstallments.reduce((a, i) => a + (i.principal||0), 0)
+  const totalAngsuranBunga = monthInstallments.reduce((a, i) => a + (i.interest||0), 0)
+  const kasMasuk = monthKas.filter(k => k.type === 'masuk').reduce((a, k) => a + (k.amount||0), 0)
+  const kasKeluar = monthKas.filter(k => k.type === 'keluar').reduce((a, k) => a + (k.amount||0), 0)
   const newMembers = members.filter(m => m.joinDate.startsWith(period)).length
   const activeLoanCount = loans.filter(l => l.status === 'active').length
 
@@ -320,13 +320,13 @@ export function GrafikTrend({ savings, loans, transactions, kasData, products })
   const monthlyData = months.map(m => {
     const mm = String(m + 1).padStart(2, '0')
     const prefix = `${yearStr}-${mm}`
-    const simpanan = savings.filter(s => s.date.startsWith(prefix) && s.amount > 0).reduce((a, s) => a + s.amount, 0)
-    const penjualan = transactions.filter(t => t.date.startsWith(prefix)).reduce((a, t) => a + t.total, 0)
-    const angsuran = loans.flatMap(l => l.installments.filter(i => i.date.startsWith(prefix))).reduce((a, i) => a + i.amount, 0)
-    const kasM = kasData.filter(k => k.date.startsWith(prefix) && k.type === 'masuk').reduce((a, k) => a + k.amount, 0)
-    const kasK = kasData.filter(k => k.date.startsWith(prefix) && k.type === 'keluar').reduce((a, k) => a + k.amount, 0)
+    const simpanan = savings.filter(s => s.date.startsWith(prefix) && (s.amount||0) > 0).reduce((a, s) => a + (s.amount||0), 0)
+    const penjualan = transactions.filter(t => t.date.startsWith(prefix)).reduce((a, t) => a + (t.total||0), 0)
+    const angsuran = loans.flatMap(l => (l.installments||[]).filter(i => i.date.startsWith(prefix))).reduce((a, i) => a + (i.amount||0), 0)
+    const kasM = kasData.filter(k => k.date.startsWith(prefix) && k.type === 'masuk').reduce((a, k) => a + (k.amount||0), 0)
+    const kasK = kasData.filter(k => k.date.startsWith(prefix) && k.type === 'keluar').reduce((a, k) => a + (k.amount||0), 0)
     const hpp = transactions.filter(t => t.date.startsWith(prefix)).reduce((a, t) =>
-      a + t.items.reduce((s, it) => { const p = products.find(pr => pr.id === it.productId); return s + ((p?.buyPrice || 0) * it.qty) }, 0), 0)
+      a + (t.items||[]).reduce((s, it) => { const p = products.find(pr => pr.id === it.productId); return s + ((p?.buyPrice || 0) * (it.qty||0)) }, 0), 0)
     return { month: m, simpanan, penjualan, angsuran, kasMasuk: kasM, kasKeluar: kasK, laba: penjualan - hpp + angsuran - kasK }
   })
 
@@ -425,7 +425,7 @@ export function GrafikTrend({ savings, loans, transactions, kasData, products })
             <tr style={{ background: '#f5f6fa' }}>
               <td style={{ ...S.td, fontWeight: 700 }}>TOTAL</td>
               {datasets.map(ds => (
-                <td key={ds.key} style={{ ...S.td, fontWeight: 700, color: ds.color }}>{formatRp(monthlyData.reduce((a, d) => a + d[ds.key], 0))}</td>
+                <td key={ds.key} style={{ ...S.td, fontWeight: 700, color: ds.color }}>{formatRp(monthlyData.reduce((a, d) => a + (d[ds.key]||0), 0))}</td>
               ))}
             </tr>
           </tbody>

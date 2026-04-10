@@ -22,7 +22,7 @@ const IC = {
 export function ReturBarang({ returs, saveRetur, products, suppliers, updateProductStock, setModal, showToast }) {
   const sorted = [...returs].sort((a, b) => b.date.localeCompare(a.date))
 
-  const totalRetur = returs.reduce((a, r) => a + r.totalHarga, 0)
+  const totalRetur = returs.reduce((a, r) => a + (r.totalHarga||0), 0)
 
   function openForm() {
     setModal({
@@ -110,7 +110,7 @@ export function PiutangPage({ piutangs, savePiutang, bayarPiutang, members, getM
   if (filter === 'lunas') filtered = filtered.filter(p => p.sisa <= 0)
   const sorted = [...filtered].sort((a, b) => b.date.localeCompare(a.date))
 
-  const totalPiutang = piutangs.filter(p => p.sisa > 0).reduce((a, p) => a + p.sisa, 0)
+  const totalPiutang = piutangs.filter(p => p.sisa > 0).reduce((a, p) => a + (p.sisa||0), 0)
   const totalLunas = piutangs.filter(p => p.sisa <= 0).length
 
   function openBayar(piutang) {
@@ -205,7 +205,7 @@ function BayarPiutangForm({ piutang, onSave }) {
 // =============================================
 export function HargaBertingkat({ products, saveProduct, setModal, showToast }) {
   const [search, setSearch] = useState('')
-  const filtered = products.filter(p => !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.sku.toLowerCase().includes(search.toLowerCase()))
+  const filtered = products.filter(p => !search || (p.name||'').toLowerCase().includes(search.toLowerCase()) || (p.sku||'').toLowerCase().includes(search.toLowerCase()))
 
   function editHarga(product) {
     setModal({
@@ -383,10 +383,10 @@ export function SetoranHarian({ setorans, saveSetoran, transactions, kasData, lo
   function openForm() {
     // Hitung otomatis dari data hari ini
     const tgl = today()
-    const penjualanCash = transactions.filter(t => t.date === tgl).reduce((a, t) => a + t.total, 0)
-    const angsuran = loans.flatMap(l => l.installments.filter(i => i.date === tgl)).reduce((a, i) => a + i.amount, 0)
-    const kasMasuk = kasData.filter(k => k.date === tgl && k.type === 'masuk').reduce((a, k) => a + k.amount, 0)
-    const kasKeluar = kasData.filter(k => k.date === tgl && k.type === 'keluar').reduce((a, k) => a + k.amount, 0)
+    const penjualanCash = transactions.filter(t => t.date === tgl).reduce((a, t) => a + (t.total||0), 0)
+    const angsuran = loans.flatMap(l => (l.installments||[]).filter(i => i.date === tgl)).reduce((a, i) => a + (i.amount||0), 0)
+    const kasMasuk = kasData.filter(k => k.date === tgl && k.type === 'masuk').reduce((a, k) => a + (k.amount||0), 0)
+    const kasKeluar = kasData.filter(k => k.date === tgl && k.type === 'keluar').reduce((a, k) => a + (k.amount||0), 0)
 
     setModal({
       title: 'Catat Setoran Harian',

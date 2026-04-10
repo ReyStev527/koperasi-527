@@ -173,7 +173,7 @@ export function HutangSupplier({ hutangs, saveHutang, bayarHutang, suppliers, se
   if (filter === 'lunas') filtered = filtered.filter(h => h.sisa <= 0)
   const sorted = [...filtered].sort((a, b) => b.date.localeCompare(a.date))
 
-  const totalHutang = hutangs.filter(h => h.sisa > 0).reduce((a, h) => a + h.sisa, 0)
+  const totalHutang = hutangs.filter(h => (h.sisa||0) > 0).reduce((a, h) => a + (h.sisa||0), 0)
 
   function openBayar(hutang) {
     setModal({
@@ -386,8 +386,8 @@ export function DashboardCharts({ transactions, kasData, savings, loans, product
     label: d.slice(8, 10) + '/' + d.slice(5, 7),
     sales: transactions.filter(t => t.date === d).reduce((a, t) => a + (t.total || 0), 0),
     count: transactions.filter(t => t.date === d).length,
-    kasIn: kasData.filter(k => k.date === d && k.type === 'masuk').reduce((a, k) => a + k.amount, 0),
-    kasOut: kasData.filter(k => k.date === d && k.type === 'keluar').reduce((a, k) => a + k.amount, 0),
+    kasIn: kasData.filter(k => k.date === d && k.type === 'masuk').reduce((a, k) => a + (k.amount||0), 0),
+    kasOut: kasData.filter(k => k.date === d && k.type === 'keluar').reduce((a, k) => a + (k.amount||0), 0),
   }))
 
   const maxSales = Math.max(1, ...dailySales.map(d => d.sales))

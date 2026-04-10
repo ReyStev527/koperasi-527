@@ -41,7 +41,10 @@ export async function batchSet(col, items, onProgress) {
     const batch = writeBatch(db)
     const chunk = items.slice(i, i + BATCH_SIZE)
     for (const item of chunk) {
-      const ref = doc(db, col, item.id)
+      // Generate id jika tidak ada
+      const itemId = item.id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 7) + done)
+      item.id = itemId
+      const ref = doc(db, col, itemId)
       batch.set(ref, item, { merge: true })
     }
     await batch.commit()

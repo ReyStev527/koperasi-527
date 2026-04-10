@@ -253,10 +253,10 @@ export default function App() {
 
   // ---- Helpers ----
   const getMember = (id) => members.find(m => m.id === id)
-  const memberSavings = (mid) => savings.filter(s => s.memberId === mid).reduce((a, b) => a + b.amount, 0)
-  const memberLoans = (mid) => loans.filter(l => l.memberId === mid && l.status === 'active').reduce((a, b) => a + (b.amount - b.paid), 0)
-  const totalSavings = savings.reduce((a, b) => a + b.amount, 0)
-  const totalLoansOut = loans.filter(l => l.status === 'active').reduce((a, b) => a + (b.amount - b.paid), 0)
+  const memberSavings = (mid) => savings.filter(s => s.memberId === mid).reduce((a, b) => a + (b.amount||0), 0)
+  const memberLoans = (mid) => loans.filter(l => l.memberId === mid && l.status === 'active').reduce((a, b) => a + ((b.amount||0) - (b.paid||0)), 0)
+  const totalSavings = savings.reduce((a, b) => a + (b.amount||0), 0)
+  const totalLoansOut = loans.filter(l => l.status === 'active').reduce((a, b) => a + ((b.amount||0) - (b.paid||0)), 0)
   const totalMembers = members.filter(m => m.status === 'active').length
 
   // ---- LOADING ----
@@ -327,7 +327,7 @@ export default function App() {
   // ---- Notifikasi Jatuh Tempo ----
   const overdueLoans = loans.filter(l => {
     if (l.status !== 'active') return false
-    const lastPay = l.installments.length > 0 ? l.installments[l.installments.length - 1].date : l.date
+    const lastPay = (l.installments||[]).length > 0 ? (l.installments||[])[(l.installments||[]).length - 1].date : l.date
     const nextDue = new Date(lastPay)
     nextDue.setMonth(nextDue.getMonth() + 1)
     return new Date() > nextDue
@@ -519,9 +519,9 @@ function LoginScreen({ onLogin }) {
 // DASHBOARD
 // =============================================
 function Dashboard({ totalMembers, totalSavings, totalLoansOut, members, savings, loans, getMember, setPage, products, transactions, kasData }) {
-  const totalInventory = products.reduce((a, p) => a + (p.stock * p.buyPrice), 0)
-  const todaySales = transactions.filter(t => t.date === today()).reduce((a, t) => a + t.total, 0)
-  const lowStock = products.filter(p => p.stock <= p.minStock).length
+  const totalInventory = products.reduce((a, p) => a + ((p.stock||0) * (p.buyPrice||0)), 0)
+  const todaySales = transactions.filter(t => t.date === today()).reduce((a, t) => a + (t.total||0), 0)
+  const lowStock = products.filter(p => (p.stock||0) <= (p.minStock||2)).length
   const cards = [
     { label: 'Total Anggota', value: totalMembers, icon: I.users, color: 'var(--b)' },
     { label: 'Total Simpanan', value: formatRp(totalSavings), icon: I.wallet, color: 'var(--g)' },
@@ -680,7 +680,7 @@ function Savings({ savings, saveSaving, deleteSaving, members, getMember, setMod
   const activeMembers = members.filter(m => m.status === 'active')
   const filtered = filter === 'all' ? savings : savings.filter(s => s.type === filter)
   const sorted = [...filtered].sort((a, b) => b.date.localeCompare(a.date))
-  const totalByType = t => savings.filter(s => s.type === t).reduce((a, b) => a + b.amount, 0)
+  const totalByType = t => savings.filter(s => s.type === t).reduce((a, b) => a + (b.amount||0), 0)
 
   return (
     <div>
@@ -750,7 +750,7 @@ function SavingsForm({ members, onSave }) {
 function WithdrawForm({ members, savings, onSave }) {
   const [mid, setMid] = useState(members[0]?.id || '')
   const [amount, setAmount] = useState('')
-  const bal = savings.filter(s => s.memberId === mid && s.type === 'sukarela').reduce((a, b) => a + b.amount, 0)
+  const bal = savings.filter(s => s.memberId === mid && s.type === 'sukarela').reduce((a, b) => a + (b.amount||0), 0)
   return (
     <div style={S.form}>
       <label style={S.formLabel}>Anggota<select style={S.input} value={mid} onChange={e => setMid(e.target.value)}>{members.map(m => <option key={m.id} value={m.id}>{m.no} - {m.name}</option>)}</select></label>
@@ -852,15 +852,15 @@ function InstallmentForm({ remaining, sp, si, onSave }) {
 // REPORTS
 // =============================================
 function Reports({ members, savings, loans, getMember }) {
-  const totalSimpanan = savings.reduce((a, b) => a + b.amount, 0)
-  const totalPinjaman = loans.reduce((a, b) => a + b.amount, 0)
-  const totalDibayar = loans.reduce((a, b) => a + b.paid, 0)
-  const totalBunga = loans.reduce((a, b) => a + b.installments.reduce((x, y) => x + y.interest, 0), 0)
-  const sisaPinjaman = loans.filter(l => l.status === 'active').reduce((a, b) => a + (b.amount - b.paid), 0)
+  const totalSimpanan = savings.reduce((a, b) => a + (b.amount||0), 0)
+  const totalPinjaman = loans.reduce((a, b) => a + (b.amount||0), 0)
+  const totalDibayar = loans.reduce((a, b) => a + (b.paid||0), 0)
+  const totalBunga = loans.reduce((a, b) => a + (b.installments||[]).reduce((x, y) => x + (y.interest||0), 0), 0)
+  const sisaPinjaman = loans.filter(l => l.status === 'active').reduce((a, b) => a + ((b.amount||0) - (b.paid||0)), 0)
 
   const memberSummary = members.map(m => {
-    const sv = savings.filter(s => s.memberId === m.id).reduce((a, b) => a + b.amount, 0)
-    const ln = loans.filter(l => l.memberId === m.id && l.status === 'active').reduce((a, b) => a + (b.amount - b.paid), 0)
+    const sv = savings.filter(s => s.memberId === m.id).reduce((a, b) => a + (b.amount||0), 0)
+    const ln = loans.filter(l => l.memberId === m.id && l.status === 'active').reduce((a, b) => a + ((b.amount||0) - (b.paid||0)), 0)
     return { ...m, totalSimpanan: sv, sisaPinjaman: ln }
   }).sort((a, b) => b.totalSimpanan - a.totalSimpanan)
   const maxSv = Math.max(...memberSummary.map(m => m.totalSimpanan), 1)
@@ -983,7 +983,7 @@ function NotifikasiPage({ loans, members, getMember }) {
 
   const loanStatus = loans.filter(l => l.status === 'active').map(l => {
     const m = getMember(l.memberId)
-    const lastPay = l.installments.length > 0 ? l.installments[l.installments.length - 1].date : l.date
+    const lastPay = (l.installments||[]).length > 0 ? (l.installments||[])[(l.installments||[]).length - 1].date : l.date
     const nextDue = new Date(lastPay)
     nextDue.setMonth(nextDue.getMonth() + 1)
     const daysLeft = Math.ceil((nextDue - today) / (1000 * 60 * 60 * 24))

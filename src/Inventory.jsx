@@ -33,18 +33,18 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   const [page_, setPage_] = useState(1)
   const pageSize = 50
 
-  const categories = [...new Set(products.map(p => p.category))].sort()
+  const categories = [...new Set(products.map(p => p.category || 'Lainnya'))].filter(Boolean).sort()
   const filtered = products.filter(p => {
     if (catFilter === '_low') return p.stock <= (p.minStock || 10)
     if (catFilter !== 'all' && p.category !== catFilter) return false
-    if (search && !p.name.toLowerCase().includes(search.toLowerCase()) && !p.sku.toLowerCase().includes(search.toLowerCase())) return false
+    if (search && !(p.name||'').toLowerCase().includes(search.toLowerCase()) && !(p.sku||'').toLowerCase().includes(search.toLowerCase())) return false
     return true
   })
   const totalPages = Math.ceil(filtered.length / pageSize)
   const paginated = filtered.slice((page_ - 1) * pageSize, page_ * pageSize)
 
-  const totalValue = products.reduce((a, p) => a + (p.stock * p.buyPrice), 0)
-  const lowStock = products.filter(p => p.stock <= p.minStock)
+  const totalValue = products.reduce((a, p) => a + ((p.stock||0) * (p.buyPrice||0)), 0)
+  const lowStock = products.filter(p => (p.stock||0) <= (p.minStock||2) && p.name)
 
   function openForm(product) {
     const isEdit = !!product
@@ -280,7 +280,7 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
       content: <StockInForm products={products} suppliers={suppliers} onSave={async d => {
         await saveStockIn(d)
         // Update stok produk
-        for (const item of d.items) {
+        for (const item of (d.items||[])) {
           const prod = products.find(p => p.id === item.productId)
           if (prod) await updateProductStock(prod.id, prod.stock + item.qty)
         }
@@ -304,7 +304,7 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
                 <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 12 }}>{s.invoice}</td>
                 <td style={{ ...S.td, fontWeight: 600 }}>{sup?.name || '-'}</td>
                 <td style={S.td}>
-                  {s.items.map((it, i) => {
+                  {(s.items||[]).map((it, i) => {
                     const p = products.find(pr => pr.id === it.productId)
                     return <div key={i} style={{ fontSize: 12 }}>{p?.name || it.productId} × {it.qty}</div>
                   })}
@@ -341,7 +341,7 @@ function StockInForm({ products, suppliers, onSave }) {
     }))
   }
 
-  const total = items.reduce((a, it) => a + (it.qty * it.buyPrice), 0)
+  const total = items.reduce((a, it) => a + ((it.qty||0) * (it.buyPrice||0)), 0)
 
   return (
     <div style={S.form}>
@@ -397,15 +397,15 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   const [dp, setDp] = useState('')
 
   const filteredProducts = products.filter(p =>
-    p.stock > 0 && (search === '' || p.name.toLowerCase().includes(search.toLowerCase()) || p.sku.toLowerCase().includes(search.toLowerCase()))
+    p.stock > 0 && (search === '' || (p.name||'').toLowerCase().includes(search.toLowerCase()) || (p.sku||'').toLowerCase().includes(search.toLowerCase()))
   )
 
   function handleBarcodeScan(code) {
     // Cari produk berdasarkan SKU atau nama
     const found = products.find(p =>
-      p.sku.toLowerCase() === code.toLowerCase() ||
-      p.name.toLowerCase() === code.toLowerCase() ||
-      p.sku.toLowerCase().includes(code.toLowerCase())
+      (p.sku||'').toLowerCase() === code.toLowerCase() ||
+      (p.name||'').toLowerCase() === code.toLowerCase() ||
+      (p.sku||'').toLowerCase().includes(code.toLowerCase())
     )
     if (found) {
       if (found.stock <= 0) {
@@ -447,8 +447,8 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   }
 
   // Total setelah diskon per item
-  const totalSebelumDiskon = cart.reduce((a, c) => a + (c.price * c.qty), 0)
-  const totalDiskon = cart.reduce((a, c) => a + (c.price * c.qty * (c.diskon || 0) / 100), 0)
+  const totalSebelumDiskon = cart.reduce((a, c) => a + ((c.price||0) * (c.qty||0)), 0)
+  const totalDiskon = cart.reduce((a, c) => a + ((c.price||0) * (c.qty||0) * (c.diskon || 0) / 100), 0)
   const total = totalSebelumDiskon - totalDiskon
   const change = caraBayar === 'LUNAS' ? Number(payment) - total : Number(dp) - 0
 
@@ -599,7 +599,19 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
               </div>
 
               <label style={S.formLabel}>Pelanggan / Anggota
-                <select style={S.input} value={memberId} onChange={e => setMemberId(e.target.value)}>
+                <select style={S.input} value={memberId} onChange={e => {
+                  const newMid = e.target.value
+                  setMemberId(newMid)
+                  // Update harga di keranjang sesuai tipe pelanggan
+                  const m = members.find(x => x.id === newMid)
+                  const useH2 = m?.tingkatHrg === '2'
+                  setCart(prev => prev.map(c => {
+                    const prod = products.find(p => p.id === c.productId)
+                    if (!prod) return c
+                    const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
+                    return { ...c, price: newPrice }
+                  }))
+                }}>
                   <option value="">-- Umum (Harga Eceran) --</option>
                   {members.filter(m => m.status === 'active').map(m => <option key={m.id} value={m.id}>{m.no} - {m.name} {m.tingkatHrg === '2' ? '(Grosir)' : ''}</option>)}
                 </select>
