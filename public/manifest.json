@@ -1,0 +1,24 @@
+{
+  "name": "KOPERASI YONIF 527/BY",
+  "short_name": "Koperasi 527",
+  "description": "Sistem Manajemen Koperasi YONIF 527/BY - Baladibya Yudha",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#1565c0",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
