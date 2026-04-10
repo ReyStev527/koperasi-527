@@ -70,22 +70,52 @@ export function ExportData({ members, savings, loans, products, transactions, ka
         const parseError = xmlDoc.querySelector('parsererror')
         if (parseError) { showToast('Format XML tidak valid', 'error'); setImporting(false); return }
 
-        // Ambil semua child element dari root
-        const root = xmlDoc.documentElement
-        const items = root.children
-        if (items.length === 0) { showToast('File XML kosong', 'error'); setImporting(false); return }
+        let json = []
 
-        // Konversi XML ke JSON array
-        const json = []
-        for (let i = 0; i < items.length; i++) {
-          const row = {}
-          const children = items[i].children
-          for (let j = 0; j < children.length; j++) {
-            row[children[j].tagName] = children[j].textContent || ''
+        // Deteksi format Crystal Reports (FormattedReport / FormattedReportObject)
+        const isCrystalReport = xmlDoc.querySelector('FormattedReport') ||
+          xmlDoc.getElementsByTagNameNS('urn:crystal-reports:schemas', 'FormattedReport').length > 0
+
+        if (isCrystalReport) {
+          // Parse Crystal Reports XML
+          // Ambil semua FormattedAreaPair yang tipe Details
+          const allAreas = xmlDoc.querySelectorAll('FormattedAreaPair[Type="Details"]') ||
+            xmlDoc.getElementsByTagName('FormattedAreaPair')
+          
+          for (let i = 0; i < allAreas.length; i++) {
+            const area = allAreas[i]
+            if (area.getAttribute('Type') !== 'Details') continue
+            const fields = area.getElementsByTagName('FormattedReportObject')
+            if (fields.length === 0) continue
+
+            const row = {}
+            for (let j = 0; j < fields.length; j++) {
+              const field = fields[j]
+              let fieldName = field.getAttribute('FieldName') || ''
+              // Extract field name: {Barang.NamaBrg} → NamaBrg
+              const match = fieldName.match(/\{.*?\.(\w+)\}/)
+              const key = match ? match[1] : field.querySelector('ObjectName')?.textContent || ('field_' + j)
+              // Ambil <Value> (bukan <FormattedValue>)
+              const valEl = field.querySelector('Value')
+              row[key] = valEl ? valEl.textContent.trim() : ''
+            }
+            if (Object.keys(row).length > 0) json.push(row)
           }
-          if (Object.keys(row).length > 0) json.push(row)
+        } else {
+          // Parse XML biasa: <root><item><field>value</field></item></root>
+          const root = xmlDoc.documentElement
+          const items = root.children
+          for (let i = 0; i < items.length; i++) {
+            const row = {}
+            const children = items[i].children
+            for (let j = 0; j < children.length; j++) {
+              row[children[j].tagName] = children[j].textContent || ''
+            }
+            if (Object.keys(row).length > 0) json.push(row)
+          }
         }
-        if (json.length === 0) { setImporting(false); return }
+
+        if (json.length === 0) { showToast('Tidak ada data ditemukan di file XML', 'error'); setImporting(false); return }
         setPreview({ headers: Object.keys(json[0]), rows: json, filename: file.name, count: json.length })
 
       } else {

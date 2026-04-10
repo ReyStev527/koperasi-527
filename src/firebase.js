@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app'
-import { getFirestore } from 'firebase/firestore'
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -17,5 +17,11 @@ if (!firebaseConfig.apiKey || firebaseConfig.apiKey === 'undefined') {
 console.log('Firebase project:', firebaseConfig.projectId)
 
 const app = initializeApp(firebaseConfig)
-export const db = getFirestore(app)
+
+// Aktifkan offline persistence — write langsung ke cache lokal (instan),
+// lalu sync ke server Firestore di background.
+// Ini mencegah timeout saat koneksi lambat.
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+})
 export default app

@@ -460,10 +460,6 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
     if (processing) return
     setProcessing(true)
 
-    // Timeout 15 detik agar tidak stuck selamanya
-    const withTimeout = (promise, ms = 30000) =>
-      Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout - cek koneksi internet')), ms))])
-
     try {
       const selectedMember = members.find(m => m.id === memberId)
       const customerName = selectedMember?.name || 'Umum'
@@ -484,21 +480,21 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
       }
 
       // Simpan transaksi + piutang secara PARALLEL
-      const saveOps = [withTimeout(saveTransaction(tx))]
+      const saveOps = [saveTransaction(tx)]
       if (caraBayar === 'KREDIT' && savePiutang) {
-        saveOps.push(withTimeout(savePiutang({
+        saveOps.push(savePiutang({
           noNota, date: today(), memberId: memberId || null,
           customerName,
           total, dp: Number(dp) || 0, totalBayar: Number(dp) || 0,
           sisa: total - (Number(dp) || 0), status: 'KREDIT', payments: Number(dp) > 0 ? [{ date: today(), amount: Number(dp) }] : []
-        })))
+        }))
       }
       await Promise.all(saveOps)
 
-      // Kurangi stok secara PARALLEL (bukan satu-satu)
+      // Kurangi stok secara PARALLEL
       const stockOps = cart.map(item => {
         const prod = products.find(p => p.id === item.productId)
-        return prod ? withTimeout(updateProductStock(prod.id, prod.stock - item.qty)) : null
+        return prod ? updateProductStock(prod.id, prod.stock - item.qty) : null
       }).filter(Boolean)
       await Promise.all(stockOps)
 
