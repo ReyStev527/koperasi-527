@@ -134,6 +134,8 @@ export function ExportData({ members, savings, loans, products, transactions, ka
 
   function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7) }
 
+  const [clearBefore, setClearBefore] = useState(false)
+
   async function doImport() {
     if (!preview) return
     const rows = preview.rows
@@ -158,7 +160,8 @@ export function ExportData({ members, savings, loans, products, transactions, ka
         })).filter(m => m.name)
 
         setImportProgress('Menyimpan ' + items.length + ' anggota ke database...')
-        if (saveImportedMembers) await saveImportedMembers(items, onProgress)
+        const saved = await saveImportedMembers(items, onProgress)
+        setImportProgress(`✅ Berhasil: ${saved} anggota tersimpan ke Firestore`)
 
       } else if (importType === 'products') {
         items = rows.map((r, i) => ({
@@ -176,16 +179,22 @@ export function ExportData({ members, savings, loans, products, transactions, ka
         })).filter(p => p.name)
 
         setImportProgress('Menyimpan ' + items.length + ' produk ke database...')
-        if (saveImportedProducts) await saveImportedProducts(items, onProgress)
+        const saved = await saveImportedProducts(items, onProgress)
+        setImportProgress(`✅ Berhasil: ${saved} produk tersimpan ke Firestore`)
       }
 
-      setImportProgress('')
-      setPreview(null)
-      if (fileRef.current) fileRef.current.value = ''
-      if (showToast) showToast('Import berhasil: ' + items.length + ' data tersimpan ke database')
+      // Tandai seed sudah dijalankan agar tidak menimpa data import
+      localStorage.setItem('koperasi_seeded', 'true')
+
+      setTimeout(() => {
+        setImportProgress('')
+        setPreview(null)
+        if (fileRef.current) fileRef.current.value = ''
+      }, 2000)
+      if (showToast) showToast('Import berhasil: ' + items.length + ' data tersimpan ke Firestore! Data aman saat refresh.')
     } catch (err) {
       console.error('Import error:', err)
-      setImportProgress('Error: ' + err.message)
+      setImportProgress('❌ GAGAL: ' + err.message)
       if (showToast) showToast('Import gagal: ' + err.message, 'error')
     }
     setImporting(false)
@@ -598,6 +607,626 @@ export function createAuditLog(user, module, action, detail) {
     action,
     detail,
   }
+}
+
+// =============================================
+// LAPORAN PENJUALAN (match Kartika VB6)
+// =============================================
+export function LaporanPenjualan({ transactions, products, members, suppliers, settings, stockIn, returs }) {
+  const [tgl1, setTgl1] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0,10) })
+  const [tgl2, setTgl2] = useState(today())
+  const [tab, setTab] = useState('detail')
+  const [filterKompi, setFilterKompi] = useState('all')
+  const [filterStatus, setFilterStatus] = useState('all') // all | LUNAS | KREDIT
+  const [filterPlg, setFilterPlg] = useState('') // memberId filter
+
+  // Filter transaksi berdasarkan periode
+  const txFiltered = transactions.filter(t => {
+    if (t.date < tgl1 || t.date > tgl2) return false
+    if (filterStatus !== 'all' && (t.caraBayar||'LUNAS') !== filterStatus) return false
+    if (filterPlg && t.memberId !== filterPlg) return false
+    return true
+  }).sort((a, b) => (b.date||'').localeCompare(a.date||''))
+
+  // Lookup helpers
+  const getMember = (id) => members.find(m => m.id === id)
+  const getProduct = (id) => products.find(p => p.id === id)
+
+  // Kompi list dari members
+  const allKompi = [...new Set(members.map(m => m.kompi).filter(Boolean))].sort()
+
+  // === REKAP PER PELANGGAN ===
+  function rekapPerPelanggan() {
+    const map = {}
+    txFiltered.forEach(tx => {
+      const key = tx.memberId || '_umum'
+      if (!map[key]) {
+        const m = getMember(tx.memberId)
+        map[key] = { name: m?.name || tx.customerName || 'PELANGGAN UMUM', nrp: m?.nrp || '-', kompi: m?.kompi || '-', totalJual: 0, totalHpp: 0 }
+      }
+      map[key].totalJual += tx.total || 0
+      ;(tx.items||[]).forEach(it => {
+        const prod = getProduct(it.productId)
+        map[key].totalHpp += (prod?.buyPrice || 0) * (it.qty || 0)
+      })
+    })
+    return Object.values(map).sort((a, b) => b.totalJual - a.totalJual)
+  }
+
+  // === REKAP PER BARANG ===
+  function rekapPerBarang() {
+    const map = {}
+    txFiltered.forEach(tx => {
+      ;(tx.items||[]).forEach(it => {
+        const key = it.productId || it.name
+        if (!map[key]) {
+          const prod = getProduct(it.productId)
+          map[key] = { name: it.name, sku: prod?.sku || '-', category: prod?.category || '-', qty: 0, totalJual: 0, totalHpp: 0 }
+        }
+        map[key].qty += it.qty || 0
+        map[key].totalJual += it.subtotal || (it.price * it.qty) || 0
+        const prod = getProduct(it.productId)
+        map[key].totalHpp += (prod?.buyPrice || 0) * (it.qty || 0)
+      })
+    })
+    return Object.values(map).sort((a, b) => b.totalJual - a.totalJual)
+  }
+
+  // === REKAP PER JENIS ===
+  function rekapPerJenis() {
+    const map = {}
+    txFiltered.forEach(tx => {
+      ;(tx.items||[]).forEach(it => {
+        const prod = getProduct(it.productId)
+        const cat = prod?.category || 'Lainnya'
+        if (!map[cat]) map[cat] = { category: cat, qty: 0, totalJual: 0, totalHpp: 0 }
+        map[cat].qty += it.qty || 0
+        map[cat].totalJual += it.subtotal || (it.price * it.qty) || 0
+        map[cat].totalHpp += (prod?.buyPrice || 0) * (it.qty || 0)
+      })
+    })
+    return Object.values(map).sort((a, b) => b.totalJual - a.totalJual)
+  }
+
+  // === REKAP PER TANGGAL ===
+  function rekapPerTanggal() {
+    const map = {}
+    txFiltered.forEach(tx => {
+      const d = tx.date
+      if (!map[d]) map[d] = { date: d, count: 0, totalJual: 0, totalHpp: 0, kredit: 0, tunai: 0 }
+      map[d].count++
+      map[d].totalJual += tx.total || 0
+      if (tx.caraBayar === 'KREDIT') map[d].kredit += tx.total || 0
+      else map[d].tunai += tx.total || 0
+      ;(tx.items||[]).forEach(it => {
+        const prod = getProduct(it.productId)
+        map[d].totalHpp += (prod?.buyPrice || 0) * (it.qty || 0)
+      })
+    })
+    return Object.values(map).sort((a, b) => b.date.localeCompare(a.date))
+  }
+
+  // === REKAP PER KOMPI ===
+  function rekapPerKompi() {
+    const map = {}
+    txFiltered.forEach(tx => {
+      const m = getMember(tx.memberId)
+      const kompi = m?.kompi || 'UMUM'
+      if (!map[kompi]) map[kompi] = { kompi, count: 0, totalJual: 0, totalHpp: 0, kredit: 0, tunai: 0, members: new Set() }
+      map[kompi].count++
+      map[kompi].totalJual += tx.total || 0
+      if (tx.caraBayar === 'KREDIT') map[kompi].kredit += tx.total || 0
+      else map[kompi].tunai += tx.total || 0
+      if (tx.memberId) map[kompi].members.add(tx.memberId)
+      ;(tx.items||[]).forEach(it => {
+        const prod = getProduct(it.productId)
+        map[kompi].totalHpp += (prod?.buyPrice || 0) * (it.qty || 0)
+      })
+    })
+    return Object.values(map).map(r => ({ ...r, memberCount: r.members.size })).sort((a, b) => b.totalJual - a.totalJual)
+  }
+
+  // === REKAP ASET BARANG ===
+  function rekapAset() {
+    const cats = {}
+    products.forEach(p => {
+      const cat = p.category || 'Lainnya'
+      if (!cats[cat]) cats[cat] = { category: cat, count: 0, totalStock: 0, totalNilai: 0, totalJual: 0 }
+      cats[cat].count++
+      cats[cat].totalStock += p.stock || 0
+      cats[cat].totalNilai += (p.stock || 0) * (p.buyPrice || 0)
+      cats[cat].totalJual += (p.stock || 0) * (p.sellPrice || 0)
+    })
+    return Object.values(cats).sort((a, b) => b.totalNilai - a.totalNilai)
+  }
+
+  // === REKAP PER SUPPLIER (Penjualan) ===
+  function rekapPerSupplier() {
+    const map = {}
+    txFiltered.forEach(tx => {
+      ;(tx.items||[]).forEach(it => {
+        const prod = getProduct(it.productId)
+        const sup = prod?.supplierId ? suppliers.find(s => s.id === prod.supplierId) : null
+        const key = sup?.id || '_none'
+        if (!map[key]) map[key] = { name: sup?.name || 'Tanpa Supplier', qty: 0, totalJual: 0, totalHpp: 0 }
+        map[key].qty += it.qty || 0
+        map[key].totalJual += it.subtotal || (it.price * it.qty) || 0
+        map[key].totalHpp += (prod?.buyPrice || 0) * (it.qty || 0)
+      })
+    })
+    return Object.values(map).sort((a, b) => b.totalJual - a.totalJual)
+  }
+
+  // === REKAP BARANG MASUK ===
+  function rekapBarangMasuk() {
+    return (stockIn||[]).filter(s => s.date >= tgl1 && s.date <= tgl2).sort((a, b) => (b.date||'').localeCompare(a.date||''))
+  }
+
+  // === LAPORAN RETUR ===
+  function laporanRetur() {
+    return (returs||[]).filter(r => (r.date||'') >= tgl1 && (r.date||'') <= tgl2).sort((a, b) => (b.date||'').localeCompare(a.date||''))
+  }
+
+  // Grand totals
+  const grandJual = txFiltered.reduce((a, t) => a + (t.total||0), 0)
+  const grandHpp = txFiltered.reduce((a, t) => a + (t.items||[]).reduce((b, it) => b + ((getProduct(it.productId)?.buyPrice||0) * (it.qty||0)), 0), 0)
+  const grandLaba = grandJual - grandHpp
+  const totalKredit = txFiltered.filter(t => t.caraBayar === 'KREDIT').reduce((a, t) => a + (t.total||0), 0)
+  const totalTunai = grandJual - totalKredit
+
+  const tabs = [
+    ['detail', 'Detail Penjualan'], ['pelanggan', 'Per Pelanggan'], ['barang', 'Per Barang'],
+    ['jenis', 'Per Jenis'], ['supplier', 'Per Supplier'], ['tanggal', 'Per Tanggal'], ['kompi', 'Per Kompi'],
+    ['kredit', 'Kredit'], ['tunai', 'Tunai'], ['potongan', 'Rekap Potongan'],
+    ['masuk', 'Barang Masuk'], ['retur', 'Laporan Retur'], ['aset', 'Aset Barang']
+  ]
+
+  function handlePrint() {
+    const title = tabs.find(t => t[0] === tab)?.[1] || 'Laporan'
+    const periode = `Periode: ${fmtDate(tgl1)} s/d ${fmtDate(tgl2)}`
+    let headers = [], rows = [], summary = ''
+
+    if (tab === 'pelanggan') {
+      const data = rekapPerPelanggan()
+      headers = ['No', 'Nama Pelanggan', 'NRP', 'Total Hrg Jual', 'Total HPP', 'Total Laba']
+      rows = data.map((r, i) => [i+1, r.name, r.nrp, formatRp(r.totalJual), formatRp(r.totalHpp), formatRp(r.totalJual - r.totalHpp)])
+      summary = `Grand Total: Jual ${formatRp(grandJual)} | HPP ${formatRp(grandHpp)} | Laba ${formatRp(grandLaba)}`
+    } else if (tab === 'barang') {
+      const data = rekapPerBarang()
+      headers = ['No', 'SKU', 'Nama Barang', 'Qty', 'Total Jual', 'Total HPP', 'Laba']
+      rows = data.map((r, i) => [i+1, r.sku, r.name, r.qty, formatRp(r.totalJual), formatRp(r.totalHpp), formatRp(r.totalJual - r.totalHpp)])
+      summary = `Grand Total: Jual ${formatRp(grandJual)} | Laba ${formatRp(grandLaba)}`
+    } else if (tab === 'kompi') {
+      const data = rekapPerKompi()
+      headers = ['No', 'Kompi', 'Jml Anggota', 'Nota', 'Tunai', 'Kredit', 'Total', 'HPP', 'Laba']
+      rows = data.map((r, i) => [i+1, r.kompi, r.memberCount, r.count, formatRp(r.tunai), formatRp(r.kredit), formatRp(r.totalJual), formatRp(r.totalHpp), formatRp(r.totalJual - r.totalHpp)])
+      summary = `Grand Total: ${formatRp(grandJual)}`
+    } else if (tab === 'potongan') {
+      const kreditTx = txFiltered.filter(t => t.caraBayar === 'KREDIT')
+      const plgMap = {}
+      kreditTx.forEach(tx => {
+        const m = getMember(tx.memberId)
+        const key = tx.memberId || '_umum'
+        if (!plgMap[key]) plgMap[key] = { name: m?.name || tx.customerName || 'Umum', nrp: m?.nrp || '-', kompi: m?.kompi || '-', total: 0, count: 0 }
+        plgMap[key].total += tx.total || 0; plgMap[key].count++
+      })
+      const data = Object.values(plgMap).sort((a, b) => a.kompi.localeCompare(b.kompi) || b.total - a.total)
+      headers = ['No', 'Nama', 'NRP', 'Kompi', 'Jml Nota', 'Total Potongan']
+      rows = data.map((r, i) => [i+1, r.name, r.nrp, r.kompi, r.count, formatRp(r.total)])
+      summary = `Grand Total Potongan: ${formatRp(kreditTx.reduce((a,t) => a+(t.total||0), 0))}`
+    } else if (tab === 'supplier') {
+      const data = rekapPerSupplier()
+      headers = ['No', 'Supplier', 'Qty', 'Total Jual', 'Total HPP', 'Laba']
+      rows = data.map((r, i) => [i+1, r.name, r.qty, formatRp(r.totalJual), formatRp(r.totalHpp), formatRp(r.totalJual - r.totalHpp)])
+      summary = `Grand Total: Jual ${formatRp(grandJual)} | Laba ${formatRp(grandLaba)}`
+    } else if (tab === 'masuk') {
+      const data = rekapBarangMasuk()
+      headers = ['No', 'Tanggal', 'Invoice', 'Supplier', 'Total', 'Status']
+      rows = data.map((s, i) => { const sup = suppliers.find(sp => sp.id === s.supplierId); return [i+1, fmtDate(s.date), s.invoice||'-', sup?.name||'-', formatRp(s.total), s.caraBayar||'LUNAS'] })
+      summary = `Total Pembelian: ${formatRp(data.reduce((a,s) => a+(s.total||0), 0))}`
+    } else if (tab === 'retur') {
+      const data = laporanRetur()
+      headers = ['No', 'Tanggal', 'No Retur', 'Produk', 'Supplier', 'Qty', 'Total']
+      rows = data.map((r, i) => [i+1, fmtDate(r.date), r.noRetur||'-', r.productName||'-', r.supplierName||'-', r.qty, formatRp((r.qty||0)*(r.price||0))])
+      summary = `Total Retur: ${formatRp(data.reduce((a,r) => a+((r.qty||0)*(r.price||0)), 0))}`
+    } else if (tab === 'detail') {
+      headers = ['No', 'Tanggal', 'Nota', 'Pelanggan', 'Total', 'Status']
+      rows = txFiltered.slice(0, 500).map((tx, i) => { const m = getMember(tx.memberId); return [i+1, fmtDate(tx.date), tx.noNota||'-', m?.name||tx.customerName||'Umum', formatRp(tx.total), tx.caraBayar||'LUNAS'] })
+      summary = `Grand Total: ${formatRp(grandJual)} (${txFiltered.length} nota)`
+    } else if (tab === 'tanggal') {
+      const data = rekapPerTanggal()
+      headers = ['Tanggal', 'Nota', 'Tunai', 'Kredit', 'Total', 'HPP', 'Laba']
+      rows = data.map(r => [fmtDate(r.date), r.count, formatRp(r.tunai), formatRp(r.kredit), formatRp(r.totalJual), formatRp(r.totalHpp), formatRp(r.totalJual - r.totalHpp)])
+      summary = `Grand Total: ${formatRp(grandJual)}`
+    } else if (tab === 'jenis') {
+      const data = rekapPerJenis()
+      headers = ['No', 'Jenis', 'Qty', 'Total Jual', 'Total HPP', 'Laba']
+      rows = data.map((r, i) => [i+1, r.category, r.qty, formatRp(r.totalJual), formatRp(r.totalHpp), formatRp(r.totalJual - r.totalHpp)])
+      summary = `Grand Total: ${formatRp(grandJual)}`
+    }
+    if (headers.length) cetakLaporanPDF('Rekap Penjualan ' + title, headers, rows, settings, periode + '\n' + summary)
+  }
+
+  return (
+    <div>
+      <div style={S.pageHead}>
+        <h2 style={S.title}>Laporan Penjualan</h2>
+        <button style={S.primaryBtn} onClick={handlePrint}>🖨️ Cetak Laporan</button>
+      </div>
+
+      {/* Date range + filters */}
+      <div style={{ ...S.card, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <label style={{ fontSize: 13, fontWeight: 600 }}>Tanggal:</label>
+        <input style={{ ...S.input, width: 140, fontSize: 12 }} type="date" value={tgl1} onChange={e => setTgl1(e.target.value)} />
+        <span style={{ fontSize: 13 }}>s/d</span>
+        <input style={{ ...S.input, width: 140, fontSize: 12 }} type="date" value={tgl2} onChange={e => setTgl2(e.target.value)} />
+        <select style={{ ...S.input, width: 'auto', fontSize: 12 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+          <option value="all">Semua (Tunai + Kredit)</option>
+          <option value="LUNAS">Tunai / Lunas saja</option>
+          <option value="KREDIT">Kredit saja</option>
+        </select>
+        <select style={{ ...S.input, width: 'auto', fontSize: 12, maxWidth: 200 }} value={filterPlg} onChange={e => setFilterPlg(e.target.value)}>
+          <option value="">Semua Pelanggan</option>
+          {members.filter(m => !m.status || m.status === 'active').map(m => <option key={m.id} value={m.id}>{m.no} - {m.name}</option>)}
+        </select>
+        {filterPlg && <button style={{ ...S.filterBtn, color: '#c62828', fontSize: 11 }} onClick={() => setFilterPlg('')}>× Reset</button>}
+      </div>
+
+      {/* Summary cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 16 }}>
+        <div style={S.statCard}><div style={S.statLabel}>Total Nota</div><div style={S.statVal}>{txFiltered.length}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Total Penjualan</div><div style={{ ...S.statVal, color: '#1565c0' }}>{formatRp(grandJual)}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Total HPP</div><div style={{ ...S.statVal, color: '#e65100' }}>{formatRp(grandHpp)}</div></div>
+        <div style={S.statCard}><div style={{ ...S.statLabel }}>Total Laba</div><div style={{ ...S.statVal, color: '#2e7d32' }}>{formatRp(grandLaba)}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Tunai</div><div style={S.statVal}>{formatRp(totalTunai)}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Kredit</div><div style={{ ...S.statVal, color: '#c62828' }}>{formatRp(totalKredit)}</div></div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 16, flexWrap: 'wrap' }}>
+        {tabs.map(([k, l]) => (
+          <button key={k} style={{ ...S.filterBtn, ...(tab === k ? S.filterActive : {}) }} onClick={() => setTab(k)}>{l}</button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      <div style={S.card}>
+        {/* DETAIL PENJUALAN */}
+        {tab === 'detail' && (
+          <table style={S.table}>
+            <thead><tr>{['Tanggal', 'Nota', 'Pelanggan', 'NRP', 'Item', 'Total', 'Bayar', 'Status'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{txFiltered.slice(0, 200).map(tx => {
+              const m = getMember(tx.memberId)
+              return (<tr key={tx.id} style={S.tr}>
+                <td style={S.td}>{fmtDate(tx.date)}</td>
+                <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{tx.noNota||'-'}</td>
+                <td style={S.td}>{m?.name || tx.customerName || 'Umum'}</td>
+                <td style={{ ...S.td, fontSize: 11 }}>{m?.nrp || '-'}</td>
+                <td style={S.td}>{(tx.items||[]).map((it,i) => <div key={i} style={{ fontSize: 11 }}>{it.name} ×{it.qty}</div>)}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{formatRp(tx.total)}</td>
+                <td style={S.td}>{formatRp(tx.payment)}</td>
+                <td style={S.td}><span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600, background: tx.caraBayar === 'KREDIT' ? '#fff3e0' : '#e8f5e9', color: tx.caraBayar === 'KREDIT' ? '#e65100' : '#2e7d32' }}>{tx.caraBayar || 'LUNAS'}</span></td>
+              </tr>)
+            })}{txFiltered.length === 0 && <tr><td colSpan={8} style={S.empty}>Tidak ada transaksi</td></tr>}
+            {txFiltered.length > 200 && <tr><td colSpan={8} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Menampilkan 200 dari {txFiltered.length} transaksi</td></tr>}</tbody>
+            <tfoot><tr style={{ background: '#f5f6fa', fontWeight: 700 }}>
+              <td colSpan={5} style={{ ...S.td, textAlign: 'right' }}>GRAND TOTAL</td>
+              <td style={S.td}>{formatRp(grandJual)}</td><td colSpan={2} style={S.td}></td>
+            </tr></tfoot>
+          </table>
+        )}
+
+        {/* REKAP PER PELANGGAN */}
+        {tab === 'pelanggan' && (() => { const data = rekapPerPelanggan(); return (
+          <table style={S.table}>
+            <thead><tr>{['No', 'Nama Pelanggan', 'NRP', 'Kompi', 'Total Hrg Jual', 'Total HPP', 'Total Laba'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{data.map((r, i) => (
+              <tr key={i} style={S.tr}>
+                <td style={S.td}>{i+1}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{r.name}</td>
+                <td style={{ ...S.td, fontSize: 11, fontFamily: 'monospace' }}>{r.nrp}</td>
+                <td style={S.td}>{r.kompi}</td>
+                <td style={S.td}>{formatRp(r.totalJual)}</td>
+                <td style={S.td}>{formatRp(r.totalHpp)}</td>
+                <td style={{ ...S.td, fontWeight: 600, color: (r.totalJual - r.totalHpp) >= 0 ? '#2e7d32' : '#c62828' }}>{formatRp(r.totalJual - r.totalHpp)}</td>
+              </tr>
+            ))}{data.length === 0 && <tr><td colSpan={7} style={S.empty}>Tidak ada data</td></tr>}</tbody>
+            <tfoot><tr style={{ background: '#f5f6fa', fontWeight: 700 }}>
+              <td colSpan={4} style={{ ...S.td, textAlign: 'right' }}>GRAND TOTAL</td>
+              <td style={S.td}>{formatRp(grandJual)}</td><td style={S.td}>{formatRp(grandHpp)}</td><td style={{ ...S.td, color: '#2e7d32' }}>{formatRp(grandLaba)}</td>
+            </tr></tfoot>
+          </table>
+        )})()}
+
+        {/* REKAP PER BARANG */}
+        {tab === 'barang' && (() => { const data = rekapPerBarang(); return (
+          <table style={S.table}>
+            <thead><tr>{['No', 'SKU', 'Nama Barang', 'Kategori', 'Qty Terjual', 'Total Jual', 'Total HPP', 'Laba'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{data.map((r, i) => (
+              <tr key={i} style={S.tr}>
+                <td style={S.td}>{i+1}</td>
+                <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{r.sku}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{r.name}</td>
+                <td style={S.td}>{r.category}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{r.qty}</td>
+                <td style={S.td}>{formatRp(r.totalJual)}</td>
+                <td style={S.td}>{formatRp(r.totalHpp)}</td>
+                <td style={{ ...S.td, fontWeight: 600, color: '#2e7d32' }}>{formatRp(r.totalJual - r.totalHpp)}</td>
+              </tr>
+            ))}{data.length === 0 && <tr><td colSpan={8} style={S.empty}>Tidak ada data</td></tr>}</tbody>
+            <tfoot><tr style={{ background: '#f5f6fa', fontWeight: 700 }}>
+              <td colSpan={4} style={{ ...S.td, textAlign: 'right' }}>GRAND TOTAL</td>
+              <td style={S.td}>{data.reduce((a,r) => a+r.qty, 0)}</td><td style={S.td}>{formatRp(grandJual)}</td><td style={S.td}>{formatRp(grandHpp)}</td><td style={{ ...S.td, color: '#2e7d32' }}>{formatRp(grandLaba)}</td>
+            </tr></tfoot>
+          </table>
+        )})()}
+
+        {/* REKAP PER JENIS */}
+        {tab === 'jenis' && (() => { const data = rekapPerJenis(); return (
+          <table style={S.table}>
+            <thead><tr>{['No', 'Jenis / Kategori', 'Qty Terjual', 'Total Jual', 'Total HPP', 'Laba'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{data.map((r, i) => (
+              <tr key={i} style={S.tr}>
+                <td style={S.td}>{i+1}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{r.category}</td>
+                <td style={S.td}>{r.qty}</td>
+                <td style={S.td}>{formatRp(r.totalJual)}</td>
+                <td style={S.td}>{formatRp(r.totalHpp)}</td>
+                <td style={{ ...S.td, fontWeight: 600, color: '#2e7d32' }}>{formatRp(r.totalJual - r.totalHpp)}</td>
+              </tr>
+            ))}</tbody>
+            <tfoot><tr style={{ background: '#f5f6fa', fontWeight: 700 }}>
+              <td colSpan={2} style={{ ...S.td, textAlign: 'right' }}>GRAND TOTAL</td>
+              <td style={S.td}>{data.reduce((a,r) => a+r.qty, 0)}</td><td style={S.td}>{formatRp(grandJual)}</td><td style={S.td}>{formatRp(grandHpp)}</td><td style={{ ...S.td, color: '#2e7d32' }}>{formatRp(grandLaba)}</td>
+            </tr></tfoot>
+          </table>
+        )})()}
+
+        {/* REKAP PER TANGGAL */}
+        {tab === 'tanggal' && (() => { const data = rekapPerTanggal(); return (
+          <table style={S.table}>
+            <thead><tr>{['Tanggal', 'Jml Nota', 'Tunai', 'Kredit', 'Total Jual', 'Total HPP', 'Laba'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{data.map((r, i) => (
+              <tr key={i} style={S.tr}>
+                <td style={S.td}>{fmtDate(r.date)}</td>
+                <td style={S.td}>{r.count}</td>
+                <td style={{ ...S.td, color: '#2e7d32' }}>{formatRp(r.tunai)}</td>
+                <td style={{ ...S.td, color: '#e65100' }}>{formatRp(r.kredit)}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{formatRp(r.totalJual)}</td>
+                <td style={S.td}>{formatRp(r.totalHpp)}</td>
+                <td style={{ ...S.td, fontWeight: 600, color: '#2e7d32' }}>{formatRp(r.totalJual - r.totalHpp)}</td>
+              </tr>
+            ))}</tbody>
+            <tfoot><tr style={{ background: '#f5f6fa', fontWeight: 700 }}>
+              <td style={{ ...S.td, textAlign: 'right' }}>TOTAL</td>
+              <td style={S.td}>{txFiltered.length}</td><td style={S.td}>{formatRp(totalTunai)}</td><td style={S.td}>{formatRp(totalKredit)}</td>
+              <td style={S.td}>{formatRp(grandJual)}</td><td style={S.td}>{formatRp(grandHpp)}</td><td style={{ ...S.td, color: '#2e7d32' }}>{formatRp(grandLaba)}</td>
+            </tr></tfoot>
+          </table>
+        )})()}
+
+        {/* REKAP PER KOMPI */}
+        {tab === 'kompi' && (() => { const data = rekapPerKompi(); return (
+          <table style={S.table}>
+            <thead><tr>{['No', 'Kompi', 'Jml Anggota', 'Nota', 'Tunai', 'Kredit', 'Total Jual', 'Total HPP', 'Laba'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{data.map((r, i) => (
+              <tr key={i} style={S.tr}>
+                <td style={S.td}>{i+1}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{r.kompi}</td>
+                <td style={S.td}>{r.memberCount}</td>
+                <td style={S.td}>{r.count}</td>
+                <td style={{ ...S.td, color: '#2e7d32' }}>{formatRp(r.tunai)}</td>
+                <td style={{ ...S.td, color: '#e65100' }}>{formatRp(r.kredit)}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{formatRp(r.totalJual)}</td>
+                <td style={S.td}>{formatRp(r.totalHpp)}</td>
+                <td style={{ ...S.td, fontWeight: 600, color: '#2e7d32' }}>{formatRp(r.totalJual - r.totalHpp)}</td>
+              </tr>
+            ))}</tbody>
+            <tfoot><tr style={{ background: '#f5f6fa', fontWeight: 700 }}>
+              <td colSpan={4} style={{ ...S.td, textAlign: 'right' }}>GRAND TOTAL</td>
+              <td style={S.td}>{formatRp(totalTunai)}</td><td style={S.td}>{formatRp(totalKredit)}</td>
+              <td style={S.td}>{formatRp(grandJual)}</td><td style={S.td}>{formatRp(grandHpp)}</td><td style={{ ...S.td, color: '#2e7d32' }}>{formatRp(grandLaba)}</td>
+            </tr></tfoot>
+          </table>
+        )})()}
+
+        {/* REKAP KREDIT */}
+        {tab === 'kredit' && (() => { const kreditTx = txFiltered.filter(t => t.caraBayar === 'KREDIT'); return (
+          <table style={S.table}>
+            <thead><tr>{['Tanggal', 'Nota', 'Pelanggan', 'NRP', 'Kompi', 'Total', 'DP', 'Sisa'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{kreditTx.map(tx => {
+              const m = getMember(tx.memberId)
+              return (<tr key={tx.id} style={S.tr}>
+                <td style={S.td}>{fmtDate(tx.date)}</td>
+                <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{tx.noNota||'-'}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{m?.name || tx.customerName || 'Umum'}</td>
+                <td style={{ ...S.td, fontSize: 11 }}>{m?.nrp || '-'}</td>
+                <td style={S.td}>{m?.kompi || '-'}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{formatRp(tx.total)}</td>
+                <td style={S.td}>{formatRp(tx.payment||0)}</td>
+                <td style={{ ...S.td, color: '#c62828', fontWeight: 600 }}>{formatRp((tx.total||0) - (tx.payment||0))}</td>
+              </tr>)
+            })}{kreditTx.length === 0 && <tr><td colSpan={8} style={S.empty}>Tidak ada transaksi kredit</td></tr>}</tbody>
+            <tfoot><tr style={{ background: '#fff3e0', fontWeight: 700 }}>
+              <td colSpan={5} style={{ ...S.td, textAlign: 'right' }}>TOTAL KREDIT</td>
+              <td style={S.td}>{formatRp(totalKredit)}</td><td colSpan={2} style={{ ...S.td, color: '#c62828' }}>{kreditTx.length} nota</td>
+            </tr></tfoot>
+          </table>
+        )})()}
+
+        {/* REKAP TUNAI */}
+        {tab === 'tunai' && (() => { const tunaiTx = txFiltered.filter(t => (t.caraBayar||'LUNAS') !== 'KREDIT'); return (
+          <table style={S.table}>
+            <thead><tr>{['Tanggal', 'Nota', 'Pelanggan', 'Total', 'Bayar', 'Kembali'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{tunaiTx.slice(0, 200).map(tx => {
+              const m = getMember(tx.memberId)
+              return (<tr key={tx.id} style={S.tr}>
+                <td style={S.td}>{fmtDate(tx.date)}</td>
+                <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{tx.noNota||'-'}</td>
+                <td style={S.td}>{m?.name || tx.customerName || 'Umum'}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{formatRp(tx.total)}</td>
+                <td style={S.td}>{formatRp(tx.payment)}</td>
+                <td style={{ ...S.td, color: '#2e7d32' }}>{formatRp(tx.change||0)}</td>
+              </tr>)
+            })}{tunaiTx.length === 0 && <tr><td colSpan={6} style={S.empty}>Tidak ada transaksi tunai</td></tr>}</tbody>
+            <tfoot><tr style={{ background: '#e8f5e9', fontWeight: 700 }}>
+              <td colSpan={3} style={{ ...S.td, textAlign: 'right' }}>TOTAL TUNAI</td>
+              <td style={S.td}>{formatRp(totalTunai)}</td><td colSpan={2} style={{ ...S.td, color: '#2e7d32' }}>{tunaiTx.length} nota</td>
+            </tr></tfoot>
+          </table>
+        )})()}
+
+        {/* REKAP PER SUPPLIER */}
+        {tab === 'supplier' && (() => { const data = rekapPerSupplier(); return (
+          <table style={S.table}>
+            <thead><tr>{['No', 'Supplier', 'Qty Terjual', 'Total Jual', 'Total HPP', 'Laba'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{data.map((r, i) => (
+              <tr key={i} style={S.tr}>
+                <td style={S.td}>{i+1}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{r.name}</td>
+                <td style={S.td}>{r.qty}</td>
+                <td style={S.td}>{formatRp(r.totalJual)}</td>
+                <td style={S.td}>{formatRp(r.totalHpp)}</td>
+                <td style={{ ...S.td, fontWeight: 600, color: '#2e7d32' }}>{formatRp(r.totalJual - r.totalHpp)}</td>
+              </tr>
+            ))}{data.length === 0 && <tr><td colSpan={6} style={S.empty}>Tidak ada data</td></tr>}</tbody>
+            <tfoot><tr style={{ background: '#f5f6fa', fontWeight: 700 }}>
+              <td colSpan={2} style={{ ...S.td, textAlign: 'right' }}>GRAND TOTAL</td>
+              <td style={S.td}>{data.reduce((a,r) => a+r.qty, 0)}</td><td style={S.td}>{formatRp(grandJual)}</td><td style={S.td}>{formatRp(grandHpp)}</td><td style={{ ...S.td, color: '#2e7d32' }}>{formatRp(grandLaba)}</td>
+            </tr></tfoot>
+          </table>
+        )})()}
+
+        {/* REKAP BARANG MASUK / PENAMBAHAN STOCK */}
+        {tab === 'masuk' && (() => { const data = rekapBarangMasuk(); const totalBeli = data.reduce((a,s) => a+(s.total||0), 0); return (
+          <div>
+            <table style={S.table}>
+              <thead><tr>{['Tanggal', 'No Invoice', 'Supplier', 'Item', 'Total', 'Status'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <tbody>{data.map(s => {
+                const sup = suppliers.find(sp => sp.id === s.supplierId)
+                return (<tr key={s.id} style={S.tr}>
+                  <td style={S.td}>{fmtDate(s.date)}</td>
+                  <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{s.invoice||'-'}</td>
+                  <td style={{ ...S.td, fontWeight: 600 }}>{sup?.name || '-'}</td>
+                  <td style={S.td}>{(s.items||[]).map((it,i) => { const p = products.find(pr => pr.id === it.productId); return <div key={i} style={{ fontSize: 11 }}>{p?.name||it.productId} × {it.qty} @ {formatRp(it.buyPrice)}</div> })}</td>
+                  <td style={{ ...S.td, fontWeight: 600 }}>{formatRp(s.total)}</td>
+                  <td style={S.td}><span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600, background: s.caraBayar === 'KREDIT' ? '#fff3e0' : '#e8f5e9', color: s.caraBayar === 'KREDIT' ? '#e65100' : '#2e7d32' }}>{s.caraBayar || 'LUNAS'}</span></td>
+                </tr>)
+              })}{data.length === 0 && <tr><td colSpan={6} style={S.empty}>Tidak ada barang masuk</td></tr>}</tbody>
+              <tfoot><tr style={{ background: '#f5f6fa', fontWeight: 700 }}>
+                <td colSpan={4} style={{ ...S.td, textAlign: 'right' }}>TOTAL PEMBELIAN</td>
+                <td style={S.td}>{formatRp(totalBeli)}</td><td style={S.td}>{data.length} nota</td>
+              </tr></tfoot>
+            </table>
+          </div>
+        )})()}
+
+        {/* LAPORAN RETUR */}
+        {tab === 'retur' && (() => { const data = laporanRetur(); const totalRetur = data.reduce((a,r) => a+((r.qty||0)*(r.price||0)), 0); return (
+          <table style={S.table}>
+            <thead><tr>{['Tanggal', 'No Retur', 'Produk', 'Supplier', 'Qty', 'Harga', 'Total', 'Keterangan'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{data.map(r => (
+              <tr key={r.id} style={S.tr}>
+                <td style={S.td}>{fmtDate(r.date)}</td>
+                <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{r.noRetur||'-'}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{r.productName||'-'}</td>
+                <td style={S.td}>{r.supplierName||'-'}</td>
+                <td style={S.td}>{r.qty}</td>
+                <td style={S.td}>{formatRp(r.price||0)}</td>
+                <td style={{ ...S.td, fontWeight: 600, color: '#c62828' }}>{formatRp((r.qty||0)*(r.price||0))}</td>
+                <td style={S.td}>{r.reason||r.note||'-'}</td>
+              </tr>
+            ))}{data.length === 0 && <tr><td colSpan={8} style={S.empty}>Tidak ada retur</td></tr>}</tbody>
+            <tfoot><tr style={{ background: '#ffebee', fontWeight: 700 }}>
+              <td colSpan={6} style={{ ...S.td, textAlign: 'right' }}>TOTAL RETUR</td>
+              <td style={{ ...S.td, color: '#c62828' }}>{formatRp(totalRetur)}</td><td style={S.td}>{data.length} retur</td>
+            </tr></tfoot>
+          </table>
+        )})()}
+
+        {/* REKAP ASET BARANG */}
+        {tab === 'aset' && (() => { const data = rekapAset(); const totalNilai = data.reduce((a,r) => a+r.totalNilai, 0); const totalJual = data.reduce((a,r) => a+r.totalJual, 0); return (
+          <table style={S.table}>
+            <thead><tr>{['No', 'Kategori', 'Jml Produk', 'Total Stok', 'Nilai Beli (HPP)', 'Nilai Jual', 'Potensi Laba'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{data.map((r, i) => (
+              <tr key={i} style={S.tr}>
+                <td style={S.td}>{i+1}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{r.category}</td>
+                <td style={S.td}>{r.count}</td>
+                <td style={S.td}>{r.totalStock}</td>
+                <td style={S.td}>{formatRp(r.totalNilai)}</td>
+                <td style={S.td}>{formatRp(r.totalJual)}</td>
+                <td style={{ ...S.td, color: '#2e7d32', fontWeight: 600 }}>{formatRp(r.totalJual - r.totalNilai)}</td>
+              </tr>
+            ))}</tbody>
+            <tfoot><tr style={{ background: '#f5f6fa', fontWeight: 700 }}>
+              <td colSpan={2} style={{ ...S.td, textAlign: 'right' }}>TOTAL</td>
+              <td style={S.td}>{products.length}</td><td style={S.td}>{products.reduce((a,p) => a+(p.stock||0), 0)}</td>
+              <td style={S.td}>{formatRp(totalNilai)}</td><td style={S.td}>{formatRp(totalJual)}</td><td style={{ ...S.td, color: '#2e7d32' }}>{formatRp(totalJual - totalNilai)}</td>
+            </tr></tfoot>
+          </table>
+        )})()}
+
+        {/* REKAP POTONGAN (Potongan gaji per Kompi - kredit yang dipotong dari gaji anggota) */}
+        {tab === 'potongan' && (() => {
+          const kreditTx = txFiltered.filter(t => t.caraBayar === 'KREDIT')
+          // Group by kompi -> member
+          const kompiMap = {}
+          kreditTx.forEach(tx => {
+            const m = getMember(tx.memberId)
+            const kompi = m?.kompi || 'UMUM'
+            if (!kompiMap[kompi]) kompiMap[kompi] = {}
+            const key = tx.memberId || '_umum'
+            if (!kompiMap[kompi][key]) kompiMap[kompi][key] = { name: m?.name || tx.customerName || 'Umum', nrp: m?.nrp || '-', no: m?.no || '-', total: 0, count: 0 }
+            kompiMap[kompi][key].total += tx.total || 0
+            kompiMap[kompi][key].count++
+          })
+          const kompiList = Object.entries(kompiMap).sort((a, b) => a[0].localeCompare(b[0]))
+          const grandTotal = kreditTx.reduce((a, t) => a + (t.total||0), 0)
+          return (
+            <div>
+              <div style={{ padding: '10px 14px', background: '#fff3e0', borderRadius: 8, marginBottom: 16, fontSize: 13, color: '#e65100' }}>
+                Rekap potongan gaji anggota dari transaksi <strong>KREDIT</strong> per kompi. Periode: {fmtDate(tgl1)} s/d {fmtDate(tgl2)}
+              </div>
+              {kompiList.map(([kompi, membersMap]) => {
+                const memberList = Object.values(membersMap).sort((a, b) => b.total - a.total)
+                const kompiTotal = memberList.reduce((a, m) => a + m.total, 0)
+                return (
+                  <div key={kompi} style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, padding: '8px 12px', background: '#e3f2fd', borderRadius: '8px 8px 0 0', color: '#1565c0' }}>{kompi} — {memberList.length} anggota — Total: {formatRp(kompiTotal)}</div>
+                    <table style={S.table}>
+                      <thead><tr>{['No', 'Kode', 'Nama Anggota', 'NRP', 'Jml Nota', 'Total Potongan'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                      <tbody>{memberList.map((m, i) => (
+                        <tr key={i} style={S.tr}>
+                          <td style={S.td}>{i+1}</td>
+                          <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 12 }}>{m.no}</td>
+                          <td style={{ ...S.td, fontWeight: 600 }}>{m.name}</td>
+                          <td style={{ ...S.td, fontSize: 11 }}>{m.nrp}</td>
+                          <td style={S.td}>{m.count}</td>
+                          <td style={{ ...S.td, fontWeight: 700, color: '#c62828' }}>{formatRp(m.total)}</td>
+                        </tr>
+                      ))}</tbody>
+                      <tfoot><tr style={{ background: '#fff3e0', fontWeight: 700 }}>
+                        <td colSpan={4} style={{ ...S.td, textAlign: 'right' }}>SUBTOTAL {kompi}</td>
+                        <td style={S.td}>{memberList.reduce((a,m) => a+m.count, 0)}</td>
+                        <td style={{ ...S.td, color: '#c62828' }}>{formatRp(kompiTotal)}</td>
+                      </tr></tfoot>
+                    </table>
+                  </div>
+                )
+              })}
+              {kompiList.length === 0 && <p style={S.empty}>Tidak ada transaksi kredit dalam periode ini</p>}
+              {kompiList.length > 0 && (
+                <div style={{ padding: '12px 16px', background: '#ffebee', borderRadius: 8, fontSize: 16, fontWeight: 700, color: '#c62828', textAlign: 'center' }}>
+                  GRAND TOTAL POTONGAN: {formatRp(grandTotal)} ({kreditTx.length} nota)
+                </div>
+              )}
+            </div>
+          )
+        })()}
+      </div>
+    </div>
+  )
 }
 
 // =============================================

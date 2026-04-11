@@ -34,6 +34,8 @@ export function cetakStruk(tx, settings, members) {
     <div class="row"><span>No: ${tx.noNota || '-'}</span><span>${tx.date || today()}</span></div>
     <div>Kasir: ${tx.cashier || 'admin'}</div>
     ${member ? '<div>Pembeli: ' + member.name + '</div>' : ''}
+    ${member?.nrp ? '<div>NRP: ' + member.nrp + '</div>' : ''}
+    ${member?.kompi ? '<div>Kompi: ' + member.kompi + '</div>' : ''}
     <div class="line"></div>
     <table>
       ${(tx.items || []).map(item => {

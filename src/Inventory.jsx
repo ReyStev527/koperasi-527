@@ -194,15 +194,17 @@ function ProductForm({ initial, suppliers, jenisList, onSave }) {
         </label>
       </div>
       <label style={S.formLabel}>Nama Produk<input style={S.input} value={d.name} onChange={e => set('name', e.target.value)} /></label>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8 }}>
         <label style={S.formLabel}>Harga Beli / HPP<input style={S.input} type="number" value={d.buyPrice} onChange={e => set('buyPrice', Number(e.target.value))} /></label>
         <label style={S.formLabel}>Harga Jual 1<input style={S.input} type="number" value={d.sellPrice} onChange={e => set('sellPrice', Number(e.target.value))} /></label>
-        <label style={S.formLabel}>Harga Jual 2 (Grosir)<input style={S.input} type="number" value={d.sellPrice2||''} onChange={e => set('sellPrice2', Number(e.target.value))} placeholder="Opsional" /></label>
+        <label style={S.formLabel}>Harga Jual 2<input style={S.input} type="number" value={d.sellPrice2||''} onChange={e => set('sellPrice2', Number(e.target.value))} placeholder="Grosir" /></label>
+        <label style={S.formLabel}>Harga Jual 3<input style={S.input} type="number" value={d.sellPrice3||''} onChange={e => set('sellPrice3', Number(e.target.value))} placeholder="Khusus" /></label>
       </div>
       {margin > 0 && <div style={{ padding: '6px 12px', background: '#e8f5e9', borderRadius: 8, fontSize: 12, color: '#2e7d32' }}>Margin Harga 1: {margin}%</div>}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <label style={S.formLabel}>Batas Qty Grosir (Limit)<input style={S.input} type="number" value={d.limitQty||''} onChange={e => set('limitQty', Number(e.target.value))} placeholder="Min qty utk Harga 2" /></label>
-        <label style={S.formLabel}>Rak / Lokasi<input style={S.input} value={d.rak||''} onChange={e => set('rak', e.target.value)} placeholder="Contoh: RAK A1" /></label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>Limit Qty → Harga 2<input style={S.input} type="number" value={d.limitQty||''} onChange={e => set('limitQty', Number(e.target.value))} placeholder="Min qty" /></label>
+        <label style={S.formLabel}>Limit Qty → Harga 3<input style={S.input} type="number" value={d.limitQty3||''} onChange={e => set('limitQty3', Number(e.target.value))} placeholder="Min qty" /></label>
+        <label style={S.formLabel}>Rak / Lokasi<input style={S.input} value={d.rak||''} onChange={e => set('rak', e.target.value)} placeholder="RAK A1" /></label>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
         <label style={S.formLabel}>Stok<input style={S.input} type="number" value={d.stock} onChange={e => set('stock', Number(e.target.value))} /></label>
@@ -285,13 +287,13 @@ function SupplierForm({ initial, onSave }) {
 // =============================================
 // BARANG MASUK (Stock In)
 // =============================================
-export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProductStock, setModal, showToast }) {
+export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProductStock, setModal, showToast, saveHutang }) {
   const sorted = [...stockIn].sort((a, b) => b.date.localeCompare(a.date))
   const getSupplier = id => suppliers.find(s => s.id === id)
 
   function openForm() {
     setModal({
-      title: 'Catat Barang Masuk',
+      title: 'Catat Barang Masuk / Pembelian',
       content: <StockInForm products={products} suppliers={suppliers} onSave={async d => {
         await saveStockIn(d)
         // Update stok produk
@@ -299,20 +301,34 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
           const prod = products.find(p => p.id === item.productId)
           if (prod) await updateProductStock(prod.id, prod.stock + item.qty)
         }
+        // Jika KREDIT, catat hutang ke supplier
+        if (d.caraBayar === 'KREDIT' && saveHutang) {
+          const sup = suppliers.find(s => s.id === d.supplierId)
+          await saveHutang({
+            noFaktur: d.invoice, date: d.date, supplierId: d.supplierId,
+            supplierName: sup?.name || '-', total: d.total,
+            dp: d.dp || 0, totalBayar: d.dp || 0,
+            sisa: d.total - (d.dp || 0), status: 'KREDIT',
+            payments: d.dp > 0 ? [{ date: d.date, amount: d.dp }] : []
+          })
+        }
         setModal(null)
-        showToast('Barang masuk berhasil dicatat')
+        showToast(d.caraBayar === 'KREDIT'
+          ? 'Barang masuk dicatat (KREDIT). Hutang: ' + formatRp(d.total - (d.dp||0))
+          : 'Barang masuk berhasil dicatat (LUNAS)')
       }} />,
     })
   }
 
   return (
     <div>
-      <div style={S.pageHead}><h2 style={S.title}>Barang Masuk</h2><button style={S.primaryBtn} onClick={openForm}>{IC.plus} Catat Barang Masuk</button></div>
+      <div style={S.pageHead}><h2 style={S.title}>Barang Masuk / Pembelian</h2><button style={S.primaryBtn} onClick={openForm}>{IC.plus} Catat Barang Masuk</button></div>
       <div style={S.card}>
         <table style={S.table}>
-          <thead><tr>{['Tanggal', 'No. Invoice', 'Supplier', 'Item', 'Total', 'Catatan'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>{['Tanggal', 'No. Invoice', 'Supplier', 'Item', 'Total', 'Bayar', 'Status', 'Catatan'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
           <tbody>{sorted.map(s => {
             const sup = getSupplier(s.supplierId)
+            const isKredit = s.caraBayar === 'KREDIT'
             return (
               <tr key={s.id} style={S.tr}>
                 <td style={S.td}>{fmtDate(s.date)}</td>
@@ -325,10 +341,12 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
                   })}
                 </td>
                 <td style={{ ...S.td, fontWeight: 600, color: 'var(--b)' }}>{formatRp(s.total)}</td>
+                <td style={S.td}>{isKredit ? formatRp(s.dp||0) + ' (DP)' : formatRp(s.total)}</td>
+                <td style={S.td}><span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600, background: isKredit ? '#fff3e0' : '#e8f5e9', color: isKredit ? '#e65100' : '#2e7d32' }}>{isKredit ? 'KREDIT' : 'LUNAS'}</span></td>
                 <td style={S.td}>{s.note || '-'}</td>
               </tr>
             )
-          })}{sorted.length === 0 && <tr><td colSpan={6} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Belum ada data barang masuk</td></tr>}</tbody>
+          })}{sorted.length === 0 && <tr><td colSpan={8} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Belum ada data barang masuk</td></tr>}</tbody>
         </table>
       </div>
     </div>
@@ -340,6 +358,8 @@ function StockInForm({ products, suppliers, onSave }) {
   const [supplierId, setSupplierId] = useState(suppliers[0]?.id || '')
   const [invoice, setInvoice] = useState('INV-' + Date.now().toString().slice(-6))
   const [note, setNote] = useState('')
+  const [caraBayar, setCaraBayar] = useState('LUNAS')
+  const [dp, setDp] = useState('')
   const [items, setItems] = useState([{ productId: products[0]?.id || '', qty: 1, buyPrice: products[0]?.buyPrice || 0 }])
 
   function addItem() { setItems(prev => [...prev, { productId: products[0]?.id || '', qty: 1, buyPrice: products[0]?.buyPrice || 0 }]) }
@@ -362,7 +382,7 @@ function StockInForm({ products, suppliers, onSave }) {
     <div style={S.form}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <label style={S.formLabel}>Tanggal<input style={S.input} type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
-        <label style={S.formLabel}>No. Invoice<input style={S.input} value={invoice} onChange={e => setInvoice(e.target.value)} /></label>
+        <label style={S.formLabel}>No. Invoice / Nota Beli<input style={S.input} value={invoice} onChange={e => setInvoice(e.target.value)} /></label>
       </div>
       <label style={S.formLabel}>Supplier
         <select style={S.input} value={supplierId} onChange={e => setSupplierId(e.target.value)}>
@@ -385,13 +405,28 @@ function StockInForm({ products, suppliers, onSave }) {
       ))}
       <button style={{ ...S.filterBtn, width: '100%' }} onClick={addItem}>{IC.plus} Tambah Item</button>
 
+      {/* Cara Bayar - seperti Pembelian di Kartika */}
+      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)', marginTop: 8 }}>Pembayaran</div>
+      <div style={{ display: 'flex', gap: 4 }}>
+        <button style={{ flex: 1, padding: '8px', border: '2px solid', borderColor: caraBayar === 'LUNAS' ? '#2e7d32' : '#e5e7eb', background: caraBayar === 'LUNAS' ? '#e8f5e9' : '#fff', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13, color: caraBayar === 'LUNAS' ? '#2e7d32' : '#6b7280' }}
+          onClick={() => setCaraBayar('LUNAS')}>LUNAS</button>
+        <button style={{ flex: 1, padding: '8px', border: '2px solid', borderColor: caraBayar === 'KREDIT' ? '#e65100' : '#e5e7eb', background: caraBayar === 'KREDIT' ? '#fff3e0' : '#fff', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13, color: caraBayar === 'KREDIT' ? '#e65100' : '#6b7280' }}
+          onClick={() => setCaraBayar('KREDIT')}>KREDIT (Hutang)</button>
+      </div>
+      {caraBayar === 'KREDIT' && (
+        <>
+          <label style={S.formLabel}>Bayar DP (Rp)<input style={S.input} type="number" value={dp} onChange={e => setDp(e.target.value)} placeholder="0 (boleh kosong)" /></label>
+          <div style={{ padding: '8px 12px', background: '#fff3e0', borderRadius: 8, fontSize: 13, color: '#e65100' }}>Sisa Hutang: <strong>{formatRp(total - (Number(dp) || 0))}</strong></div>
+        </>
+      )}
+
       <label style={S.formLabel}>Catatan<input style={S.input} value={note} onChange={e => setNote(e.target.value)} /></label>
 
       <div style={{ padding: '10px 14px', background: '#f0f7ff', borderRadius: 8, fontSize: 14, fontWeight: 700, color: 'var(--b)' }}>
-        Total: {formatRp(total)}
+        Total Pembelian: {formatRp(total)}
       </div>
-      <button style={{ ...S.primaryBtn, width: '100%' }} onClick={() => onSave({ date, supplierId, invoice, note, items, total })}>
-        Simpan Barang Masuk
+      <button style={{ ...S.primaryBtn, width: '100%' }} onClick={() => onSave({ date, supplierId, invoice, note, items, total, caraBayar, dp: Number(dp) || 0 })}>
+        {caraBayar === 'KREDIT' ? 'Simpan (Kredit)' : 'Simpan (Lunas)'}
       </button>
     </div>
   )
@@ -446,23 +481,32 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
     }
   }
 
-  function addToCart(product) {
-    // Pilih harga berdasarkan tipe pelanggan ATAU qty limit
-    const member = members.find(m => m.id === memberId)
-    const useHarga2 = member?.tingkatHrg === '2'
-    const price = useHarga2 && product.sellPrice2 ? product.sellPrice2 : product.sellPrice
+  // Hitung harga otomatis berdasarkan qty dan 3 level harga (seperti Kartika VB6)
+  function autoPrice(product, qty, mid) {
+    const member = members.find(m => m.id === mid)
+    const useH2 = member?.tingkatHrg === '2'
+    const useH3 = member?.tingkatHrg === '3'
+    // Prioritas: Limit3 > Limit2 > tingkatHrg > Harga1
+    if (product.limitQty3 && qty >= product.limitQty3 && product.sellPrice3) return product.sellPrice3
+    if (product.limitQty && qty >= product.limitQty && product.sellPrice2) return product.sellPrice2
+    if (useH3 && product.sellPrice3) return product.sellPrice3
+    if (useH2 && product.sellPrice2) return product.sellPrice2
+    return product.sellPrice
+  }
 
+  function addToCart(product) {
     setCart(prev => {
       const existing = prev.find(c => c.productId === product.id)
       if (existing) {
         if (existing.qty >= product.stock) return prev
         const newQty = existing.qty + 1
-        // Auto switch harga jika qty >= limitQty
-        const autoPrice = (product.limitQty && newQty >= product.limitQty && product.sellPrice2)
-          ? product.sellPrice2 : (useHarga2 && product.sellPrice2 ? product.sellPrice2 : product.sellPrice)
-        return prev.map(c => c.productId === product.id ? { ...c, qty: newQty, price: autoPrice } : c)
+        const price = autoPrice(product, newQty, memberId)
+        return prev.map(c => c.productId === product.id ? { ...c, qty: newQty, price } : c)
       }
-      return [...prev, { productId: product.id, name: product.name, price, qty: 1, maxStock: product.stock, diskon: 0, limitQty: product.limitQty || 0, sellPrice: product.sellPrice, sellPrice2: product.sellPrice2 || 0 }]
+      const price = autoPrice(product, 1, memberId)
+      return [...prev, { productId: product.id, name: product.name, price, qty: 1, maxStock: product.stock, diskon: 0,
+        limitQty: product.limitQty || 0, limitQty3: product.limitQty3 || 0,
+        sellPrice: product.sellPrice, sellPrice2: product.sellPrice2 || 0, sellPrice3: product.sellPrice3 || 0 }]
     })
   }
 
@@ -471,18 +515,9 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
     setCart(prev => prev.map(c => {
       if (c.productId !== productId) return c
       const newQty = Math.min(qty, c.maxStock)
-      // Auto switch harga berdasarkan qty limit
-      const member = members.find(m => m.id === memberId)
-      const useHarga2 = member?.tingkatHrg === '2'
-      let newPrice = c.sellPrice || c.price
-      if (c.limitQty && newQty >= c.limitQty && c.sellPrice2) {
-        newPrice = c.sellPrice2
-      } else if (useHarga2 && c.sellPrice2) {
-        newPrice = c.sellPrice2
-      } else if (c.sellPrice) {
-        newPrice = c.sellPrice
-      }
-      return { ...c, qty: newQty, price: newPrice }
+      const prod = products.find(p => p.id === productId)
+      const price = prod ? autoPrice(prod, newQty, memberId) : c.price
+      return { ...c, qty: newQty, price }
     }))
   }
 

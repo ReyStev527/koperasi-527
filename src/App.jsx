@@ -5,7 +5,7 @@ import {
 } from './db'
 import { Products, Suppliers, StockIn, POS } from './Inventory'
 import { KasMasukKeluar, JurnalUmum, LabaRugi, HitungSHU, CetakKwitansi } from './Finance'
-import { ExportData, RekapBulanan, GrafikTrend, AuditTrail, createAuditLog } from './Reporting'
+import { ExportData, RekapBulanan, GrafikTrend, AuditTrail, createAuditLog, LaporanPenjualan } from './Reporting'
 import { ReturBarang, PiutangPage, HargaBertingkat, MutasiStok, SetoranHarian } from './Legacy'
 import { HutangSupplier, BackupRestore, DashboardCharts, cetakStruk, cetakLaporanPDF, KartuAnggota } from './Extra'
 import logoSrc from '/logo.png?url'
@@ -100,8 +100,14 @@ export default function App() {
         const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms))
 
         try {
-          await Promise.race([seedIfEmpty(), timeout(10000)])
-          await Promise.race([seedInventoryIfEmpty(), timeout(10000)])
+          // Seed HANYA jika belum pernah dijalankan (cek localStorage)
+          // Ini mencegah data import tertimpa data contoh
+          const seeded = localStorage.getItem('koperasi_seeded')
+          if (!seeded) {
+            await Promise.race([seedIfEmpty(), timeout(10000)])
+            await Promise.race([seedInventoryIfEmpty(), timeout(10000)])
+            localStorage.setItem('koperasi_seeded', 'true')
+          }
         } catch (seedErr) {
           console.warn('Seed timeout/error (lanjut tanpa seed):', seedErr.message)
         }
@@ -297,6 +303,7 @@ export default function App() {
     { id: 'shu', label: 'Hitung SHU', icon: I.loan, roles: ['admin','ketua'] },
     { id: 'kwitansi', label: 'Cetak Kwitansi', icon: I.home, roles: ['admin','bendahara','staff'] },
     { id: '_sep3', label: 'LAPORAN', sep: true, roles: ['admin','bendahara','ketua'] },
+    { id: 'lapjual', label: 'Laporan Penjualan', icon: I.chart, roles: ['admin','bendahara','ketua'] },
     { id: 'rekap', label: 'Rekap Bulanan', icon: I.chart, roles: ['admin','bendahara','ketua'] },
     { id: 'export', label: 'Import/Export', icon: I.home, roles: ['admin','bendahara'] },
     { id: 'audit', label: 'Audit Trail', icon: I.gear, roles: ['admin'] },
@@ -383,7 +390,7 @@ export default function App() {
         {page === 'dashboard' && <Dashboard {...{ totalMembers, totalSavings, totalLoansOut, members, savings, loans, getMember, setPage, products, transactions, kasData }} />}
         {page === 'members' && <Members {...{ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc, kompiList: settings.kompiList || [] }} />}
         {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, jenisList: settings.jenisList || [] }} />}
-        {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, products, suppliers, updateProductStock, setModal, showToast }} />}
+        {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, products, suppliers, updateProductStock, setModal, showToast, saveHutang }} />}
         {page === 'pos' && <POS {...{ products, transactions, saveTransaction, updateProductStock, members, showToast, savePiutang, settings }} />}
         {page === 'suppliers' && <Suppliers {...{ suppliers, saveSupplier, deleteSupplier, products, setModal, showToast }} />}
         {page === 'retur' && <ReturBarang {...{ returs, saveRetur, products, suppliers, updateProductStock, setModal, showToast }} />}
@@ -395,6 +402,7 @@ export default function App() {
         {page === 'shu' && <HitungSHU {...{ members, savings, loans, transactions, kasData, products, settings }} />}
         {page === 'kwitansi' && <CetakKwitansi {...{ transactions, savings, loans, members, getMember, settings, setModal }} />}
         {page === 'rekap' && <RekapBulanan {...{ members, savings, loans, transactions, kasData, products, settings }} />}
+        {page === 'lapjual' && <LaporanPenjualan {...{ transactions, products, members, suppliers, settings, stockIn: stockInData, returs }} />}
         {page === 'export' && <ExportData {...{ members, savings, loans, products, transactions, kasData, settings,
           saveImportedMembers: async (items, onProgress) => { return await batchSet('members', items, onProgress) },
           saveImportedProducts: async (items, onProgress) => { return await batchSet('products', items, onProgress) },

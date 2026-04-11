@@ -304,23 +304,24 @@ export function MutasiStok({ mutasis, saveMutasi, products, updateProductStock, 
       <div style={S.pageHead}><h2 style={S.title}>Mutasi Stok</h2><button style={S.primaryBtn} onClick={openForm}>{IC.plus} Catat Mutasi</button></div>
       <div style={S.card}>
         <table style={S.table}>
-          <thead><tr>{['No Mutasi', 'Tanggal', 'Produk', 'Tipe', 'Stok Awal', 'Jumlah', 'Stok Akhir', 'Keterangan'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>{['No Mutasi', 'Tanggal', 'Produk', 'Tipe', 'Lokasi', 'Stok Awal', 'Jumlah', 'Stok Akhir', 'Keterangan'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
           <tbody>{sorted.map(m => (
             <tr key={m.id} style={S.tr}>
               <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 12 }}>{m.noMutasi}</td>
               <td style={S.td}>{fmtDate(m.date)}</td>
               <td style={{ ...S.td, fontWeight: 600 }}>{m.productName}</td>
               <td style={S.td}>
-                <span style={{ ...S.badge, background: m.tipe === 'tambah' ? '#e8f5e9' : '#ffebee', color: m.tipe === 'tambah' ? '#2e7d32' : '#c62828' }}>
-                  {m.tipe === 'tambah' ? '+ Tambah' : '- Kurang'}
+                <span style={{ ...S.badge, background: m.tipe === 'tambah' ? '#e8f5e9' : m.tipe === 'gdg_ke_toko' ? '#e3f2fd' : m.tipe === 'toko_ke_gdg' ? '#fff3e0' : '#ffebee', color: m.tipe === 'tambah' ? '#2e7d32' : m.tipe === 'gdg_ke_toko' ? '#1565c0' : m.tipe === 'toko_ke_gdg' ? '#e65100' : '#c62828' }}>
+                  {m.tipe === 'tambah' ? '+ Tambah' : m.tipe === 'gdg_ke_toko' ? 'Gudang → Toko' : m.tipe === 'toko_ke_gdg' ? 'Toko → Gudang' : '- Kurang'}
                 </span>
               </td>
+              <td style={{ ...S.td, fontSize: 11 }}>{m.lokasi || '-'}</td>
               <td style={S.td}>{m.stokAwal}</td>
-              <td style={{ ...S.td, fontWeight: 600, color: m.tipe === 'tambah' ? '#2e7d32' : '#c62828' }}>{m.tipe === 'tambah' ? '+' : '-'}{m.qty}</td>
+              <td style={{ ...S.td, fontWeight: 600, color: m.tipe === 'tambah' || m.tipe === 'gdg_ke_toko' ? '#2e7d32' : '#c62828' }}>{m.tipe === 'tambah' || m.tipe === 'gdg_ke_toko' ? '+' : '-'}{m.qty}</td>
               <td style={{ ...S.td, fontWeight: 600 }}>{m.stokAkhir}</td>
               <td style={S.td}>{m.note || '-'}</td>
             </tr>
-          ))}{sorted.length === 0 && <tr><td colSpan={8} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Belum ada mutasi</td></tr>}</tbody>
+          ))}{sorted.length === 0 && <tr><td colSpan={9} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Belum ada mutasi</td></tr>}</tbody>
         </table>
       </div>
     </div>
@@ -332,9 +333,10 @@ function MutasiForm({ products, onSave }) {
   const [tipe, setTipe] = useState('kurang')
   const [qty, setQty] = useState(1)
   const [note, setNote] = useState('')
+  const [lokasi, setLokasi] = useState('toko')
   const prod = products.find(p => p.id === pid)
   const stokAwal = prod?.stock || 0
-  const stokAkhir = tipe === 'tambah' ? stokAwal + qty : Math.max(0, stokAwal - qty)
+  const stokAkhir = (tipe === 'tambah' || tipe === 'gdg_ke_toko') ? stokAwal + qty : Math.max(0, stokAwal - qty)
 
   return (
     <div style={S.form}>
@@ -347,13 +349,28 @@ function MutasiForm({ products, onSave }) {
         <select style={S.input} value={tipe} onChange={e => setTipe(e.target.value)}>
           <option value="kurang">Kurang (Hilang/Rusak/Kadaluarsa)</option>
           <option value="tambah">Tambah (Stock Opname/Koreksi)</option>
+          <option value="gdg_ke_toko">Gudang → Toko (Pindah ke Toko)</option>
+          <option value="toko_ke_gdg">Toko → Gudang (Pindah ke Gudang)</option>
         </select>
       </label>
-      <label style={S.formLabel}>Jumlah<input style={S.input} type="number" min="1" value={qty} onChange={e => setQty(Number(e.target.value))} /></label>
+      {(tipe === 'gdg_ke_toko' || tipe === 'toko_ke_gdg') && (
+        <div style={{ padding: '8px 12px', background: '#e3f2fd', borderRadius: 8, fontSize: 12, color: '#1565c0' }}>
+          {tipe === 'gdg_ke_toko' ? 'Stok dipindahkan dari GUDANG ke TOKO (stok toko bertambah)' : 'Stok dipindahkan dari TOKO ke GUDANG (stok toko berkurang)'}
+        </div>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>Jumlah<input style={S.input} type="number" min="1" value={qty} onChange={e => setQty(Number(e.target.value))} /></label>
+        <label style={S.formLabel}>Lokasi
+          <select style={S.input} value={lokasi} onChange={e => setLokasi(e.target.value)}>
+            <option value="toko">Toko</option>
+            <option value="gudang">Gudang</option>
+          </select>
+        </label>
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, padding: '10px 14px', background: '#f5f5f5', borderRadius: 8, fontSize: 13 }}>
         <div>Stok Awal: <strong>{stokAwal}</strong></div>
-        <div>{tipe === 'tambah' ? '+' : '-'} <strong>{qty}</strong></div>
-        <div>Stok Akhir: <strong style={{ color: tipe === 'tambah' ? '#2e7d32' : '#c62828' }}>{stokAkhir}</strong></div>
+        <div>{(tipe === 'tambah' || tipe === 'gdg_ke_toko') ? '+' : '-'} <strong>{qty}</strong></div>
+        <div>Stok Akhir: <strong style={{ color: (tipe === 'tambah' || tipe === 'gdg_ke_toko') ? '#2e7d32' : '#c62828' }}>{stokAkhir}</strong></div>
       </div>
       <label style={S.formLabel}>Keterangan
         <select style={S.input} value={note} onChange={e => setNote(e.target.value)}>
@@ -363,12 +380,14 @@ function MutasiForm({ products, onSave }) {
           <option value="Kadaluarsa">Kadaluarsa</option>
           <option value="Stock opname">Stock opname</option>
           <option value="Koreksi data">Koreksi data</option>
+          <option value="Pindah gudang ke toko">Pindah gudang ke toko</option>
+          <option value="Pindah toko ke gudang">Pindah toko ke gudang</option>
           <option value="Lainnya">Lainnya</option>
         </select>
       </label>
       <button style={{ ...S.primaryBtn, width: '100%' }} onClick={() => onSave({
         noMutasi: 'M' + Date.now().toString().slice(-5), productId: pid, productName: prod?.name || '',
-        tipe, stokAwal, qty, stokAkhir, date: today(), note
+        tipe, stokAwal, qty, stokAkhir, date: today(), note, lokasi
       })}>Simpan Mutasi</button>
     </div>
   )

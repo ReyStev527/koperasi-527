@@ -45,22 +45,41 @@ export async function updateField(col, id, fields) {
 // BATCH WRITE (untuk import massal - max 500/batch)
 // =============================================
 export async function batchSet(col, items, onProgress) {
-  const BATCH_SIZE = 450 // Firestore max 500, pakai 450 untuk aman
+  const BATCH_SIZE = 200 // Lebih kecil = lebih stabil di koneksi lambat
   let done = 0
+  let retryCount = 0
+  const maxRetries = 3
+
   for (let i = 0; i < items.length; i += BATCH_SIZE) {
-    const batch = writeBatch(db)
     const chunk = items.slice(i, i + BATCH_SIZE)
-    for (const item of chunk) {
-      // Generate id jika tidak ada
-      const itemId = item.id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 7) + done)
-      item.id = itemId
-      const ref = doc(db, col, itemId)
-      batch.set(ref, item, { merge: true })
+    let success = false
+
+    for (let attempt = 0; attempt < maxRetries && !success; attempt++) {
+      try {
+        const batch = writeBatch(db)
+        for (const item of chunk) {
+          const itemId = item.id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 7) + done)
+          item.id = itemId
+          const ref = doc(db, col, itemId)
+          batch.set(ref, item, { merge: true })
+        }
+        await batch.commit()
+        success = true
+        done += chunk.length
+        if (onProgress) onProgress(done, items.length)
+      } catch (err) {
+        retryCount++
+        console.warn(`Batch ${i}-${i+chunk.length} attempt ${attempt+1} failed:`, err.message)
+        if (attempt === maxRetries - 1) {
+          throw new Error(`Gagal menyimpan batch setelah ${maxRetries}x coba: ${err.message}`)
+        }
+        // Tunggu sebelum retry
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
+      }
     }
-    await batch.commit()
-    done += chunk.length
-    if (onProgress) onProgress(done, items.length)
   }
+
+  console.log(`batchSet '${col}': ${done} items saved, ${retryCount} retries`)
   return done
 }
 
