@@ -646,7 +646,7 @@ function Members({ members, saveMember, deleteMember, memberSavings, memberLoans
               <td style={S.td}><span style={{ ...S.badge, background: m.status === 'active' ? 'var(--g)20' : '#eee', color: m.status === 'active' ? 'var(--g)' : '#888' }}>{m.status === 'active' ? 'Aktif' : 'Nonaktif'}</span></td>
               <td style={S.td}>
                 <button style={S.smallBtn} onClick={() => openForm(m)}>{I.edit}</button>
-                <button style={{ ...S.smallBtn, color: 'var(--b)' }} onClick={() => setModal({ title: 'Kartu Anggota - ' + m.name, content: <KartuAnggota member={m} settings={settings} logoSrc={logoSrc} /> })}>
+                <button style={{ ...S.smallBtn, color: 'var(--b)' }} onClick={() => setModal({ title: 'Kartu Anggota - ' + m.name, content: <KartuAnggota member={m} members={members.filter(x => x.status === 'active')} settings={settings} logoSrc={logoSrc} /> })}>
                   <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 10h4M7 14h2"/><circle cx="16" cy="11" r="2"/></svg>
                 </button>
                 <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus anggota ' + m.name + '?')) { await deleteMember(m.id); showToast('Anggota dihapus', 'error') } }}>{I.trash}</button>

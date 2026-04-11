@@ -101,67 +101,165 @@ export function cetakLaporanPDF(title, headers, rows, settings, summary) {
 // =============================================
 // 3. KARTU ANGGOTA DIGITAL
 // =============================================
-export function KartuAnggota({ member, settings, logoSrc }) {
-  const cardRef = useRef()
+export function KartuAnggota({ member, members, settings, logoSrc }) {
+  const [mode, setMode] = useState('single') // single | batch
 
+  // === BARCODE CODE128 generator (SVG) ===
+  function code128svg(text, w, h) {
+    const CODE128 = [212222,222122,222221,121223,121322,131222,122213,122312,132212,221213,221312,231212,112232,122132,122231,113222,123122,123221,223211,221132,221231,213212,223112,312131,311222,321122,321221,312212,322112,322211,212123,212321,232121,111323,131123,131321,112313,132113,132311,211313,231113,231311,112133,112331,132131,113123,113321,133121,313121,211331,231131,213113,213311,213131,311123,311321,331121,312113,312311,332111,314111,221411,431111,111224,111422,121124,121421,141122,141221,112214,112412,122114,122411,142112,142211,241211,221114,413111,241112,134111,111242,121142,121241,114212,124112,124211,411212,421112,421211,212141,214121,412121,111143,111341,131141,114113,114311,411113,411311,113141,114131,311141,411131,211412,211214,211232,2331112]
+    const START_B = 104, STOP = 106
+    let codes = [START_B], checksum = START_B
+    for (let i = 0; i < text.length; i++) {
+      const c = text.charCodeAt(i) - 32
+      codes.push(c); checksum += c * (i + 1)
+    }
+    codes.push(checksum % 103, STOP)
+    let pattern = ''
+    codes.forEach(c => { const p = CODE128[c].toString(); for (let i = 0; i < p.length; i++) pattern += (i % 2 === 0 ? '1' : '0').repeat(Number(p[i])) })
+    const barW = w / pattern.length
+    let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`
+    for (let i = 0; i < pattern.length; i++) {
+      if (pattern[i] === '1') svg += `<rect x="${i * barW}" y="0" width="${barW + 0.5}" height="${h}" fill="#fff"/>`
+    }
+    svg += '</svg>'
+    return svg
+  }
+
+  // Cetak 1 kartu
   function cetakKartu() {
-    const win = window.open('', '_blank', 'width=500,height=350')
-    win.document.write(`<!DOCTYPE html><html><head><style>
-      @page { margin: 10mm; size: 86mm 54mm; }
-      body { margin: 0; font-family: Arial, sans-serif; }
-      .card { width: 86mm; height: 54mm; border: 2px solid #1565c0; border-radius: 10px; overflow: hidden; position: relative; background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); color: #fff; padding: 8px 12px; box-sizing: border-box; }
-      .logo { width: 32px; height: 32px; border-radius: 6px; object-fit: contain; }
-      .header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-      .title { font-size: 10px; font-weight: bold; line-height: 1.2; }
-      .subtitle { font-size: 7px; opacity: 0.7; }
-      .info { font-size: 9px; margin-top: 4px; }
-      .info div { margin-bottom: 2px; }
-      .no { font-size: 16px; font-weight: bold; letter-spacing: 2px; color: #ffd54f; margin-top: 4px; }
-      .name { font-size: 13px; font-weight: bold; margin-top: 2px; }
-      .footer { position: absolute; bottom: 6px; right: 12px; font-size: 7px; opacity: 0.5; }
-      @media print { body { margin: 0; } }
-    </style></head><body>
+    const win = window.open('', '_blank', 'width=500,height=400')
+    win.document.write(generateCardHTML([member], settings, logoSrc, code128svg))
+    win.document.close()
+  }
+
+  // Cetak 6 kartu per halaman HVS A4
+  function cetakBatch() {
+    const list = members || [member]
+    const win = window.open('', '_blank', 'width=800,height=1000')
+    win.document.write(generateBatchHTML(list, settings, logoSrc, code128svg))
+    win.document.close()
+  }
+
+  const bc = code128svg(member.no || 'M00', 120, 28)
+
+  return (
+    <div>
+      {/* Preview kartu */}
+      <div style={{ width: 340, height: 214, borderRadius: 12, overflow: 'hidden', position: 'relative', background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)', color: '#fff', padding: '12px 16px', boxSizing: 'border-box', fontFamily: 'Arial, sans-serif', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+          {logoSrc && <img src={logoSrc} style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'contain' }} />}
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700 }}>{settings?.name || 'KOPERASI YONIF 527/BY'}</div>
+            <div style={{ fontSize: 7, opacity: 0.6 }}>Baladibya Yudha — Kartu Anggota</div>
+          </div>
+        </div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: '#ffd54f', letterSpacing: 2 }}>No. {member.no}</div>
+        <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2 }}>{member.name}</div>
+        <div style={{ fontSize: 9, marginTop: 4, lineHeight: 1.5, opacity: 0.85 }}>
+          <div>NRP: {member.nrp || '-'} | Kompi: {member.kompi || '-'}</div>
+          <div>Bergabung: {fmtDate(member.joinDate)}</div>
+        </div>
+        {/* Barcode kanan bawah */}
+        <div style={{ position: 'absolute', bottom: 8, right: 12, textAlign: 'center' }}>
+          <div dangerouslySetInnerHTML={{ __html: bc }} />
+          <div style={{ fontSize: 6, opacity: 0.5, marginTop: 1 }}>{member.no}</div>
+        </div>
+        <div style={{ position: 'absolute', bottom: 8, left: 16, fontSize: 7, opacity: 0.4 }}>Valid s/d 31 Des {new Date().getFullYear() + 1}</div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <button onClick={cetakKartu} style={{ padding: '8px 20px', background: '#1565c0', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>🖨️ Cetak 1 Kartu</button>
+        {members && members.length > 1 && (
+          <button onClick={cetakBatch} style={{ padding: '8px 20px', background: '#2e7d32', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>🖨️ Cetak Semua ({members.length} kartu, {Math.ceil(members.length / 6)} lembar)</button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Generate HTML untuk 1 kartu (cetak individual)
+function generateCardHTML(memberList, settings, logoSrc, code128svg) {
+  return `<!DOCTYPE html><html><head><style>
+    @page { margin: 5mm; size: A4 portrait; }
+    body { margin: 0; font-family: Arial, sans-serif; }
+    .card { width: 85.6mm; height: 53.98mm; border: 1px solid #333; border-radius: 3mm; overflow: hidden; position: relative; background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); color: #fff; padding: 3mm 4mm; box-sizing: border-box; page-break-inside: avoid; }
+    .header { display: flex; align-items: center; gap: 2mm; margin-bottom: 1.5mm; }
+    .logo { width: 8mm; height: 8mm; border-radius: 1.5mm; object-fit: contain; }
+    .title { font-size: 8pt; font-weight: bold; line-height: 1.2; }
+    .subtitle { font-size: 5.5pt; opacity: 0.7; }
+    .no { font-size: 12pt; font-weight: bold; letter-spacing: 1.5px; color: #ffd54f; margin-top: 1mm; }
+    .name { font-size: 10pt; font-weight: bold; margin-top: 0.5mm; }
+    .info { font-size: 7pt; margin-top: 1mm; line-height: 1.5; opacity: 0.85; }
+    .barcode { position: absolute; bottom: 2mm; right: 3mm; text-align: center; }
+    .barcode-label { font-size: 5pt; opacity: 0.5; margin-top: 0.5mm; }
+    .valid { position: absolute; bottom: 2.5mm; left: 4mm; font-size: 5.5pt; opacity: 0.4; }
+    @media print { body { margin: 0; } }
+  </style></head><body>
+    ${memberList.map(m => `<div class="card">
+      <div class="header">
+        ${logoSrc ? '<img src="' + logoSrc + '" class="logo">' : ''}
+        <div><div class="title">${settings?.name || 'KOPERASI YONIF 527/BY'}</div><div class="subtitle">Baladibya Yudha — Kartu Anggota</div></div>
+      </div>
+      <div class="no">No. ${m.no}</div>
+      <div class="name">${m.name}</div>
+      <div class="info">
+        <div>NRP: ${m.nrp || '-'} | Kompi: ${m.kompi || '-'}</div>
+        <div>Bergabung: ${fmtDate(m.joinDate)}</div>
+      </div>
+      <div class="barcode">${code128svg(m.no || 'M00', 80, 18)}<div class="barcode-label">${m.no}</div></div>
+      <div class="valid">Valid s/d 31 Des ${new Date().getFullYear() + 1}</div>
+    </div>`).join('')}
+    <script>setTimeout(()=>{window.print();},500)</script>
+  </body></html>`
+}
+
+// Generate HTML batch: 6 kartu per halaman HVS A4 (2 kolom x 3 baris)
+function generateBatchHTML(memberList, settings, logoSrc, code128svg) {
+  // Ukuran kartu ATM: 85.6mm x 53.98mm
+  // HVS A4: 210mm x 297mm
+  // 2 kolom x 3 baris = 6 kartu per halaman
+  const pages = []
+  for (let i = 0; i < memberList.length; i += 6) {
+    pages.push(memberList.slice(i, i + 6))
+  }
+
+  return `<!DOCTYPE html><html><head><style>
+    @page { margin: 8mm 10mm; size: A4 portrait; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; }
+    .page { width: 190mm; display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; page-break-after: always; padding: 2mm 0; }
+    .page:last-child { page-break-after: auto; }
+    .card { width: 85.6mm; height: 53.98mm; border: 1px solid #555; border-radius: 2.5mm; overflow: hidden; position: relative; background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); color: #fff; padding: 3mm 4mm; }
+    .header { display: flex; align-items: center; gap: 2mm; margin-bottom: 1.5mm; }
+    .logo { width: 7mm; height: 7mm; border-radius: 1.5mm; object-fit: contain; }
+    .title { font-size: 7.5pt; font-weight: bold; line-height: 1.2; }
+    .subtitle { font-size: 5pt; opacity: 0.7; }
+    .no { font-size: 11pt; font-weight: bold; letter-spacing: 1.5px; color: #ffd54f; margin-top: 0.5mm; }
+    .name { font-size: 9pt; font-weight: bold; margin-top: 0.5mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55mm; }
+    .info { font-size: 6.5pt; margin-top: 1mm; line-height: 1.4; opacity: 0.85; }
+    .barcode { position: absolute; bottom: 2mm; right: 3mm; text-align: center; }
+    .barcode-label { font-size: 5pt; opacity: 0.5; margin-top: 0.3mm; }
+    .valid { position: absolute; bottom: 2mm; left: 4mm; font-size: 5pt; opacity: 0.4; }
+    @media print { body { margin: 0; } .page { margin: 0; } }
+  </style></head><body>
+    ${pages.map(pg => `<div class="page">${pg.map(m => `
       <div class="card">
         <div class="header">
           ${logoSrc ? '<img src="' + logoSrc + '" class="logo">' : ''}
           <div><div class="title">${settings?.name || 'KOPERASI YONIF 527/BY'}</div><div class="subtitle">Baladibya Yudha — Kartu Anggota</div></div>
         </div>
-        <div class="no">No. ${member.no}</div>
-        <div class="name">${member.name}</div>
+        <div class="no">No. ${m.no}</div>
+        <div class="name">${m.name}</div>
         <div class="info">
-          <div>Telepon: ${member.phone || '-'}</div>
-          <div>Alamat: ${member.address || '-'}</div>
-          <div>Bergabung: ${fmtDate(member.joinDate)}</div>
+          <div>NRP: ${m.nrp || '-'} | Kompi: ${m.kompi || '-'}</div>
+          <div>Bergabung: ${fmtDate(m.joinDate)}</div>
         </div>
-        <div class="footer">Valid s/d 31 Des ${new Date().getFullYear() + 1}</div>
+        <div class="barcode">${code128svg(m.no || 'M00', 70, 16)}<div class="barcode-label">${m.no}</div></div>
+        <div class="valid">Valid s/d 31 Des ${new Date().getFullYear() + 1}</div>
       </div>
-      <script>setTimeout(()=>{window.print();},400)</script>
-    </body></html>`)
-    win.document.close()
-  }
-
-  return (
-    <div>
-      <div ref={cardRef} style={{ width: 340, height: 210, borderRadius: 12, overflow: 'hidden', position: 'relative', background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)', color: '#fff', padding: '14px 18px', boxSizing: 'border-box', fontFamily: 'Arial, sans-serif', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-          {logoSrc && <img src={logoSrc} style={{ width: 36, height: 36, borderRadius: 6, objectFit: 'contain' }} />}
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700 }}>{settings?.name || 'KOPERASI YONIF 527/BY'}</div>
-            <div style={{ fontSize: 8, opacity: 0.6 }}>Baladibya Yudha — Kartu Anggota</div>
-          </div>
-        </div>
-        <div style={{ fontSize: 18, fontWeight: 700, color: '#ffd54f', letterSpacing: 2, marginTop: 4 }}>No. {member.no}</div>
-        <div style={{ fontSize: 15, fontWeight: 700, marginTop: 2 }}>{member.name}</div>
-        <div style={{ fontSize: 10, marginTop: 6, lineHeight: 1.6, opacity: 0.85 }}>
-          <div>Telepon: {member.phone || '-'}</div>
-          <div>Alamat: {member.address || '-'}</div>
-          <div>Bergabung: {fmtDate(member.joinDate)}</div>
-        </div>
-        <div style={{ position: 'absolute', bottom: 8, right: 14, fontSize: 7, opacity: 0.4 }}>Valid s/d 31 Des {new Date().getFullYear() + 1}</div>
-      </div>
-      <button onClick={cetakKartu} style={{ marginTop: 12, padding: '8px 20px', background: '#1565c0', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>Cetak Kartu</button>
-    </div>
-  )
+    `).join('')}</div>`).join('')}
+    <script>setTimeout(()=>{window.print();},600)</script>
+  </body></html>`
 }
 
 // =============================================

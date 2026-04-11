@@ -461,7 +461,19 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   )
 
   function handleBarcodeScan(code) {
-    // Cari produk berdasarkan SKU atau nama
+    // 1. Cek apakah ini barcode kartu anggota (format: M21, A5, C79, dll)
+    const memberMatch = members.find(m =>
+      String(m.no||'').toLowerCase() === code.toLowerCase() ||
+      String(m.no||'').toLowerCase() === code.toLowerCase().replace(/^0+/, '')
+    )
+    if (memberMatch) {
+      setMemberId(memberMatch.id)
+      setLastScanned('👤 ' + memberMatch.name + ' (' + memberMatch.no + ')')
+      showToast('Pelanggan: ' + memberMatch.name + ' (' + memberMatch.no + ')')
+      return
+    }
+
+    // 2. Cari produk berdasarkan SKU atau nama
     const found = products.find(p =>
       String(p.sku||'').toLowerCase() === code.toLowerCase() ||
       String(p.name||'').toLowerCase() === code.toLowerCase() ||
