@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app'
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore'
+import { getFirestore } from 'firebase/firestore'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -10,18 +10,11 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 }
 
-// Debug: cek apakah config terbaca
 if (!firebaseConfig.apiKey || firebaseConfig.apiKey === 'undefined') {
-  console.error('FIREBASE CONFIG ERROR: .env file belum terbaca! Pastikan file bernama .env (bukan .env.txt) dan restart npm run dev')
+  console.error('FIREBASE CONFIG ERROR: .env file belum terbaca!')
 }
 console.log('Firebase project:', firebaseConfig.projectId)
 
 const app = initializeApp(firebaseConfig)
-
-// Aktifkan offline persistence — write langsung ke cache lokal (instan),
-// lalu sync ke server Firestore di background.
-// Ini mencegah timeout saat koneksi lambat.
-export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-})
+export const db = getFirestore(app)
 export default app

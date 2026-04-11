@@ -32,7 +32,13 @@ export async function removeOne(col, id) {
 }
 
 export async function updateField(col, id, fields) {
-  await updateDoc(doc(db, col, id), fields)
+  try {
+    await updateDoc(doc(db, col, id), fields)
+  } catch (e) {
+    // Fallback: jika doc belum ada, pakai setDoc merge
+    console.warn('updateDoc gagal, fallback setDoc:', e.message)
+    await setDoc(doc(db, col, id), fields, { merge: true })
+  }
 }
 
 // =============================================

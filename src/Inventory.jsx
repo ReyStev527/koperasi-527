@@ -412,6 +412,15 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   const [dp, setDp] = useState('')
   const [processing, setProcessing] = useState(false)
 
+  const [memberSearch, setMemberSearch] = useState('')
+  const [showMemberDrop, setShowMemberDrop] = useState(false)
+  const filteredMembers = members.filter(m => !m.status || m.status === 'active').filter(m => {
+    if (!memberSearch) return true
+    const q = memberSearch.toLowerCase()
+    return (m.no||'').toLowerCase().includes(q) || (m.name||'').toLowerCase().includes(q) || (m.nrp||'').toLowerCase().includes(q) || (m.kompi||'').toLowerCase().includes(q)
+  })
+  const selectedMemberObj = members.find(m => m.id === memberId)
+
   const filteredProducts = products.filter(p =>
     p.stock > 0 && (search === '' || String(p.name||'').toLowerCase().includes(search.toLowerCase()) || String(p.sku||'').toLowerCase().includes(search.toLowerCase()))
   )
@@ -487,68 +496,53 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   const total = totalSebelumDiskon - totalDiskon
   const change = caraBayar === 'LUNAS' ? Number(payment) - total : Number(dp) - 0
 
-  async function checkout() {
+  function checkout() {
     if (cart.length === 0) { showToast('Keranjang kosong', 'error'); return }
     if (caraBayar === 'LUNAS' && Number(payment) < total) { showToast('Pembayaran kurang', 'error'); return }
     if (caraBayar === 'KREDIT' && !memberId) { showToast('Pilih anggota untuk transaksi KREDIT', 'error'); return }
     if (processing) return
     setProcessing(true)
 
-    try {
-      const selectedMember = members.find(m => m.id === memberId)
-      const customerName = selectedMember?.name || 'Umum'
-      const noNota = 'N' + Date.now().toString().slice(-7)
-      const tx = {
-        noNota,
-        date: today(),
-        memberId: memberId || null,
-        customerName,
-        items: cart.map(c => ({ productId: c.productId, name: c.name, qty: c.qty, price: c.price, diskon: c.diskon || 0, subtotal: c.price * c.qty * (1 - (c.diskon || 0) / 100) })),
-        totalSebelumDiskon,
-        totalDiskon,
-        total,
-        payment: caraBayar === 'LUNAS' ? Number(payment) : Number(dp),
-        change: caraBayar === 'LUNAS' ? Number(payment) - total : 0,
-        caraBayar,
-        cashier: 'user',
-      }
-
-      // Simpan transaksi + piutang secara PARALLEL
-      const saveOps = [saveTransaction(tx)]
-      if (caraBayar === 'KREDIT' && savePiutang) {
-        saveOps.push(savePiutang({
-          noNota, date: today(), memberId: memberId || null,
-          customerName,
-          total, dp: Number(dp) || 0, totalBayar: Number(dp) || 0,
-          sisa: total - (Number(dp) || 0), status: 'KREDIT', payments: Number(dp) > 0 ? [{ date: today(), amount: Number(dp) }] : []
-        }))
-      }
-      await Promise.all(saveOps)
-
-      // Kurangi stok secara PARALLEL
-      const stockOps = cart.map(item => {
-        const prod = products.find(p => p.id === item.productId)
-        return prod ? updateProductStock(prod.id, prod.stock - item.qty) : null
-      }).filter(Boolean)
-      await Promise.all(stockOps)
-
-      // Cetak struk otomatis
-      try { cetakStruk(tx, settings, members) } catch(e) { console.log('Struk print skipped:', e) }
-
-      const savedPayment = payment
-      const savedTotal = total
-      const savedDp = dp
-      const savedCaraBayar = caraBayar
-      setCart([]); setPayment(''); setDp(''); setMemberId(''); setCaraBayar('LUNAS')
-      showToast(savedCaraBayar === 'LUNAS'
-        ? 'Transaksi LUNAS! Kembalian: ' + formatRp(Number(savedPayment) - savedTotal)
-        : 'Transaksi KREDIT dicatat. Sisa piutang: ' + formatRp(savedTotal - (Number(savedDp) || 0)))
-    } catch (err) {
-      console.error('Checkout error:', err)
-      showToast('Gagal: ' + (err.message || 'Cek koneksi internet'), 'error')
-    } finally {
-      setProcessing(false)
+    const selectedMember = members.find(m => m.id === memberId)
+    const customerName = selectedMember?.name || 'Umum'
+    const noNota = 'N' + Date.now().toString().slice(-7)
+    const tx = {
+      noNota, date: today(), memberId: memberId || null, customerName,
+      items: cart.map(c => ({ productId: c.productId, name: c.name, qty: c.qty, price: c.price, diskon: c.diskon || 0, subtotal: c.price * c.qty * (1 - (c.diskon || 0) / 100) })),
+      totalSebelumDiskon, totalDiskon, total,
+      payment: caraBayar === 'LUNAS' ? Number(payment) : Number(dp),
+      change: caraBayar === 'LUNAS' ? Number(payment) - total : 0,
+      caraBayar, cashier: 'user',
     }
+
+    // Simpan data sebelum reset
+    const _payment = payment, _total = total, _dp = dp, _cara = caraBayar
+    const _cart = [...cart], _mid = memberId
+
+    // ===== RESET UI LANGSUNG — TIDAK TUNGGU APAPUN =====
+    setCart([]); setPayment(''); setDp(''); setMemberId(''); setMemberSearch(''); setCaraBayar('LUNAS')
+    setProcessing(false)
+    showToast(_cara === 'LUNAS'
+      ? 'Transaksi LUNAS! Kembalian: ' + formatRp(Number(_payment) - _total)
+      : 'Transaksi KREDIT dicatat. Sisa piutang: ' + formatRp(_total - (Number(_dp) || 0)))
+
+    // ===== BACKGROUND: Simpan ke Firestore + Cetak (fire-and-forget) =====
+    setTimeout(() => {
+      try { cetakStruk(tx, settings, members) } catch(e) { /* skip */ }
+      saveTransaction(tx).catch(e => console.warn('tx err:', e))
+      if (_cara === 'KREDIT' && savePiutang) {
+        savePiutang({
+          noNota, date: today(), memberId: _mid || null, customerName,
+          total: _total, dp: Number(_dp) || 0, totalBayar: Number(_dp) || 0,
+          sisa: _total - (Number(_dp) || 0), status: 'KREDIT',
+          payments: Number(_dp) > 0 ? [{ date: today(), amount: Number(_dp) }] : []
+        }).catch(e => console.warn('piutang err:', e))
+      }
+      for (const item of _cart) {
+        const prod = products.find(p => p.id === item.productId)
+        if (prod) updateProductStock(prod.id, prod.stock - item.qty).catch(e => console.warn('stok err:', e))
+      }
+    }, 50)
   }
 
   const sortedTx = [...transactions].sort((a, b) => b.date.localeCompare(a.date))
@@ -652,22 +646,43 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
               </div>
 
               <label style={S.formLabel}>Pelanggan / Anggota
-                <select style={S.input} value={memberId} onChange={e => {
-                  const newMid = e.target.value
-                  setMemberId(newMid)
-                  // Update harga di keranjang sesuai tipe pelanggan
-                  const m = members.find(x => x.id === newMid)
-                  const useH2 = m?.tingkatHrg === '2'
-                  setCart(prev => prev.map(c => {
-                    const prod = products.find(p => p.id === c.productId)
-                    if (!prod) return c
-                    const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
-                    return { ...c, price: newPrice }
-                  }))
-                }}>
-                  <option value="">-- Umum (Harga Eceran) --</option>
-                  {members.filter(m => !m.status || m.status === 'active').map(m => <option key={m.id} value={m.id}>{m.no} - {m.name} {m.tingkatHrg === '2' ? '(Grosir)' : ''}</option>)}
-                </select>
+                <div style={{ position: 'relative' }}>
+                  <input style={S.input} placeholder="Ketik kode (C79) atau nama anggota..."
+                    value={showMemberDrop ? memberSearch : (selectedMemberObj ? `${selectedMemberObj.no} - ${selectedMemberObj.name}` : '')}
+                    onFocus={() => { setShowMemberDrop(true); setMemberSearch('') }}
+                    onBlur={() => setTimeout(() => setShowMemberDrop(false), 200)}
+                    onKeyDown={e => { if (e.key === 'Escape') { setShowMemberDrop(false); e.target.blur() } }}
+                    onChange={e => setMemberSearch(e.target.value)} />
+                  {memberId && !showMemberDrop && <button style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#999', fontSize: 16 }}
+                    onClick={() => { setMemberId(''); setMemberSearch('') }}>×</button>}
+                  {showMemberDrop && (
+                    <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, maxHeight: 200, overflowY: 'auto', zIndex: 50, boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
+                      <div style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid #f0f0f0', color: '#666' }}
+                        onClick={() => { setMemberId(''); setShowMemberDrop(false); setMemberSearch('') }}>-- Umum (Harga Eceran) --</div>
+                      {filteredMembers.slice(0, 50).map(m => (
+                        <div key={m.id} style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid #f5f5f5', background: m.id === memberId ? '#e3f2fd' : '#fff' }}
+                          onClick={() => {
+                            setMemberId(m.id)
+                            setShowMemberDrop(false)
+                            setMemberSearch('')
+                            const useH2 = m?.tingkatHrg === '2'
+                            setCart(prev => prev.map(c => {
+                              const prod = products.find(p => p.id === c.productId)
+                              if (!prod) return c
+                              const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
+                              return { ...c, price: newPrice }
+                            }))
+                          }}
+                          onMouseEnter={e => e.target.style.background = '#f0f7ff'}
+                          onMouseLeave={e => e.target.style.background = m.id === memberId ? '#e3f2fd' : '#fff'}>
+                          <strong>{m.no}</strong> - {m.name} {m.kompi ? <span style={{ fontSize: 10, color: '#1565c0', background: '#e3f2fd', padding: '1px 4px', borderRadius: 3, marginLeft: 4 }}>{m.kompi}</span> : ''} {m.tingkatHrg === '2' ? '(Grosir)' : ''}
+                        </div>
+                      ))}
+                      {filteredMembers.length === 0 && <div style={{ padding: '12px', fontSize: 12, color: '#999', textAlign: 'center' }}>Tidak ditemukan</div>}
+                      {filteredMembers.length > 50 && <div style={{ padding: '8px 12px', fontSize: 11, color: '#999', textAlign: 'center' }}>Ketik untuk menyaring...</div>}
+                    </div>
+                  )}
+                </div>
               </label>
 
               {/* Cara Bayar: LUNAS / KREDIT */}
