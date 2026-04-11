@@ -380,44 +380,62 @@ function MutasiForm({ products, onSave }) {
 export function SetoranHarian({ setorans, saveSetoran, transactions, kasData, loans, setModal, showToast }) {
   const sorted = [...setorans].sort((a, b) => b.date.localeCompare(a.date))
 
+  // Hitung periode: tgl 25 bulan lalu s/d tgl 25 bulan ini
+  function getPeriode(targetDate) {
+    const d = new Date(targetDate || today())
+    const y = d.getFullYear(), m = d.getMonth()
+    const mulai = new Date(y, m - 1, 25).toISOString().slice(0, 10) // tgl 25 bulan lalu
+    const akhir = new Date(y, m, 25).toISOString().slice(0, 10)     // tgl 25 bulan ini
+    return { mulai, akhir }
+  }
+
   function openForm() {
-    // Hitung otomatis dari data hari ini
-    const tgl = today()
-    const penjualanCash = transactions.filter(t => t.date === tgl).reduce((a, t) => a + (t.total||0), 0)
-    const angsuran = loans.flatMap(l => (l.installments||[]).filter(i => i.date === tgl)).reduce((a, i) => a + (i.amount||0), 0)
-    const kasMasuk = kasData.filter(k => k.date === tgl && k.type === 'masuk').reduce((a, k) => a + (k.amount||0), 0)
-    const kasKeluar = kasData.filter(k => k.date === tgl && k.type === 'keluar').reduce((a, k) => a + (k.amount||0), 0)
+    // Default: periode bulan ini (25 bulan lalu s/d 25 bulan ini)
+    const tglSetor = today()
+    const { mulai, akhir } = getPeriode(tglSetor)
+
+    // Hitung dari transaksi dalam periode
+    const txPeriode = transactions.filter(t => t.date >= mulai && t.date <= akhir)
+    const penjualanCash = txPeriode.filter(t => t.caraBayar !== 'KREDIT').reduce((a, t) => a + (t.total||0), 0)
+    const penjualanKredit = txPeriode.filter(t => t.caraBayar === 'KREDIT').reduce((a, t) => a + (t.total||0), 0)
+    const angsuran = loans.flatMap(l => (l.installments||[]).filter(i => i.date >= mulai && i.date <= akhir)).reduce((a, i) => a + (i.amount||0), 0)
+    const kasMasuk = kasData.filter(k => k.date >= mulai && k.date <= akhir && k.type === 'masuk').reduce((a, k) => a + (k.amount||0), 0)
+    const kasKeluar = kasData.filter(k => k.date >= mulai && k.date <= akhir && k.type === 'keluar').reduce((a, k) => a + (k.amount||0), 0)
 
     setModal({
-      title: 'Catat Setoran Harian',
+      title: 'Catat Setoran Bulanan (Periode: ' + fmtDate(mulai) + ' s/d ' + fmtDate(akhir) + ')',
       content: <SetoranForm
-        defaults={{ penjualanCash, angsuran, pendapatanLain: kasMasuk, pengeluaran: kasKeluar }}
-        onSave={async d => { await saveSetoran(d); setModal(null); showToast('Setoran harian berhasil dicatat') }}
+        defaults={{ penjualanCash, penjualanKredit, angsuran, pendapatanLain: kasMasuk, pengeluaran: kasKeluar, periode: mulai + ' s/d ' + akhir, totalNota: txPeriode.length }}
+        onSave={async d => { await saveSetoran(d); setModal(null); showToast('Setoran bulanan berhasil dicatat') }}
       />,
     })
   }
 
   return (
     <div>
-      <div style={S.pageHead}><h2 style={S.title}>Setoran Harian</h2><button style={S.primaryBtn} onClick={openForm}>{IC.plus} Catat Setoran</button></div>
+      <div style={S.pageHead}><h2 style={S.title}>Setoran Bulanan</h2><button style={S.primaryBtn} onClick={openForm}>{IC.plus} Catat Setoran</button></div>
+      <div style={{ padding: '10px 16px', background: '#e3f2fd', borderRadius: 8, marginBottom: 16, fontSize: 13, color: '#1565c0' }}>
+        Setoran dilakukan setiap <strong>tanggal 25</strong>. Periode dihitung dari tgl 25 bulan lalu s/d tgl 25 bulan ini.
+      </div>
       <div style={S.card}>
         <table style={S.table}>
-          <thead><tr>{['Tanggal', 'Penjualan Cash', 'Angsuran', 'Pendapatan Lain', 'Pengeluaran', 'Setor Bank', 'Selisih'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>{['Tanggal', 'Periode', 'Penjualan Cash', 'Penjualan Kredit', 'Pendapatan Lain', 'Pengeluaran', 'Setor Bank', 'Selisih'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
           <tbody>{sorted.map(s => {
-            const totalMasuk = s.penjualanCash + s.angsuran + s.pendapatanLain
-            const selisih = totalMasuk - s.pengeluaran - s.setorBank
+            const totalMasuk = (s.penjualanCash||0) + (s.angsuran||0) + (s.pendapatanLain||0)
+            const selisih = totalMasuk - (s.pengeluaran||0) - (s.setorBank||0)
             return (
               <tr key={s.id} style={S.tr}>
                 <td style={S.td}>{fmtDate(s.date)}</td>
+                <td style={{ ...S.td, fontSize: 11, color: '#666' }}>{s.periode || '-'}</td>
                 <td style={S.td}>{formatRp(s.penjualanCash)}</td>
-                <td style={S.td}>{formatRp(s.angsuran)}</td>
+                <td style={{ ...S.td, color: '#e65100' }}>{formatRp(s.penjualanKredit||0)}</td>
                 <td style={S.td}>{formatRp(s.pendapatanLain)}</td>
                 <td style={{ ...S.td, color: '#c62828' }}>{formatRp(s.pengeluaran)}</td>
                 <td style={{ ...S.td, color: '#1565c0' }}>{formatRp(s.setorBank)}</td>
                 <td style={{ ...S.td, fontWeight: 700, color: selisih >= 0 ? '#2e7d32' : '#c62828' }}>{formatRp(selisih)}</td>
               </tr>
             )
-          })}{sorted.length === 0 && <tr><td colSpan={7} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Belum ada setoran</td></tr>}</tbody>
+          })}{sorted.length === 0 && <tr><td colSpan={8} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Belum ada setoran</td></tr>}</tbody>
         </table>
       </div>
     </div>
@@ -425,19 +443,38 @@ export function SetoranHarian({ setorans, saveSetoran, transactions, kasData, lo
 }
 
 function SetoranForm({ defaults, onSave }) {
-  const [d, setD] = useState({ date: today(), penjualanCash: defaults.penjualanCash, angsuran: defaults.angsuran, pendapatanLain: defaults.pendapatanLain, pengeluaran: defaults.pengeluaran, setorBank: 0, note: '' })
+  // Default tanggal ke tgl 25 bulan ini
+  const now = new Date()
+  const tgl25 = new Date(now.getFullYear(), now.getMonth(), 25).toISOString().slice(0, 10)
+  const [d, setD] = useState({
+    date: tgl25,
+    periode: defaults.periode || '',
+    penjualanCash: defaults.penjualanCash || 0,
+    penjualanKredit: defaults.penjualanKredit || 0,
+    angsuran: defaults.angsuran || 0,
+    pendapatanLain: defaults.pendapatanLain || 0,
+    pengeluaran: defaults.pengeluaran || 0,
+    setorBank: 0,
+    note: ''
+  })
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
-  const totalMasuk = d.penjualanCash + d.angsuran + d.pendapatanLain
-  const saldoKas = totalMasuk - d.pengeluaran
-  const selisih = saldoKas - d.setorBank
+  const totalMasuk = (d.penjualanCash||0) + (d.angsuran||0) + (d.pendapatanLain||0)
+  const saldoKas = totalMasuk - (d.pengeluaran||0)
+  const selisih = saldoKas - (d.setorBank||0)
 
   return (
     <div style={S.form}>
-      <label style={S.formLabel}>Tanggal<input style={S.input} type="date" value={d.date} onChange={e => set('date', e.target.value)} /></label>
-      <div style={{ fontSize: 13, fontWeight: 700, color: '#6b7280' }}>Pemasukan</div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+      <div style={{ padding: '8px 12px', background: '#e3f2fd', borderRadius: 8, fontSize: 12, color: '#1565c0' }}>
+        Periode: <strong>{d.periode}</strong> • Total {defaults.totalNota || 0} nota transaksi
+      </div>
+      <label style={S.formLabel}>Tanggal Setoran<input style={S.input} type="date" value={d.date} onChange={e => set('date', e.target.value)} /></label>
+      <div style={{ fontSize: 13, fontWeight: 700, color: '#6b7280' }}>Pemasukan Periode Ini</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <label style={S.formLabel}>Penjualan Cash<input style={S.input} type="number" value={d.penjualanCash} onChange={e => set('penjualanCash', Number(e.target.value))} /></label>
-        <label style={S.formLabel}>Angsuran<input style={S.input} type="number" value={d.angsuran} onChange={e => set('angsuran', Number(e.target.value))} /></label>
+        <label style={S.formLabel}>Penjualan Kredit<input style={S.input} type="number" value={d.penjualanKredit} onChange={e => set('penjualanKredit', Number(e.target.value))} /></label>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>Angsuran Diterima<input style={S.input} type="number" value={d.angsuran} onChange={e => set('angsuran', Number(e.target.value))} /></label>
         <label style={S.formLabel}>Pendapatan Lain<input style={S.input} type="number" value={d.pendapatanLain} onChange={e => set('pendapatanLain', Number(e.target.value))} /></label>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -456,7 +493,7 @@ function SetoranForm({ defaults, onSave }) {
         </div>
       </div>
       <label style={S.formLabel}>Keterangan<input style={S.input} value={d.note} onChange={e => set('note', e.target.value)} /></label>
-      <button style={{ ...S.primaryBtn, width: '100%' }} onClick={() => onSave(d)}>Simpan Setoran</button>
+      <button style={{ ...S.primaryBtn, width: '100%' }} onClick={() => onSave(d)}>Simpan Setoran Bulanan</button>
     </div>
   )
 }

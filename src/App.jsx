@@ -282,8 +282,6 @@ export default function App() {
   const allNavItems = [
     { id: 'dashboard', label: 'Dashboard', icon: I.home, roles: ['admin','bendahara','ketua','staff'] },
     { id: 'members', label: 'Anggota', icon: I.users, roles: ['admin','bendahara','ketua'] },
-    { id: 'savings', label: 'Simpanan', icon: I.wallet, roles: ['admin','bendahara'] },
-    { id: 'loans', label: 'Pinjaman', icon: I.loan, roles: ['admin','bendahara','ketua'] },
     { id: '_sep1', label: 'TOKO', sep: true, roles: ['admin','bendahara','staff'] },
     { id: 'products', label: 'Stok Barang', icon: I.box, roles: ['admin','bendahara','staff'] },
     { id: 'stockin', label: 'Barang Masuk', icon: I.truck, roles: ['admin','bendahara'] },
@@ -294,17 +292,12 @@ export default function App() {
     { id: 'mutasi', label: 'Mutasi Stok', icon: I.box, roles: ['admin','bendahara'] },
     { id: '_sep2', label: 'KEUANGAN', sep: true, roles: ['admin','bendahara','ketua'] },
     { id: 'kas', label: 'Kas Masuk/Keluar', icon: I.wallet, roles: ['admin','bendahara'] },
-    { id: 'jurnal', label: 'Jurnal Umum', icon: I.chart, roles: ['admin','bendahara'] },
-    { id: 'piutang', label: 'Piutang Pelanggan', icon: I.loan, roles: ['admin','bendahara'] },
-    { id: 'setoran', label: 'Setoran Harian', icon: I.wallet, roles: ['admin','bendahara'] },
+    { id: 'setoran', label: 'Setoran Bulanan', icon: I.wallet, roles: ['admin','bendahara'] },
     { id: 'hutang', label: 'Hutang Supplier', icon: I.truck, roles: ['admin','bendahara'] },
-    { id: 'labarugi', label: 'Laba Rugi', icon: I.chart, roles: ['admin','bendahara','ketua'] },
     { id: 'shu', label: 'Hitung SHU', icon: I.loan, roles: ['admin','ketua'] },
     { id: 'kwitansi', label: 'Cetak Kwitansi', icon: I.home, roles: ['admin','bendahara','staff'] },
     { id: '_sep3', label: 'LAPORAN', sep: true, roles: ['admin','bendahara','ketua'] },
-    { id: 'reports', label: 'Neraca', icon: I.chart, roles: ['admin','bendahara','ketua'] },
     { id: 'rekap', label: 'Rekap Bulanan', icon: I.chart, roles: ['admin','bendahara','ketua'] },
-    { id: 'grafik', label: 'Grafik Trend', icon: I.chart, roles: ['admin','bendahara','ketua'] },
     { id: 'export', label: 'Import/Export', icon: I.home, roles: ['admin','bendahara'] },
     { id: 'audit', label: 'Audit Trail', icon: I.gear, roles: ['admin'] },
     { id: 'notif', label: 'Notifikasi', icon: I.home, roles: ['admin','bendahara','ketua'] },
@@ -389,9 +382,6 @@ export default function App() {
       <main className="app-main" style={S.main}>
         {page === 'dashboard' && <Dashboard {...{ totalMembers, totalSavings, totalLoansOut, members, savings, loans, getMember, setPage, products, transactions, kasData }} />}
         {page === 'members' && <Members {...{ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc, kompiList: settings.kompiList || [] }} />}
-        {page === 'savings' && <Savings {...{ savings, saveSaving, deleteSaving, members, getMember, setModal, showToast }} />}
-        {page === 'loans' && <Loans {...{ loans, saveLoan, payLoan, members, getMember, setModal, showToast, settings }} />}
-        {page === 'reports' && <Reports {...{ members, savings, loans, getMember }} />}
         {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, jenisList: settings.jenisList || [] }} />}
         {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, products, suppliers, updateProductStock, setModal, showToast }} />}
         {page === 'pos' && <POS {...{ products, transactions, saveTransaction, updateProductStock, members, showToast, savePiutang, settings }} />}
@@ -400,15 +390,11 @@ export default function App() {
         {page === 'harga' && <HargaBertingkat {...{ products, saveProduct, setModal, showToast }} />}
         {page === 'mutasi' && <MutasiStok {...{ mutasis, saveMutasi, products, updateProductStock, setModal, showToast }} />}
         {page === 'kas' && <KasMasukKeluar {...{ kasData, saveKas, deleteKas, setModal, showToast }} />}
-        {page === 'jurnal' && <JurnalUmum {...{ jurnalData, saveJurnal, deleteJurnal, setModal, showToast }} />}
-        {page === 'piutang' && <PiutangPage {...{ piutangs, savePiutang, bayarPiutang, members, getMember, setModal, showToast }} />}
         {page === 'setoran' && <SetoranHarian {...{ setorans, saveSetoran, transactions, kasData, loans, setModal, showToast }} />}
         {page === 'hutang' && <HutangSupplier {...{ hutangs, saveHutang, bayarHutang, suppliers, setModal, showToast }} />}
-        {page === 'labarugi' && <LabaRugi {...{ kasData, transactions, loans, products, settings }} />}
         {page === 'shu' && <HitungSHU {...{ members, savings, loans, transactions, kasData, products, settings }} />}
         {page === 'kwitansi' && <CetakKwitansi {...{ transactions, savings, loans, members, getMember, settings, setModal }} />}
         {page === 'rekap' && <RekapBulanan {...{ members, savings, loans, transactions, kasData, products, settings }} />}
-        {page === 'grafik' && <GrafikTrend {...{ savings, loans, transactions, kasData, products }} />}
         {page === 'export' && <ExportData {...{ members, savings, loans, products, transactions, kasData, settings,
           saveImportedMembers: async (items, onProgress) => { return await batchSet('members', items, onProgress) },
           saveImportedProducts: async (items, onProgress) => { return await batchSet('products', items, onProgress) },
@@ -522,17 +508,15 @@ function LoginScreen({ onLogin }) {
 function Dashboard({ totalMembers, totalSavings, totalLoansOut, members, savings, loans, getMember, setPage, products, transactions, kasData }) {
   const totalInventory = products.reduce((a, p) => a + ((p.stock||0) * (p.buyPrice||0)), 0)
   const todaySales = transactions.filter(t => t.date === today()).reduce((a, t) => a + (t.total||0), 0)
+  const todayCount = transactions.filter(t => t.date === today()).length
   const lowStock = products.filter(p => (p.stock||0) <= (p.minStock||2)).length
   const cards = [
     { label: 'Total Anggota', value: totalMembers, icon: I.users, color: 'var(--b)' },
-    { label: 'Total Simpanan', value: formatRp(totalSavings), icon: I.wallet, color: 'var(--g)' },
-    { label: 'Pinjaman Berjalan', value: formatRp(totalLoansOut), icon: I.loan, color: 'var(--o)' },
-    { label: 'Nilai Inventaris', value: formatRp(totalInventory), icon: I.box, color: 'var(--p)' },
-    { label: 'Penjualan Hari Ini', value: formatRp(todaySales), icon: I.cart, color: 'var(--g)' },
+    { label: 'Total Produk', value: products.length, icon: I.box, color: 'var(--p)' },
+    { label: 'Nilai Inventaris', value: formatRp(totalInventory), icon: I.wallet, color: 'var(--g)' },
+    { label: 'Penjualan Hari Ini', value: formatRp(todaySales) + ` (${todayCount} nota)`, icon: I.cart, color: 'var(--g)' },
     { label: 'Stok Menipis', value: lowStock + ' item', icon: I.chart, color: lowStock > 0 ? 'var(--r)' : 'var(--g)' },
   ]
-  const recentSavings = [...savings].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5)
-  const activeLoans = loans.filter(l => l.status === 'active')
 
   return (
     <div>
@@ -554,34 +538,32 @@ function Dashboard({ totalMembers, totalSavings, totalLoansOut, members, savings
 
       <div style={S.row2}>
         <div style={S.card}>
-          <div style={S.cardHead}><h3 style={S.cardTitle}>Simpanan Terakhir</h3><button style={S.linkBtn} onClick={() => setPage('savings')}>Lihat Semua</button></div>
+          <div style={S.cardHead}><h3 style={S.cardTitle}>Transaksi Terakhir</h3><button style={S.linkBtn} onClick={() => setPage('pos')}>Lihat Semua</button></div>
           <table style={S.table}>
-            <thead><tr>{['Anggota', 'Jenis', 'Jumlah', 'Tanggal'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-            <tbody>{recentSavings.map(s => {
-              const m = getMember(s.memberId)
-              return (<tr key={s.id} style={S.tr}>
-                <td style={S.td}>{m?.name || '-'}</td>
-                <td style={S.td}><span style={{ ...S.badge, ...badgeColor(s.type) }}>{s.type}</span></td>
-                <td style={S.td}>{formatRp(s.amount)}</td>
-                <td style={S.td}>{fmtDate(s.date)}</td>
-              </tr>)
-            })}</tbody>
+            <thead><tr>{['Nota', 'Pembeli', 'Total', 'Status'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{[...transactions].sort((a, b) => (b.date||'').localeCompare(a.date||'')).slice(0, 5).map(tx => (
+              <tr key={tx.id} style={S.tr}>
+                <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{tx.noNota || '-'}</td>
+                <td style={S.td}>{tx.customerName || 'Umum'}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{formatRp(tx.total)}</td>
+                <td style={S.td}><span style={{ ...S.badge, background: tx.caraBayar === 'KREDIT' ? '#fff3e0' : '#e8f5e9', color: tx.caraBayar === 'KREDIT' ? '#e65100' : '#2e7d32' }}>{tx.caraBayar || 'LUNAS'}</span></td>
+              </tr>
+            ))}{transactions.length === 0 && <tr><td colSpan={4} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Belum ada transaksi</td></tr>}</tbody>
           </table>
         </div>
         <div style={S.card}>
-          <div style={S.cardHead}><h3 style={S.cardTitle}>Pinjaman Aktif</h3><button style={S.linkBtn} onClick={() => setPage('loans')}>Lihat Semua</button></div>
-          {activeLoans.length === 0 ? <p style={S.empty}>Tidak ada pinjaman aktif</p> : (
+          <div style={S.cardHead}><h3 style={S.cardTitle}>Stok Menipis</h3><button style={S.linkBtn} onClick={() => setPage('products')}>Lihat Semua</button></div>
+          {products.filter(p => (p.stock||0) <= (p.minStock||2) && p.name).length === 0 ? <p style={S.empty}>Semua stok aman</p> : (
             <table style={S.table}>
-              <thead><tr>{['Anggota', 'Jumlah', 'Sisa', 'Tenor'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-              <tbody>{activeLoans.map(l => {
-                const m = getMember(l.memberId)
-                return (<tr key={l.id} style={S.tr}>
-                  <td style={S.td}>{m?.name || '-'}</td>
-                  <td style={S.td}>{formatRp(l.amount)}</td>
-                  <td style={S.td}>{formatRp(l.amount - l.paid)}</td>
-                  <td style={S.td}>{l.tenor} bln</td>
-                </tr>)
-              })}</tbody>
+              <thead><tr>{['Produk', 'Stok', 'Min', 'Status'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <tbody>{products.filter(p => (p.stock||0) <= (p.minStock||2) && p.name).slice(0, 8).map(p => (
+                <tr key={p.id} style={S.tr}>
+                  <td style={{ ...S.td, fontWeight: 600 }}>{p.name}</td>
+                  <td style={{ ...S.td, color: p.stock <= 0 ? 'var(--r)' : 'var(--o)', fontWeight: 600 }}>{p.stock} {p.unit}</td>
+                  <td style={S.td}>{p.minStock}</td>
+                  <td style={S.td}><span style={{ ...S.badge, background: p.stock <= 0 ? '#ffebee' : '#fff3e0', color: p.stock <= 0 ? '#c62828' : '#e65100' }}>{p.stock <= 0 ? 'Habis' : 'Menipis'}</span></td>
+                </tr>
+              ))}</tbody>
             </table>
           )}
         </div>
