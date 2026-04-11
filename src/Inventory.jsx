@@ -26,17 +26,20 @@ const IC = {
 // =============================================
 // PRODUK / STOK BARANG
 // =============================================
-export function Products({ products, saveProduct, deleteProduct, suppliers, setModal, showToast }) {
+export function Products({ products, saveProduct, deleteProduct, suppliers, setModal, showToast, jenisList }) {
   const [search, setSearch] = useState('')
   const [catFilter, setCatFilter] = useState('all')
+  const [rakFilter, setRakFilter] = useState('all')
   const [showScanner, setShowScanner] = useState(false)
   const [page_, setPage_] = useState(1)
   const pageSize = 50
 
   const categories = [...new Set(products.map(p => p.category || 'Lainnya'))].filter(Boolean).sort()
+  const raks = [...new Set(products.map(p => p.rak).filter(Boolean))].sort()
   const filtered = products.filter(p => {
     if (catFilter === '_low') return p.stock <= (p.minStock || 10)
     if (catFilter !== 'all' && p.category !== catFilter) return false
+    if (rakFilter !== 'all' && p.rak !== rakFilter) return false
     if (search && !String(p.name||'').toLowerCase().includes(search.toLowerCase()) && !String(p.sku||'').toLowerCase().includes(search.toLowerCase())) return false
     return true
   })
@@ -54,7 +57,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
     }
     setModal({
       title: isEdit ? 'Edit Produk' : 'Tambah Produk',
-      content: <ProductForm initial={data} suppliers={suppliers} onSave={async d => {
+      content: <ProductForm initial={data} suppliers={suppliers} jenisList={jenisList} onSave={async d => {
         await saveProduct(isEdit ? { ...product, ...d } : d, isEdit)
         setModal(null)
         showToast(isEdit ? 'Produk diperbarui' : 'Produk ditambahkan')
@@ -63,10 +66,10 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   }
 
   function exportCSV() {
-    const header = 'SKU,Nama Produk,Kategori,Harga Beli,Harga Jual 1,Harga Jual 2,Stok,Satuan,Min Stok,Status\n'
+    const header = 'SKU,Nama Produk,Kategori,Rak,Harga Beli,Harga Jual 1,Harga Jual 2,Limit Qty,Stok,Satuan,Min Stok,Status\n'
     const rows = products.map(p => {
       const status = p.stock <= 0 ? 'Habis' : p.stock <= p.minStock ? 'Menipis' : 'Aman'
-      return [p.sku, '"'+p.name+'"', p.category, p.buyPrice, p.sellPrice, p.sellPrice2||'', p.stock, p.unit, p.minStock, status].join(',')
+      return [p.sku, '"'+p.name+'"', p.category, p.rak||'', p.buyPrice, p.sellPrice, p.sellPrice2||'', p.limitQty||'', p.stock, p.unit, p.minStock, status].join(',')
     }).join('\n')
     const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' })
     const a = document.createElement('a')
@@ -115,6 +118,10 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
               {categories.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           )}
+          {raks.length > 0 && <select style={{ ...S.input, padding: '5px 10px', fontSize: 12, minWidth: 120 }} value={rakFilter} onChange={e => { setRakFilter(e.target.value); setPage_(1) }}>
+            <option value="all">Semua Rak</option>
+            {raks.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>}
         </div>
       </div>
 
@@ -130,7 +137,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
           )}
         </div>
         <table style={S.table}>
-          <thead><tr>{['SKU', 'Nama Produk', 'Kategori', 'Harga Beli', 'Harga Jual', 'Stok', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>{['SKU', 'Nama Produk', 'Kategori', 'Rak', 'Harga Beli', 'Harga Jual 1', 'Harga 2', 'Stok', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
           <tbody>{paginated.map(p => {
             const isLow = p.stock <= p.minStock
             return (
@@ -138,8 +145,10 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
                 <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 12 }}>{p.sku}</td>
                 <td style={{ ...S.td, fontWeight: 600 }}>{p.name}</td>
                 <td style={S.td}><span style={{ ...S.badge, background: catColor(p.category).bg, color: catColor(p.category).fg }}>{p.category}</span></td>
+                <td style={{ ...S.td, fontSize: 11 }}>{p.rak || '-'}</td>
                 <td style={S.td}>{formatRp(p.buyPrice)}</td>
                 <td style={S.td}>{formatRp(p.sellPrice)}</td>
+                <td style={{ ...S.td, fontSize: 12, color: '#666' }}>{p.sellPrice2 ? formatRp(p.sellPrice2) + (p.limitQty ? ' (≥'+p.limitQty+')' : '') : '-'}</td>
                 <td style={{ ...S.td, fontWeight: 600, color: isLow ? 'var(--r)' : 'var(--g)' }}>{p.stock} {p.unit}</td>
                 <td style={S.td}>
                   {isLow ? <span style={{ ...S.badge, background: '#ffebee', color: '#c62828' }}>Menipis</span> :
@@ -151,7 +160,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
                 </td>
               </tr>
             )
-          })}{filtered.length === 0 && <tr><td colSpan={8} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Tidak ada data</td></tr>}</tbody>
+          })}{filtered.length === 0 && <tr><td colSpan={10} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Tidak ada data</td></tr>}</tbody>
         </table>
         {totalPages > 1 && (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 4, marginTop: 16 }}>
@@ -169,26 +178,32 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   )
 }
 
-function ProductForm({ initial, suppliers, onSave }) {
+function ProductForm({ initial, suppliers, jenisList, onSave }) {
   const [d, setD] = useState(initial)
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
   const margin = d.sellPrice && d.buyPrice ? Math.round(((d.sellPrice - d.buyPrice) / d.buyPrice) * 100) : 0
+  const cats = jenisList && jenisList.length > 0 ? jenisList : ['Sembako', 'Makanan', 'Minuman', 'Toiletries', 'ATK', 'Lainnya']
   return (
     <div style={S.form}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <label style={S.formLabel}>SKU<input style={S.input} value={d.sku} onChange={e => set('sku', e.target.value)} /></label>
-        <label style={S.formLabel}>Kategori
+        <label style={S.formLabel}>SKU / Kode Brg<input style={S.input} value={d.sku} onChange={e => set('sku', e.target.value)} /></label>
+        <label style={S.formLabel}>Jenis / Kategori
           <select style={S.input} value={d.category} onChange={e => set('category', e.target.value)}>
-            {['Sembako', 'Makanan', 'Minuman', 'Toiletries', 'ATK', 'Lainnya'].map(c => <option key={c}>{c}</option>)}
+            {cats.map(c => <option key={c}>{c}</option>)}
           </select>
         </label>
       </div>
       <label style={S.formLabel}>Nama Produk<input style={S.input} value={d.name} onChange={e => set('name', e.target.value)} /></label>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <label style={S.formLabel}>Harga Beli (Rp)<input style={S.input} type="number" value={d.buyPrice} onChange={e => set('buyPrice', Number(e.target.value))} /></label>
-        <label style={S.formLabel}>Harga Jual (Rp)<input style={S.input} type="number" value={d.sellPrice} onChange={e => set('sellPrice', Number(e.target.value))} /></label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>Harga Beli / HPP<input style={S.input} type="number" value={d.buyPrice} onChange={e => set('buyPrice', Number(e.target.value))} /></label>
+        <label style={S.formLabel}>Harga Jual 1<input style={S.input} type="number" value={d.sellPrice} onChange={e => set('sellPrice', Number(e.target.value))} /></label>
+        <label style={S.formLabel}>Harga Jual 2 (Grosir)<input style={S.input} type="number" value={d.sellPrice2||''} onChange={e => set('sellPrice2', Number(e.target.value))} placeholder="Opsional" /></label>
       </div>
-      {margin > 0 && <div style={{ padding: '6px 12px', background: '#e8f5e9', borderRadius: 8, fontSize: 12, color: '#2e7d32' }}>Margin: {margin}%</div>}
+      {margin > 0 && <div style={{ padding: '6px 12px', background: '#e8f5e9', borderRadius: 8, fontSize: 12, color: '#2e7d32' }}>Margin Harga 1: {margin}%</div>}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>Batas Qty Grosir (Limit)<input style={S.input} type="number" value={d.limitQty||''} onChange={e => set('limitQty', Number(e.target.value))} placeholder="Min qty utk Harga 2" /></label>
+        <label style={S.formLabel}>Rak / Lokasi<input style={S.input} value={d.rak||''} onChange={e => set('rak', e.target.value)} placeholder="Contoh: RAK A1" /></label>
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
         <label style={S.formLabel}>Stok<input style={S.input} type="number" value={d.stock} onChange={e => set('stock', Number(e.target.value))} /></label>
         <label style={S.formLabel}>Satuan<input style={S.input} value={d.unit} onChange={e => set('unit', e.target.value)} /></label>
@@ -423,7 +438,7 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   }
 
   function addToCart(product) {
-    // Pilih harga berdasarkan tipe pelanggan
+    // Pilih harga berdasarkan tipe pelanggan ATAU qty limit
     const member = members.find(m => m.id === memberId)
     const useHarga2 = member?.tingkatHrg === '2'
     const price = useHarga2 && product.sellPrice2 ? product.sellPrice2 : product.sellPrice
@@ -432,15 +447,34 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
       const existing = prev.find(c => c.productId === product.id)
       if (existing) {
         if (existing.qty >= product.stock) return prev
-        return prev.map(c => c.productId === product.id ? { ...c, qty: c.qty + 1 } : c)
+        const newQty = existing.qty + 1
+        // Auto switch harga jika qty >= limitQty
+        const autoPrice = (product.limitQty && newQty >= product.limitQty && product.sellPrice2)
+          ? product.sellPrice2 : (useHarga2 && product.sellPrice2 ? product.sellPrice2 : product.sellPrice)
+        return prev.map(c => c.productId === product.id ? { ...c, qty: newQty, price: autoPrice } : c)
       }
-      return [...prev, { productId: product.id, name: product.name, price, qty: 1, maxStock: product.stock, diskon: 0 }]
+      return [...prev, { productId: product.id, name: product.name, price, qty: 1, maxStock: product.stock, diskon: 0, limitQty: product.limitQty || 0, sellPrice: product.sellPrice, sellPrice2: product.sellPrice2 || 0 }]
     })
   }
 
   function updateQty(productId, qty) {
     if (qty <= 0) { setCart(prev => prev.filter(c => c.productId !== productId)); return }
-    setCart(prev => prev.map(c => c.productId === productId ? { ...c, qty: Math.min(qty, c.maxStock) } : c))
+    setCart(prev => prev.map(c => {
+      if (c.productId !== productId) return c
+      const newQty = Math.min(qty, c.maxStock)
+      // Auto switch harga berdasarkan qty limit
+      const member = members.find(m => m.id === memberId)
+      const useHarga2 = member?.tingkatHrg === '2'
+      let newPrice = c.sellPrice || c.price
+      if (c.limitQty && newQty >= c.limitQty && c.sellPrice2) {
+        newPrice = c.sellPrice2
+      } else if (useHarga2 && c.sellPrice2) {
+        newPrice = c.sellPrice2
+      } else if (c.sellPrice) {
+        newPrice = c.sellPrice
+      }
+      return { ...c, qty: newQty, price: newPrice }
+    }))
   }
 
   function updateDiskon(productId, diskon) {

@@ -149,7 +149,9 @@ export function ExportData({ members, savings, loans, products, transactions, ka
       if (importType === 'members') {
         items = rows.map((r, i) => ({
           id: genId(), no: String(r['No']||r['no']||r['NO']||i+1).padStart(3,'0'),
-          name: r['Nama']||r['nama']||r['NAMA']||r['Name']||'',
+          name: r['Nama']||r['nama']||r['NAMA']||r['Name']||r['NamaPlg']||'',
+          nrp: String(r['NRP']||r['nrp']||r['Nrp']||''),
+          kompi: String(r['Kompi']||r['kompi']||r['KOMPI']||r['Satuan']||''),
           phone: String(r['Telepon']||r['telepon']||r['Phone']||r['HP']||''),
           address: r['Alamat']||r['alamat']||r['Address']||'',
           joinDate: r['Tgl Gabung']||r['tanggal']||today(), status: 'active'
@@ -162,10 +164,12 @@ export function ExportData({ members, savings, loans, products, transactions, ka
         items = rows.map((r, i) => ({
           id: genId(), sku: String(r['SKU']||r['sku']||r['Kode']||r['KodeBrg']||('BRG-'+String(i+1).padStart(3,'0'))),
           name: String(r['Nama']||r['nama']||r['Produk']||r['NamaBrg']||''),
-          category: String(r['Kategori']||r['kategori']||r['Rak']||r['Jenis']||'Lainnya'),
+          category: String(r['Kategori']||r['kategori']||r['Jenis']||'Lainnya'),
+          rak: String(r['Rak']||r['rak']||r['Lokasi']||''),
           buyPrice: Number(r['Harga Beli']||r['harga_beli']||r['Hpp']||r['buyPrice']||0),
           sellPrice: Number(r['Harga Jual']||r['harga_jual']||r['Harga1']||r['sellPrice']||0),
           sellPrice2: Number(r['Harga Jual 2']||r['harga_jual_2']||r['Harga2']||r['sellPrice2']||0),
+          limitQty: Number(r['Limit Qty']||r['limitQty']||r['Limit2']||0),
           stock: Number(r['Stok']||r['stok']||r['Stock']||r['JmlStock']||r['stock']||0),
           unit: String(r['Satuan']||r['satuan']||r['Unit']||r['Sat']||r['unit']||'pcs'),
           minStock: Number(r['Min Stok']||r['min_stok']||r['minStock']||2), supplierId: ''

@@ -77,7 +77,9 @@ export default function App() {
   const [setorans, setSetorans] = useState([])
   const [hutangs, setHutangs] = useState([])
   const [settings, setSettings] = useState({
-    name: 'KOPERASI YONIF 527/BY', simpPokok: 500000, simpWajib: 100000, bungaPinjaman: 1.5, maxPinjaman: 10000000
+    name: 'KOPERASI YONIF 527/BY', simpPokok: 500000, simpWajib: 100000, bungaPinjaman: 1.5, maxPinjaman: 10000000,
+    kompiList: ['KOMPI A', 'KOMPI B', 'KOMPI C', 'KOMPI D', 'KOMPI E', 'STAF', 'BAND'],
+    jenisList: ['Sembako', 'Makanan', 'Minuman', 'Toiletries', 'ATK', 'Elektronik', 'Pakaian', 'Lainnya']
   })
 
   const [modal, setModal] = useState(null)
@@ -386,11 +388,11 @@ export default function App() {
       {/* MAIN */}
       <main className="app-main" style={S.main}>
         {page === 'dashboard' && <Dashboard {...{ totalMembers, totalSavings, totalLoansOut, members, savings, loans, getMember, setPage, products, transactions, kasData }} />}
-        {page === 'members' && <Members {...{ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc }} />}
+        {page === 'members' && <Members {...{ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc, kompiList: settings.kompiList || [] }} />}
         {page === 'savings' && <Savings {...{ savings, saveSaving, deleteSaving, members, getMember, setModal, showToast }} />}
         {page === 'loans' && <Loans {...{ loans, saveLoan, payLoan, members, getMember, setModal, showToast, settings }} />}
         {page === 'reports' && <Reports {...{ members, savings, loans, getMember }} />}
-        {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast }} />}
+        {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, jenisList: settings.jenisList || [] }} />}
         {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, products, suppliers, updateProductStock, setModal, showToast }} />}
         {page === 'pos' && <POS {...{ products, transactions, saveTransaction, updateProductStock, members, showToast, savePiutang, settings }} />}
         {page === 'suppliers' && <Suppliers {...{ suppliers, saveSupplier, deleteSupplier, products, setModal, showToast }} />}
@@ -594,23 +596,27 @@ function Dashboard({ totalMembers, totalSavings, totalLoansOut, members, savings
 // =============================================
 // MEMBERS
 // =============================================
-function Members({ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc }) {
+function Members({ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc, kompiList }) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
+  const [kompiFilter, setKompiFilter] = useState('all')
+
+  const allKompi = [...new Set(members.map(m => m.kompi).filter(Boolean))].sort()
 
   const filtered = members.filter(m => {
     if (filter === 'active' && m.status !== 'active') return false
     if (filter === 'inactive' && m.status !== 'inactive') return false
-    if (search && !m.name.toLowerCase().includes(search.toLowerCase()) && !m.no.includes(search)) return false
+    if (kompiFilter !== 'all' && m.kompi !== kompiFilter) return false
+    if (search && !m.name.toLowerCase().includes(search.toLowerCase()) && !m.no.includes(search) && !(m.nrp||'').includes(search)) return false
     return true
   })
 
   function openForm(member) {
     const isEdit = !!member
-    const data = member ? { ...member } : { no: String(members.length + 1).padStart(3, '0'), name: '', phone: '', address: '', joinDate: today(), status: 'active' }
+    const data = member ? { ...member } : { no: String(members.length + 1).padStart(3, '0'), name: '', phone: '', address: '', nrp: '', kompi: '', joinDate: today(), status: 'active' }
     setModal({
       title: isEdit ? 'Edit Anggota' : 'Tambah Anggota',
-      content: <MemberForm initial={data} onSave={async d => {
+      content: <MemberForm initial={data} kompiList={kompiList} onSave={async d => {
         await saveMember(isEdit ? { ...member, ...d } : d, isEdit)
         setModal(null)
         showToast(isEdit ? 'Anggota diperbarui' : 'Anggota ditambahkan')
@@ -622,7 +628,7 @@ function Members({ members, saveMember, deleteMember, memberSavings, memberLoans
     <div>
       <div style={S.pageHead}><h2 style={S.title}>Data Anggota</h2><button style={S.primaryBtn} onClick={() => openForm(null)}>{I.plus} Tambah Anggota</button></div>
       <div style={S.toolbar}>
-        <div style={S.searchBox}>{I.search}<input style={S.searchInput} placeholder="Cari nama / no anggota..." value={search} onChange={e => setSearch(e.target.value)} /></div>
+        <div style={S.searchBox}>{I.search}<input style={S.searchInput} placeholder="Cari nama / NRP / no anggota..." value={search} onChange={e => setSearch(e.target.value)} /></div>
         <div style={S.filterGroup}>
           {['all', 'active', 'inactive'].map(f => (
             <button key={f} style={{ ...S.filterBtn, ...(filter === f ? S.filterActive : {}) }} onClick={() => setFilter(f)}>
@@ -630,14 +636,20 @@ function Members({ members, saveMember, deleteMember, memberSavings, memberLoans
             </button>
           ))}
         </div>
+        {allKompi.length > 0 && <select style={{ ...S.input, width: 'auto', minWidth: 130 }} value={kompiFilter} onChange={e => setKompiFilter(e.target.value)}>
+          <option value="all">Semua Kompi</option>
+          {allKompi.map(k => <option key={k} value={k}>{k}</option>)}
+        </select>}
       </div>
       <div style={S.card}>
         <table style={S.table}>
-          <thead><tr>{['No', 'Nama', 'Telepon', 'Simpanan', 'Pinjaman', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>{['No', 'NRP', 'Nama', 'Kompi', 'Telepon', 'Simpanan', 'Pinjaman', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
           <tbody>{filtered.map(m => (
             <tr key={m.id} style={S.tr}>
               <td style={S.td}>{m.no}</td>
+              <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 12 }}>{m.nrp || '-'}</td>
               <td style={{ ...S.td, fontWeight: 600 }}>{m.name}</td>
+              <td style={S.td}>{m.kompi || '-'}</td>
               <td style={S.td}>{m.phone}</td>
               <td style={{ ...S.td, color: 'var(--g)' }}>{formatRp(memberSavings(m.id))}</td>
               <td style={{ ...S.td, color: 'var(--o)' }}>{formatRp(memberLoans(m.id))}</td>
@@ -650,22 +662,37 @@ function Members({ members, saveMember, deleteMember, memberSavings, memberLoans
                 <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus anggota ' + m.name + '?')) { await deleteMember(m.id); showToast('Anggota dihapus', 'error') } }}>{I.trash}</button>
               </td>
             </tr>
-          ))}{filtered.length === 0 && <tr><td colSpan={7} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Tidak ada data</td></tr>}</tbody>
+          ))}{filtered.length === 0 && <tr><td colSpan={9} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Tidak ada data</td></tr>}</tbody>
         </table>
       </div>
     </div>
   )
 }
 
-function MemberForm({ initial, onSave }) {
+function MemberForm({ initial, onSave, kompiList }) {
   const [d, setD] = useState(initial)
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
   return (
     <div style={S.form}>
-      {[['No Anggota', 'no', 'text'], ['Nama Lengkap', 'name', 'text'], ['Telepon', 'phone', 'tel'], ['Alamat', 'address', 'text'], ['Tanggal Gabung', 'joinDate', 'date']].map(([l, k, t]) => (
-        <label key={k} style={S.formLabel}>{l}<input style={S.input} type={t} value={d[k]} onChange={e => set(k, e.target.value)} /></label>
-      ))}
-      <label style={S.formLabel}>Status<select style={S.input} value={d.status} onChange={e => set('status', e.target.value)}><option value="active">Aktif</option><option value="inactive">Nonaktif</option></select></label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>No Anggota<input style={S.input} value={d.no} onChange={e => set('no', e.target.value)} /></label>
+        <label style={S.formLabel}>NRP<input style={S.input} value={d.nrp||''} onChange={e => set('nrp', e.target.value)} placeholder="NRP anggota" /></label>
+      </div>
+      <label style={S.formLabel}>Nama Lengkap<input style={S.input} value={d.name} onChange={e => set('name', e.target.value)} /></label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>Telepon<input style={S.input} type="tel" value={d.phone} onChange={e => set('phone', e.target.value)} /></label>
+        <label style={S.formLabel}>Kompi / Satuan
+          <select style={S.input} value={d.kompi||''} onChange={e => set('kompi', e.target.value)}>
+            <option value="">-- Pilih Kompi --</option>
+            {(kompiList||[]).map(k => <option key={k} value={k}>{k}</option>)}
+          </select>
+        </label>
+      </div>
+      <label style={S.formLabel}>Alamat<input style={S.input} value={d.address} onChange={e => set('address', e.target.value)} /></label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>Tanggal Gabung<input style={S.input} type="date" value={d.joinDate} onChange={e => set('joinDate', e.target.value)} /></label>
+        <label style={S.formLabel}>Status<select style={S.input} value={d.status} onChange={e => set('status', e.target.value)}><option value="active">Aktif</option><option value="inactive">Nonaktif</option></select></label>
+      </div>
       <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={() => onSave(d)}>Simpan</button>
     </div>
   )
@@ -772,10 +799,22 @@ function Loans({ loans, saveLoan, payLoan, members, getMember, setModal, showToa
   function openPay(loan) {
     const remaining = loan.amount - loan.paid
     const mp = Math.min(Math.ceil(loan.amount / loan.tenor), remaining)
-    const mi = Math.round(remaining * loan.interest / 100)
+    const metode = loan.metodeBunga || 'flat'
+    let mi = 0
+    if (metode === 'flat') {
+      mi = Math.round(loan.amount * loan.interest / 100)
+    } else if (metode === 'anuitas') {
+      const r = loan.interest / 100
+      if (r > 0) {
+        const angsuran = loan.amount * (r / (1 - Math.pow(1 + r, -loan.tenor)))
+        mi = Math.round(remaining * r)
+      }
+    } else {
+      mi = Math.round(remaining * loan.interest / 100)
+    }
     setModal({
       title: 'Bayar Angsuran - ' + (getMember(loan.memberId)?.name || ''),
-      content: <InstallmentForm remaining={remaining} sp={mp} si={mi} onSave={async (p, i) => { await payLoan(loan, p, i); setModal(null); showToast('Angsuran berhasil dicatat') }} />,
+      content: <InstallmentForm remaining={remaining} sp={mp} si={mi} metode={metode} onSave={async (p, i) => { await payLoan(loan, p, i); setModal(null); showToast('Angsuran berhasil dicatat') }} />,
     })
   }
 
@@ -796,7 +835,7 @@ function Loans({ loans, saveLoan, payLoan, members, getMember, setModal, showToa
       </div>
       <div style={S.card}>
         <table style={S.table}>
-          <thead><tr>{['Tanggal', 'Anggota', 'Pinjaman', 'Dibayar', 'Sisa', 'Bunga', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>{['Tanggal', 'Anggota', 'Pinjaman', 'Dibayar', 'Sisa', 'Bunga', 'Metode', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
           <tbody>{filtered.map(l => {
             const m = getMember(l.memberId); const rem = l.amount - l.paid; const pct = Math.round((l.paid / l.amount) * 100)
             return (<tr key={l.id} style={S.tr}>
@@ -806,6 +845,7 @@ function Loans({ loans, saveLoan, payLoan, members, getMember, setModal, showToa
               <td style={{ ...S.td, color: 'var(--g)' }}>{formatRp(l.paid)}</td>
               <td style={{ ...S.td, color: 'var(--o)' }}>{formatRp(rem)}</td>
               <td style={S.td}>{l.interest}%</td>
+              <td style={S.td}><span style={{ ...S.badge, background: '#f0f7ff', color: 'var(--b)', fontSize: 10 }}>{(l.metodeBunga||'flat').toUpperCase()}</span></td>
               <td style={S.td}><span style={{ ...S.badge, background: l.status === 'active' ? 'var(--o)20' : 'var(--g)20', color: l.status === 'active' ? 'var(--o)' : 'var(--g)' }}>{l.status === 'active' ? `${pct}%` : 'Lunas'}</span></td>
               <td style={S.td}>{l.status === 'active' && <button style={{ ...S.smallBtn, color: 'var(--g)', fontSize: 12, fontWeight: 600 }} onClick={() => openPay(l)}>Bayar</button>}</td>
             </tr>)
@@ -817,17 +857,53 @@ function Loans({ loans, saveLoan, payLoan, members, getMember, setModal, showToa
 }
 
 function LoanForm({ members, settings, onSave }) {
-  const [d, setD] = useState({ memberId: members[0]?.id || '', amount: '', interest: settings.bungaPinjaman, tenor: 12, date: today() })
+  const [d, setD] = useState({ memberId: members[0]?.id || '', amount: '', interest: settings.bungaPinjaman, tenor: 12, date: today(), metodeBunga: 'flat' })
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
-  const monthly = d.amount && d.tenor ? Math.ceil(Number(d.amount) / Number(d.tenor)) : 0
+  const amt = Number(d.amount) || 0
+  const rate = Number(d.interest) || 0
+  const tnr = Number(d.tenor) || 1
+
+  // Estimasi angsuran per bulan berdasarkan metode
+  let estPokok = 0, estBunga = 0
+  if (amt > 0 && tnr > 0) {
+    if (d.metodeBunga === 'flat') {
+      estPokok = Math.ceil(amt / tnr)
+      estBunga = Math.round(amt * rate / 100)
+    } else if (d.metodeBunga === 'anuitas') {
+      const r = rate / 100
+      if (r > 0) {
+        const angsuran = amt * (r / (1 - Math.pow(1 + r, -tnr)))
+        estPokok = Math.ceil(angsuran - (amt * r))
+        estBunga = Math.round(amt * r)
+      } else {
+        estPokok = Math.ceil(amt / tnr); estBunga = 0
+      }
+    } else if (d.metodeBunga === 'menurun') {
+      estPokok = Math.ceil(amt / tnr)
+      estBunga = Math.round(amt * rate / 100)
+    }
+  }
+
   return (
     <div style={S.form}>
       <label style={S.formLabel}>Anggota<select style={S.input} value={d.memberId} onChange={e => set('memberId', e.target.value)}>{members.map(m => <option key={m.id} value={m.id}>{m.no} - {m.name}</option>)}</select></label>
       <label style={S.formLabel}>Jumlah Pinjaman (Rp)<input style={S.input} type="number" max={settings.maxPinjaman} value={d.amount} onChange={e => set('amount', e.target.value)} /></label>
-      <label style={S.formLabel}>Bunga (% / bulan)<input style={S.input} type="number" step="0.1" value={d.interest} onChange={e => set('interest', e.target.value)} /></label>
-      <label style={S.formLabel}>Tenor (bulan)<select style={S.input} value={d.tenor} onChange={e => set('tenor', e.target.value)}>{[3, 6, 12, 18, 24].map(t => <option key={t} value={t}>{t} bulan</option>)}</select></label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>Bunga (% / bulan)<input style={S.input} type="number" step="0.1" value={d.interest} onChange={e => set('interest', e.target.value)} /></label>
+        <label style={S.formLabel}>Tenor (bulan)<select style={S.input} value={d.tenor} onChange={e => set('tenor', e.target.value)}>{[3, 6, 12, 18, 24, 36].map(t => <option key={t} value={t}>{t} bulan</option>)}</select></label>
+      </div>
+      <label style={S.formLabel}>Metode Bunga
+        <select style={S.input} value={d.metodeBunga} onChange={e => set('metodeBunga', e.target.value)}>
+          <option value="flat">Flat (Tetap)</option>
+          <option value="anuitas">Anuitas (Menurun)</option>
+          <option value="menurun">Efektif (Sisa Pokok)</option>
+        </select>
+      </label>
       <label style={S.formLabel}>Tanggal<input style={S.input} type="date" value={d.date} onChange={e => set('date', e.target.value)} /></label>
-      {monthly > 0 && <div style={{ padding: '8px 12px', background: '#f0f7ff', borderRadius: 8, fontSize: 13 }}>Estimasi: <strong>{formatRp(monthly)}</strong>/bln + bunga</div>}
+      {amt > 0 && <div style={{ padding: '8px 12px', background: '#f0f7ff', borderRadius: 8, fontSize: 13 }}>
+        Estimasi bulan 1: Pokok <strong>{formatRp(estPokok)}</strong> + Bunga <strong>{formatRp(estBunga)}</strong> = <strong>{formatRp(estPokok + estBunga)}</strong>/bln
+        <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>Metode: {d.metodeBunga === 'flat' ? 'Bunga tetap setiap bulan' : d.metodeBunga === 'anuitas' ? 'Angsuran tetap, bunga menurun' : 'Bunga dihitung dari sisa pokok'}</div>
+      </div>}
       <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={() => onSave({ ...d, amount: Number(d.amount), interest: Number(d.interest), tenor: Number(d.tenor) })}>Ajukan Pinjaman</button>
     </div>
   )
@@ -912,7 +988,12 @@ function SettingsPage({ settings, saveSettings, showToast, users, saveUser, dele
   const [d, setD] = useState({ ...settings })
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
   const [nu, setNu] = useState({ username: '', password: '', name: '', role: 'bendahara' })
+  const [newKompi, setNewKompi] = useState('')
+  const [newJenis, setNewJenis] = useState('')
   const isAdmin = user?.role === 'admin'
+
+  const kompiList = d.kompiList || []
+  const jenisList = d.jenisList || []
 
   return (
     <div>
@@ -930,42 +1011,91 @@ function SettingsPage({ settings, saveSettings, showToast, users, saveUser, dele
           </div>
         </div>
 
-        <div style={S.card}>
-          <h3 style={{ ...S.cardTitle, marginBottom: 16 }}>Manajemen User</h3>
-          <table style={S.table}>
-            <thead><tr>{['Username', 'Nama', 'Role', ''].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-            <tbody>{users.map(u => (
-              <tr key={u.id} style={S.tr}>
-                <td style={{ ...S.td, fontWeight: 600 }}>{u.username}</td>
-                <td style={S.td}>{u.name}</td>
-                <td style={S.td}><span style={{ ...S.badge, background: u.role === 'admin' ? 'var(--r)20' : 'var(--b)20', color: u.role === 'admin' ? 'var(--r)' : 'var(--b)', textTransform: 'capitalize' }}>{u.role}</span></td>
-                <td style={S.td}>{isAdmin && u.id !== user.id && <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus user?')) { await deleteUser(u.id); showToast('User dihapus', 'error') } }}>{I.trash}</button>}</td>
-              </tr>
-            ))}</tbody>
-          </table>
-          {isAdmin && (
-            <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #eee' }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: 'var(--muted)' }}>Tambah User Baru</div>
-              <div style={S.form}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <label style={S.formLabel}>Username<input style={S.input} value={nu.username} onChange={e => setNu(p => ({ ...p, username: e.target.value }))} /></label>
-                  <label style={S.formLabel}>Password<input style={S.input} value={nu.password} onChange={e => setNu(p => ({ ...p, password: e.target.value }))} /></label>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <label style={S.formLabel}>Nama<input style={S.input} value={nu.name} onChange={e => setNu(p => ({ ...p, name: e.target.value }))} /></label>
-                  <label style={S.formLabel}>Role<select style={S.input} value={nu.role} onChange={e => setNu(p => ({ ...p, role: e.target.value }))}><option value="admin">Admin</option><option value="bendahara">Bendahara</option><option value="ketua">Ketua</option><option value="staff">Staff</option></select></label>
-                </div>
-                <button style={{ ...S.primaryBtn, width: '100%' }} onClick={async () => {
-                  if (!nu.username || !nu.password || !nu.name) { showToast('Lengkapi semua field', 'error'); return }
-                  if (users.some(u => u.username === nu.username)) { showToast('Username sudah ada', 'error'); return }
-                  await saveUser(nu)
-                  setNu({ username: '', password: '', name: '', role: 'bendahara' })
-                  showToast('User berhasil ditambahkan')
-                }}>{I.plus} Tambah User</button>
-              </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Setting Kompi */}
+          <div style={S.card}>
+            <h3 style={{ ...S.cardTitle, marginBottom: 12 }}>Daftar Kompi / Satuan</h3>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+              {kompiList.map((k, i) => (
+                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: '#e3f2fd', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>
+                  {k}
+                  <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c62828', fontSize: 14, padding: 0, lineHeight: 1 }}
+                    onClick={() => set('kompiList', kompiList.filter((_, j) => j !== i))}>×</button>
+                </span>
+              ))}
+              {kompiList.length === 0 && <span style={{ fontSize: 12, color: '#999' }}>Belum ada kompi</span>}
             </div>
-          )}
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input style={{ ...S.input, flex: 1, fontSize: 12 }} value={newKompi} onChange={e => setNewKompi(e.target.value.toUpperCase())} placeholder="Nama kompi baru..." onKeyDown={e => {
+                if (e.key === 'Enter' && newKompi.trim()) { set('kompiList', [...kompiList, newKompi.trim()]); setNewKompi('') }
+              }} />
+              <button style={{ ...S.primaryBtn, fontSize: 12, padding: '6px 12px' }} onClick={() => {
+                if (newKompi.trim()) { set('kompiList', [...kompiList, newKompi.trim()]); setNewKompi('') }
+              }}>Tambah</button>
+            </div>
+          </div>
+
+          {/* Setting Jenis Barang */}
+          <div style={S.card}>
+            <h3 style={{ ...S.cardTitle, marginBottom: 12 }}>Jenis / Kategori Barang</h3>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+              {jenisList.map((j, i) => (
+                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: '#fff3e0', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>
+                  {j}
+                  <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c62828', fontSize: 14, padding: 0, lineHeight: 1 }}
+                    onClick={() => set('jenisList', jenisList.filter((_, k) => k !== i))}>×</button>
+                </span>
+              ))}
+              {jenisList.length === 0 && <span style={{ fontSize: 12, color: '#999' }}>Belum ada jenis</span>}
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input style={{ ...S.input, flex: 1, fontSize: 12 }} value={newJenis} onChange={e => setNewJenis(e.target.value)} placeholder="Jenis barang baru..." onKeyDown={e => {
+                if (e.key === 'Enter' && newJenis.trim()) { set('jenisList', [...jenisList, newJenis.trim()]); setNewJenis('') }
+              }} />
+              <button style={{ ...S.primaryBtn, fontSize: 12, padding: '6px 12px' }} onClick={() => {
+                if (newJenis.trim()) { set('jenisList', [...jenisList, newJenis.trim()]); setNewJenis('') }
+              }}>Tambah</button>
+            </div>
+          </div>
         </div>
+      </div>
+
+      {/* Manajemen User */}
+      <div style={{ ...S.card, marginTop: 16 }}>
+        <h3 style={{ ...S.cardTitle, marginBottom: 16 }}>Manajemen User</h3>
+        <table style={S.table}>
+          <thead><tr>{['Username', 'Nama', 'Role', ''].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <tbody>{users.map(u => (
+            <tr key={u.id} style={S.tr}>
+              <td style={{ ...S.td, fontWeight: 600 }}>{u.username}</td>
+              <td style={S.td}>{u.name}</td>
+              <td style={S.td}><span style={{ ...S.badge, background: u.role === 'admin' ? 'var(--r)20' : 'var(--b)20', color: u.role === 'admin' ? 'var(--r)' : 'var(--b)', textTransform: 'capitalize' }}>{u.role}</span></td>
+              <td style={S.td}>{isAdmin && u.id !== user.id && <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus user?')) { await deleteUser(u.id); showToast('User dihapus', 'error') } }}>{I.trash}</button>}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+        {isAdmin && (
+          <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #eee' }}>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: 'var(--muted)' }}>Tambah User Baru</div>
+            <div style={S.form}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <label style={S.formLabel}>Username<input style={S.input} value={nu.username} onChange={e => setNu(p => ({ ...p, username: e.target.value }))} /></label>
+                <label style={S.formLabel}>Password<input style={S.input} value={nu.password} onChange={e => setNu(p => ({ ...p, password: e.target.value }))} /></label>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <label style={S.formLabel}>Nama<input style={S.input} value={nu.name} onChange={e => setNu(p => ({ ...p, name: e.target.value }))} /></label>
+                <label style={S.formLabel}>Role<select style={S.input} value={nu.role} onChange={e => setNu(p => ({ ...p, role: e.target.value }))}><option value="admin">Admin</option><option value="bendahara">Bendahara</option><option value="ketua">Ketua</option><option value="staff">Staff</option></select></label>
+              </div>
+              <button style={{ ...S.primaryBtn, width: '100%' }} onClick={async () => {
+                if (!nu.username || !nu.password || !nu.name) { showToast('Lengkapi semua field', 'error'); return }
+                if (users.some(u => u.username === nu.username)) { showToast('Username sudah ada', 'error'); return }
+                await saveUser(nu)
+                setNu({ username: '', password: '', name: '', role: 'bendahara' })
+                showToast('User berhasil ditambahkan')
+              }}>{I.plus} Tambah User</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
