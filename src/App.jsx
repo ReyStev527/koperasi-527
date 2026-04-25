@@ -206,7 +206,7 @@ export default function App() {
   async function deleteProduct(id) {
     const p = products.find(x => x.id === id)
     if (!p) return
-    if ((p.stock||0) > 0 && p.tipe !== 'titipan') {
+    if ((p.stock||0) > 0 && (p.tipeBarang||'MILIK') !== 'TITIPAN') {
       if (!confirm('Produk "' + p.name + '" masih ada stok ' + p.stock + ' ' + (p.unit||'pcs') + '.\nHapus paksa? Stok akan dianggap hilang.')) return false
     }
     const hasTransactions = transactions.some(t => (t.items||[]).some(it => it.productId === id))

@@ -686,21 +686,21 @@ export function StokHistori({ products, stockIn, transactions, mutasis }) {
     let stok = p.stock || 0
 
     // Kurangi stok dari barang masuk SETELAH tanggal target
-    (stockIn||[]).filter(si => si.date > targetDate).forEach(si => {
+    ;(stockIn||[]).filter(si => si.date > targetDate).forEach(si => {
       (si.items||[]).forEach(it => {
         if (it.productId === p.id) stok -= (it.qty||0)
       })
     })
 
     // Tambahkan kembali stok dari penjualan SETELAH tanggal target
-    (transactions||[]).filter(tx => tx.date > targetDate).forEach(tx => {
+    ;(transactions||[]).filter(tx => tx.date > targetDate).forEach(tx => {
       (tx.items||[]).forEach(it => {
         if (it.productId === p.id) stok += (it.qty||0)
       })
     })
 
     // Reverse mutasi SETELAH tanggal target
-    (mutasis||[]).filter(m => m.date > targetDate).forEach(m => {
+    ;(mutasis||[]).filter(m => m.date > targetDate).forEach(m => {
       if (m.productId === p.id) {
         if (m.tipe === 'tambah') stok -= (m.qty||0)
         else stok += (m.qty||0)
