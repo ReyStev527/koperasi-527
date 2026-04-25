@@ -8,7 +8,10 @@ import { useState } from 'react'
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7) }
 function formatRp(n) { return 'Rp ' + Number(n || 0).toLocaleString('id-ID') }
 function fmtDate(d) { if (!d) return '-'; return new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) }
-function today() { return new Date().toISOString().slice(0, 10) }
+function today() { 
+  const d = new Date()
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+}
 
 const IC = {
   plus: <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>,

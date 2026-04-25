@@ -7,7 +7,12 @@ import { cetakLaporanPDF } from './Extra'
 
 function formatRp(n) { return 'Rp ' + Number(n || 0).toLocaleString('id-ID') }
 function fmtDate(d) { if (!d) return '-'; return new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) }
-function today() { return new Date().toISOString().slice(0, 10) }
+function today() { 
+  const d = new Date()
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+}
+function toLocalDate(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') }
+
 function monthName(m) { return ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'][m] }
 function monthFull(m) { return ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'][m] }
 
@@ -613,7 +618,7 @@ export function createAuditLog(user, module, action, detail) {
 // LAPORAN PENJUALAN (match Kartika VB6)
 // =============================================
 export function LaporanPenjualan({ transactions, products, members, suppliers, settings, stockIn, returs }) {
-  const [tgl1, setTgl1] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0,10) })
+  const [tgl1, setTgl1] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return toLocalDate(d) })
   const [tgl2, setTgl2] = useState(today())
   const [tab, setTab] = useState('detail')
   const [filterKompi, setFilterKompi] = useState('all')

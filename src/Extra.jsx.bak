@@ -7,12 +7,7 @@ import { useState, useRef } from 'react'
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7) }
 function formatRp(n) { return 'Rp ' + Number(n || 0).toLocaleString('id-ID') }
 function fmtDate(d) { if (!d) return '-'; return new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) }
-function today() { 
-  const d = new Date()
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
-}
-function toLocalDate(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') }
-
+function today() { return new Date().toISOString().slice(0, 10) }
 
 // =============================================
 // 1. CETAK STRUK THERMAL (browser print - 58mm/80mm)
@@ -383,7 +378,7 @@ export function DashboardCharts({ transactions, kasData, savings, loans, product
   const days = period === '7d' ? 7 : period === '30d' ? 30 : 90
   const dateRange = Array.from({ length: days }, (_, i) => {
     const d = new Date(now); d.setDate(d.getDate() - (days - 1 - i))
-    return toLocalDate(d)
+    return d.toISOString().slice(0, 10)
   })
 
   const dailySales = dateRange.map(d => ({
@@ -498,8 +493,8 @@ export function LaporanTutupBuku({ transactions, members, settings }) {
   defaultStart.setMonth(defaultStart.getMonth() - 1)
   defaultStart.setDate(26)
 
-  const [startDate, setStartDate] = useState(toLocalDate(defaultStart))
-  const [endDate, setEndDate] = useState(toLocalDate(defaultEnd))
+  const [startDate, setStartDate] = useState(defaultStart.toISOString().slice(0, 10))
+  const [endDate, setEndDate] = useState(defaultEnd.toISOString().slice(0, 10))
   const [filterKompi, setFilterKompi] = useState('all')
 
   // Filter transaksi dalam periode
@@ -691,21 +686,21 @@ export function StokHistori({ products, stockIn, transactions, mutasis }) {
     let stok = p.stock || 0
 
     // Kurangi stok dari barang masuk SETELAH tanggal target
-    ;(stockIn||[]).filter(si => si.date > targetDate).forEach(si => {
+    (stockIn||[]).filter(si => si.date > targetDate).forEach(si => {
       (si.items||[]).forEach(it => {
         if (it.productId === p.id) stok -= (it.qty||0)
       })
     })
 
     // Tambahkan kembali stok dari penjualan SETELAH tanggal target
-    ;(transactions||[]).filter(tx => tx.date > targetDate).forEach(tx => {
+    (transactions||[]).filter(tx => tx.date > targetDate).forEach(tx => {
       (tx.items||[]).forEach(it => {
         if (it.productId === p.id) stok += (it.qty||0)
       })
     })
 
     // Reverse mutasi SETELAH tanggal target
-    ;(mutasis||[]).filter(m => m.date > targetDate).forEach(m => {
+    (mutasis||[]).filter(m => m.date > targetDate).forEach(m => {
       if (m.productId === p.id) {
         if (m.tipe === 'tambah') stok -= (m.qty||0)
         else stok += (m.qty||0)
@@ -799,8 +794,8 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   const defaultEnd = new Date(now.getFullYear(), now.getMonth(), 25)
   const defaultStart = new Date(defaultEnd); defaultStart.setMonth(defaultStart.getMonth() - 1); defaultStart.setDate(26)
 
-  const [startDate, setStartDate] = useState(toLocalDate(defaultStart))
-  const [endDate, setEndDate] = useState(toLocalDate(defaultEnd))
+  const [startDate, setStartDate] = useState(defaultStart.toISOString().slice(0, 10))
+  const [endDate, setEndDate] = useState(defaultEnd.toISOString().slice(0, 10))
   const [filterKompi, setFilterKompi] = useState('all')
 
   const kompiList = [...new Set(members.map(m => m.kompi || 'LAINNYA'))].filter(Boolean).sort()

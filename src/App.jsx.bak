@@ -24,8 +24,7 @@ function fmtDate(d) {
   return new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 function today() {
-  const d = new Date()
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+  return new Date().toISOString().slice(0, 10)
 }
 
 // =============================================
@@ -207,7 +206,7 @@ export default function App() {
   async function deleteProduct(id) {
     const p = products.find(x => x.id === id)
     if (!p) return
-    if ((p.stock||0) > 0 && (p.tipeBarang||'MILIK') !== 'TITIPAN') {
+    if ((p.stock||0) > 0 && p.tipe !== 'titipan') {
       if (!confirm('Produk "' + p.name + '" masih ada stok ' + p.stock + ' ' + (p.unit||'pcs') + '.\nHapus paksa? Stok akan dianggap hilang.')) return false
     }
     const hasTransactions = transactions.some(t => (t.items||[]).some(it => it.productId === id))
@@ -285,7 +284,7 @@ export default function App() {
   async function savePiutang(p) { if (!p.id) p.id = genId(); await setOne('piutangs', p.id, p) }
   async function bayarPiutang(piutang, amount) {
     const payments = piutang.payments || []
-    payments.push({ date: today(), amount })
+    payments.push({ date: new Date().toISOString().slice(0, 10), amount })
     const totalBayar = (piutang.totalBayar || 0) + amount
     const sisa = piutang.total - totalBayar
     await setOne('piutangs', piutang.id, { ...piutang, totalBayar, sisa: Math.max(0, sisa), payments, status: sisa <= 0 ? 'LUNAS' : 'KREDIT' })
@@ -296,7 +295,7 @@ export default function App() {
   async function saveHutang(h) { h.id = genId(); await setOne('hutangs', h.id, h); await logAction('Hutang', 'create', `Hutang ${h.noFaktur}: ${h.supplierName} Rp ${h.total}`) }
   async function bayarHutang(hutang, amount) {
     const payments = hutang.payments || []
-    payments.push({ date: today(), amount })
+    payments.push({ date: new Date().toISOString().slice(0, 10), amount })
     const totalBayar = (hutang.totalBayar || 0) + amount
     const sisa = hutang.total - totalBayar
     await setOne('hutangs', hutang.id, { ...hutang, totalBayar, sisa: Math.max(0, sisa), payments })

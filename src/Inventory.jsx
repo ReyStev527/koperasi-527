@@ -9,7 +9,10 @@ import { cetakStruk } from './Extra'
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7) }
 function formatRp(n) { return 'Rp ' + Number(n || 0).toLocaleString('id-ID') }
 function fmtDate(d) { if (!d) return '-'; return new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) }
-function today() { return new Date().toISOString().slice(0, 10) }
+function today() { 
+  const d = new Date()
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+}
 
 // --- ICONS ---
 const IC = {
@@ -96,7 +99,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
     const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = 'stok_barang_' + new Date().toISOString().slice(0,10) + '.csv'
+    a.download = 'stok_barang_' + today() + '.csv'
     a.click()
     showToast('Export ' + products.length + ' produk berhasil')
   }
