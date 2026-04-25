@@ -26,23 +26,44 @@ const IC = {
 // =============================================
 // PRODUK / STOK BARANG
 // =============================================
-export function Products({ products, saveProduct, deleteProduct, suppliers, setModal, showToast, jenisList }) {
+export function Products({ products, saveProduct, deleteProduct, suppliers, setModal, showToast, transactions, stockInData }) {
   const [search, setSearch] = useState('')
   const [catFilter, setCatFilter] = useState('all')
-  const [rakFilter, setRakFilter] = useState('all')
   const [showScanner, setShowScanner] = useState(false)
   const [page_, setPage_] = useState(1)
+  const [showStokTgl, setShowStokTgl] = useState(false)
+  const [stokTglDate, setStokTglDate] = useState(today())
+  const [tipeFilter, setTipeFilter] = useState('all') // all | MILIK | TITIPAN
   const pageSize = 50
 
   const categories = [...new Set(products.map(p => p.category || 'Lainnya'))].filter(Boolean).sort()
-  const raks = [...new Set(products.map(p => p.rak).filter(Boolean))].sort()
   const filtered = products.filter(p => {
-    if (catFilter === '_low') return p.stock <= (p.minStock || 10)
+    if (catFilter === '_low') return (p.stock||0) <= (p.minStock || 10)
     if (catFilter !== 'all' && p.category !== catFilter) return false
-    if (rakFilter !== 'all' && p.rak !== rakFilter) return false
+    if (tipeFilter !== 'all' && (p.tipeBarang||'MILIK') !== tipeFilter) return false
     if (search && !String(p.name||'').toLowerCase().includes(search.toLowerCase()) && !String(p.sku||'').toLowerCase().includes(search.toLowerCase())) return false
     return true
   })
+
+  // Hitung stok per tanggal (stok sekarang - transaksi setelah tanggal + barang masuk setelah tanggal)
+  function getStokPadaTanggal(productId, tgl) {
+    const prod = products.find(p => p.id === productId)
+    if (!prod) return 0
+    let stok = prod.stock || 0
+    // Tambah kembali stok yang terjual SETELAH tanggal tsb
+    ;(transactions||[]).forEach(tx => {
+      if (tx.date > tgl) {
+        ;(tx.items||[]).forEach(it => { if (it.productId === productId) stok += (it.qty||0) })
+      }
+    })
+    // Kurangi stok yang masuk SETELAH tanggal tsb
+    ;(stockInData||[]).forEach(si => {
+      if (si.date > tgl) {
+        ;(si.items||[]).forEach(it => { if (it.productId === productId) stok -= (it.qty||0) })
+      }
+    })
+    return Math.max(0, stok)
+  }
   const totalPages = Math.ceil(filtered.length / pageSize)
   const paginated = filtered.slice((page_ - 1) * pageSize, page_ * pageSize)
 
@@ -52,12 +73,13 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   function openForm(product) {
     const isEdit = !!product
     const data = product ? { ...product } : {
-      sku: 'BRG-' + String(products.length + 1).padStart(3, '0'),
-      name: '', category: 'Sembako', buyPrice: '', sellPrice: '', stock: 0, unit: 'pcs', minStock: 10, supplierId: suppliers[0]?.id || ''
+      sku: '', name: '', category: 'Sembako', buyPrice: '', sellPrice: '', sellPrice2: '',
+      stock: 0, unit: 'pcs', minStock: 10, supplierId: suppliers[0]?.id || '',
+      ppn: 0, qtyPerBox: 1, buyPriceBox: '', tipeBarang: 'MILIK'
     }
     setModal({
       title: isEdit ? 'Edit Produk' : 'Tambah Produk',
-      content: <ProductForm initial={data} suppliers={suppliers} jenisList={jenisList} onSave={async d => {
+      content: <ProductForm initial={data} suppliers={suppliers} onSave={async d => {
         await saveProduct(isEdit ? { ...product, ...d } : d, isEdit)
         setModal(null)
         showToast(isEdit ? 'Produk diperbarui' : 'Produk ditambahkan')
@@ -66,10 +88,10 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   }
 
   function exportCSV() {
-    const header = 'SKU,Nama Produk,Kategori,Rak,Harga Beli,Harga Jual 1,Harga Jual 2,Limit Qty,Stok,Satuan,Min Stok,Status\n'
+    const header = 'SKU,Nama Produk,Kategori,Harga Beli,Harga Jual 1,Harga Jual 2,Stok,Satuan,Min Stok,Status\n'
     const rows = products.map(p => {
       const status = p.stock <= 0 ? 'Habis' : p.stock <= p.minStock ? 'Menipis' : 'Aman'
-      return [p.sku, '"'+p.name+'"', p.category, p.rak||'', p.buyPrice, p.sellPrice, p.sellPrice2||'', p.limitQty||'', p.stock, p.unit, p.minStock, status].join(',')
+      return [p.sku, '"'+p.name+'"', p.category, p.buyPrice, p.sellPrice, p.sellPrice2||'', p.stock, p.unit, p.minStock, status].join(',')
     }).join('\n')
     const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' })
     const a = document.createElement('a')
@@ -81,7 +103,48 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
 
   return (
     <div>
-      <div style={S.pageHead}><h2 style={S.title}>Stok Barang</h2><div style={{ display: 'flex', gap: 8 }}><button style={{ ...S.primaryBtn, background: '#2e7d32' }} onClick={exportCSV}><svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg> Export CSV</button><ScanButton onClick={() => setShowScanner(true)} label="Scan" /><button style={S.primaryBtn} onClick={() => openForm(null)}>{IC.plus} Tambah Produk</button></div></div>
+      <div style={S.pageHead}><h2 style={S.title}>Stok Barang</h2>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button style={{ ...S.primaryBtn, background: '#7b1fa2' }} onClick={() => setShowStokTgl(!showStokTgl)}>
+            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+            Stok per Tanggal
+          </button>
+          <button style={{ ...S.primaryBtn, background: '#2e7d32' }} onClick={exportCSV}><svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg> Export</button>
+          <ScanButton onClick={() => setShowScanner(true)} label="Scan" />
+          <button style={S.primaryBtn} onClick={() => openForm(null)}>{IC.plus} Tambah Produk</button>
+        </div>
+      </div>
+
+      {/* Panel Stok per Tanggal */}
+      {showStokTgl && (
+        <div style={{ ...S.card, marginBottom: 16, border: '2px solid #7b1fa2' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: '#7b1fa2' }}>Cek Stok pada Tanggal Tertentu</h3>
+            <button style={S.smallBtn} onClick={() => setShowStokTgl(false)}>{IC.x}</button>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'end', marginBottom: 16 }}>
+            <label style={S.formLabel}>Pilih Tanggal<input style={S.input} type="date" value={stokTglDate} onChange={e => setStokTglDate(e.target.value)} /></label>
+            <span style={{ fontSize: 13, color: '#6b7280', paddingBottom: 10 }}>Stok pada {fmtDate(stokTglDate)}</span>
+          </div>
+          <table style={S.table}>
+            <thead><tr>{['SKU', 'Nama Produk', 'Tipe', 'Stok Sekarang', 'Stok pd ' + stokTglDate.slice(8,10) + '/' + stokTglDate.slice(5,7), 'Selisih'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{paginated.map(p => {
+              const stokTgl = getStokPadaTanggal(p.id, stokTglDate)
+              const selisih = (p.stock||0) - stokTgl
+              return (
+                <tr key={p.id} style={S.tr}>
+                  <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 12 }}>{String(p.sku||'')}</td>
+                  <td style={{ ...S.td, fontWeight: 600 }}>{p.name}</td>
+                  <td style={S.td}><span style={{ ...S.badge, background: (p.tipeBarang||'MILIK')==='TITIPAN' ? '#fff3e0' : '#e8f5e9', color: (p.tipeBarang||'MILIK')==='TITIPAN' ? '#e65100' : '#2e7d32' }}>{p.tipeBarang||'MILIK'}</span></td>
+                  <td style={S.td}>{p.stock||0} {p.unit||'pcs'}</td>
+                  <td style={{ ...S.td, fontWeight: 600, color: '#7b1fa2' }}>{stokTgl} {p.unit||'pcs'}</td>
+                  <td style={{ ...S.td, color: selisih > 0 ? '#2e7d32' : selisih < 0 ? '#c62828' : '#6b7280' }}>{selisih > 0 ? '+' : ''}{selisih}</td>
+                </tr>
+              )
+            })}</tbody>
+          </table>
+        </div>
+      )}
 
       {showScanner && <BarcodeScanner onScan={(code) => { setSearch(code); setShowScanner(false); showToast('Mencari: ' + code) }} onClose={() => setShowScanner(false)} />}
 
@@ -110,6 +173,12 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <button style={{ ...S.filterBtn, ...(catFilter === 'all' ? S.filterActive : {}) }} onClick={() => { setCatFilter('all'); setPage_(1) }}>Semua</button>
           <button style={{ ...S.filterBtn, ...(catFilter === '_low' ? { background: '#c62828', color: '#fff', borderColor: '#c62828' } : { color: '#c62828' }) }} onClick={() => { setCatFilter('_low'); setPage_(1) }}>Stok Menipis ({lowStock.length})</button>
+          <span style={{ width: 1, background: '#e5e7eb', margin: '0 4px' }} />
+          <button style={{ ...S.filterBtn, ...(tipeFilter === 'all' ? S.filterActive : {}) }} onClick={() => { setTipeFilter('all'); setPage_(1) }}>Semua Tipe</button>
+          <button style={{ ...S.filterBtn, ...(tipeFilter === 'MILIK' ? { background: '#2e7d32', color: '#fff', borderColor: '#2e7d32' } : {}) }} onClick={() => { setTipeFilter('MILIK'); setPage_(1) }}>Milik</button>
+          <button style={{ ...S.filterBtn, ...(tipeFilter === 'TITIPAN' ? { background: '#e65100', color: '#fff', borderColor: '#e65100' } : {}) }} onClick={() => { setTipeFilter('TITIPAN'); setPage_(1) }}>Titipan</button>
+          <span style={{ width: 1, background: '#e5e7eb', margin: '0 4px' }} />
+          <button style={{ ...S.filterBtn, ...(catFilter === '_titipan' ? { background: '#7b1fa2', color: '#fff', borderColor: '#7b1fa2' } : { color: '#7b1fa2' }) }} onClick={() => { setCatFilter('_titipan'); setPage_(1) }}>Titipan</button>
           {categories.length <= 8 ? (
             categories.map(c => <button key={c} style={{ ...S.filterBtn, ...(catFilter === c ? S.filterActive : {}) }} onClick={() => { setCatFilter(c); setPage_(1) }}>{c}</button>)
           ) : (
@@ -118,10 +187,6 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
               {categories.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           )}
-          {raks.length > 0 && <select style={{ ...S.input, padding: '5px 10px', fontSize: 12, minWidth: 120 }} value={rakFilter} onChange={e => { setRakFilter(e.target.value); setPage_(1) }}>
-            <option value="all">Semua Rak</option>
-            {raks.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>}
         </div>
       </div>
 
@@ -137,30 +202,30 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
           )}
         </div>
         <table style={S.table}>
-          <thead><tr>{['SKU', 'Nama Produk', 'Kategori', 'Rak', 'Harga Beli', 'Harga Jual 1', 'Harga 2', 'Stok', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>{['SKU', 'Nama Produk', 'Tipe', 'Kategori', 'Harga Beli', 'Harga Jual', 'Stok', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
           <tbody>{paginated.map(p => {
-            const isLow = p.stock <= p.minStock
+            const isLow = (p.stock||0) <= (p.minStock||10)
+            const isTitipan = (p.tipeBarang||'MILIK') === 'TITIPAN'
             return (
               <tr key={p.id} style={S.tr}>
-                <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 12 }}>{p.sku}</td>
+                <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 12 }}>{String(p.sku||'')}</td>
                 <td style={{ ...S.td, fontWeight: 600 }}>{p.name}</td>
+                <td style={S.td}><span style={{ ...S.badge, background: isTitipan ? '#fff3e0' : '#e3f2fd', color: isTitipan ? '#e65100' : '#1565c0', fontSize: 10 }}>{isTitipan ? 'TITIPAN' : 'MILIK'}</span></td>
                 <td style={S.td}><span style={{ ...S.badge, background: catColor(p.category).bg, color: catColor(p.category).fg }}>{p.category}</span></td>
-                <td style={{ ...S.td, fontSize: 11 }}>{p.rak || '-'}</td>
                 <td style={S.td}>{formatRp(p.buyPrice)}</td>
                 <td style={S.td}>{formatRp(p.sellPrice)}</td>
-                <td style={{ ...S.td, fontSize: 12, color: '#666' }}>{p.sellPrice2 ? formatRp(p.sellPrice2) + (p.limitQty ? ' (≥'+p.limitQty+')' : '') : '-'}</td>
-                <td style={{ ...S.td, fontWeight: 600, color: isLow ? 'var(--r)' : 'var(--g)' }}>{p.stock} {p.unit}</td>
+                <td style={{ ...S.td, fontWeight: 600, color: isLow ? 'var(--r)' : 'var(--g)' }}>{p.stock||0} {p.unit||'pcs'}</td>
                 <td style={S.td}>
                   {isLow ? <span style={{ ...S.badge, background: '#ffebee', color: '#c62828' }}>Menipis</span> :
                     <span style={{ ...S.badge, background: '#e8f5e9', color: '#2e7d32' }}>Aman</span>}
                 </td>
                 <td style={S.td}>
                   <button style={S.smallBtn} onClick={() => openForm(p)}>{IC.edit}</button>
-                  <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus ' + p.name + '?')) { await deleteProduct(p.id); showToast('Produk dihapus', 'error') } }}>{IC.trash}</button>
+                  <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus ' + p.name + '?')) { const ok = await deleteProduct(p.id); if (ok) showToast('Produk dihapus', 'error') } }}>{IC.trash}</button>
                 </td>
               </tr>
             )
-          })}{filtered.length === 0 && <tr><td colSpan={10} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Tidak ada data</td></tr>}</tbody>
+          })}{filtered.length === 0 && <tr><td colSpan={9} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Tidak ada data</td></tr>}</tbody>
         </table>
         {totalPages > 1 && (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 4, marginTop: 16 }}>
@@ -178,46 +243,116 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   )
 }
 
-function ProductForm({ initial, suppliers, jenisList, onSave }) {
+function ProductForm({ initial, suppliers, onSave }) {
   const [d, setD] = useState(initial)
+  const [showScan, setShowScan] = useState(false)
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
+
+  // Hitung harga per unit dari harga box + PPN
+  const buyBox = Number(d.buyPriceBox) || 0
+  const qtyBox = Number(d.qtyPerBox) || 1
+  const ppnPct = Number(d.ppn) || 0
+  const ppnAmount = Math.round(buyBox * ppnPct / 100)
+  const totalWithPPN = buyBox + ppnAmount
+  const pricePerUnit = qtyBox > 0 ? Math.round(totalWithPPN / qtyBox) : 0
+
+  // Auto-set buyPrice jika pakai kalkulasi box
+  function recalc(field, val) {
+    const newD = { ...d, [field]: val }
+    const box = Number(newD.buyPriceBox) || 0
+    const qty = Number(newD.qtyPerBox) || 1
+    const ppn = Number(newD.ppn) || 0
+    if (box > 0) {
+      const total = box + Math.round(box * ppn / 100)
+      newD.buyPrice = qty > 0 ? Math.round(total / qty) : 0
+    }
+    setD(newD)
+  }
+
   const margin = d.sellPrice && d.buyPrice ? Math.round(((d.sellPrice - d.buyPrice) / d.buyPrice) * 100) : 0
-  const cats = jenisList && jenisList.length > 0 ? jenisList : ['Sembako', 'Makanan', 'Minuman', 'Toiletries', 'ATK', 'Lainnya']
+
   return (
     <div style={S.form}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <label style={S.formLabel}>SKU / Kode Brg<input style={S.input} value={d.sku} onChange={e => set('sku', e.target.value)} /></label>
-        <label style={S.formLabel}>Jenis / Kategori
+      {/* Barcode / SKU */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+        <label style={{ ...S.formLabel, flex: 1 }}>Barcode / SKU
+          <input style={S.input} value={d.sku} onChange={e => set('sku', e.target.value)} placeholder="Scan atau ketik barcode..." />
+        </label>
+        <button type="button" style={{ ...S.primaryBtn, background: '#7b1fa2', height: 42 }} onClick={() => setShowScan(true)}>
+          <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"/><path d="M7 8v8M12 8v8M17 8v8"/></svg>
+          Scan
+        </button>
+      </div>
+      {showScan && <BarcodeScanner onScan={(code) => { set('sku', String(code)); setShowScan(false) }} onClose={() => setShowScan(false)} />}
+
+      <label style={S.formLabel}>Nama Produk<input style={S.input} value={d.name} onChange={e => set('name', e.target.value)} placeholder="Nama barang..." /></label>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>Kategori
           <select style={S.input} value={d.category} onChange={e => set('category', e.target.value)}>
-            {cats.map(c => <option key={c}>{c}</option>)}
+            {['Sembako', 'Makanan', 'Minuman', 'Toiletries', 'ATK', 'Obat', 'Elektronik', 'Pakaian', 'Lainnya'].map(c => <option key={c}>{c}</option>)}
+          </select>
+        </label>
+        <label style={S.formLabel}>Satuan<input style={S.input} value={d.unit} onChange={e => set('unit', e.target.value)} placeholder="pcs, botol, box..." /></label>
+        <label style={S.formLabel}>Tipe Barang
+          <select style={S.input} value={d.tipeBarang||'MILIK'} onChange={e => set('tipeBarang', e.target.value)}>
+            <option value="MILIK">Milik Koperasi</option>
+            <option value="TITIPAN">Barang Titipan</option>
           </select>
         </label>
       </div>
-      <label style={S.formLabel}>Nama Produk<input style={S.input} value={d.name} onChange={e => set('name', e.target.value)} /></label>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8 }}>
-        <label style={S.formLabel}>Harga Beli / HPP<input style={S.input} type="number" value={d.buyPrice} onChange={e => set('buyPrice', Number(e.target.value))} /></label>
-        <label style={S.formLabel}>Harga Jual 1<input style={S.input} type="number" value={d.sellPrice} onChange={e => set('sellPrice', Number(e.target.value))} /></label>
-        <label style={S.formLabel}>Harga Jual 2<input style={S.input} type="number" value={d.sellPrice2||''} onChange={e => set('sellPrice2', Number(e.target.value))} placeholder="Grosir" /></label>
-        <label style={S.formLabel}>Harga Jual 3<input style={S.input} type="number" value={d.sellPrice3||''} onChange={e => set('sellPrice3', Number(e.target.value))} placeholder="Khusus" /></label>
+
+      {/* PPN & Harga Box */}
+      <div style={{ background: '#f5f6fa', borderRadius: 10, padding: 14, marginTop: 4 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#1565c0', marginBottom: 10 }}>Kalkulasi Harga Beli (opsional)</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+          <label style={S.formLabel}>Harga Beli / Box (Rp)
+            <input style={S.input} type="number" value={d.buyPriceBox||''} onChange={e => recalc('buyPriceBox', e.target.value)} placeholder="Harga 1 box/dus" />
+          </label>
+          <label style={S.formLabel}>Isi per Box/Dus
+            <input style={S.input} type="number" min="1" value={d.qtyPerBox||1} onChange={e => recalc('qtyPerBox', e.target.value)} />
+          </label>
+          <label style={S.formLabel}>PPN (%)
+            <input style={S.input} type="number" min="0" max="100" value={d.ppn||0} onChange={e => recalc('ppn', e.target.value)} />
+          </label>
+        </div>
+        {buyBox > 0 && (
+          <div style={{ marginTop: 10, padding: '8px 12px', background: '#fff', borderRadius: 8, fontSize: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 6 }}>
+              <div>Harga Box: <strong>{formatRp(buyBox)}</strong></div>
+              <div>PPN {ppnPct}%: <strong style={{ color: '#c62828' }}>+{formatRp(ppnAmount)}</strong></div>
+              <div>Total + PPN: <strong>{formatRp(totalWithPPN)}</strong></div>
+              <div>Per Unit (÷{qtyBox}): <strong style={{ color: '#1565c0' }}>{formatRp(pricePerUnit)}</strong></div>
+            </div>
+          </div>
+        )}
       </div>
-      {margin > 0 && <div style={{ padding: '6px 12px', background: '#e8f5e9', borderRadius: 8, fontSize: 12, color: '#2e7d32' }}>Margin Harga 1: {margin}%</div>}
+
+      {/* Harga Manual */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-        <label style={S.formLabel}>Limit Qty → Harga 2<input style={S.input} type="number" value={d.limitQty||''} onChange={e => set('limitQty', Number(e.target.value))} placeholder="Min qty" /></label>
-        <label style={S.formLabel}>Limit Qty → Harga 3<input style={S.input} type="number" value={d.limitQty3||''} onChange={e => set('limitQty3', Number(e.target.value))} placeholder="Min qty" /></label>
-        <label style={S.formLabel}>Rak / Lokasi<input style={S.input} value={d.rak||''} onChange={e => set('rak', e.target.value)} placeholder="RAK A1" /></label>
+        <label style={S.formLabel}>Harga Beli / Unit (Rp)
+          <input style={S.input} type="number" value={d.buyPrice} onChange={e => set('buyPrice', Number(e.target.value))} />
+        </label>
+        <label style={S.formLabel}>Harga Jual 1 (Rp)
+          <input style={S.input} type="number" value={d.sellPrice} onChange={e => set('sellPrice', Number(e.target.value))} />
+        </label>
+        <label style={S.formLabel}>Harga Jual 2 / Grosir (Rp)
+          <input style={S.input} type="number" value={d.sellPrice2||''} onChange={e => set('sellPrice2', Number(e.target.value))} placeholder="Opsional" />
+        </label>
       </div>
+      {margin > 0 && <div style={{ padding: '6px 12px', background: '#e8f5e9', borderRadius: 8, fontSize: 12, color: '#2e7d32' }}>Margin: {margin}%</div>}
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
         <label style={S.formLabel}>Stok<input style={S.input} type="number" value={d.stock} onChange={e => set('stock', Number(e.target.value))} /></label>
-        <label style={S.formLabel}>Satuan<input style={S.input} value={d.unit} onChange={e => set('unit', e.target.value)} /></label>
         <label style={S.formLabel}>Min. Stok<input style={S.input} type="number" value={d.minStock} onChange={e => set('minStock', Number(e.target.value))} /></label>
+        <label style={S.formLabel}>Supplier
+          <select style={S.input} value={d.supplierId} onChange={e => set('supplierId', e.target.value)}>
+            <option value="">-- Pilih --</option>
+            {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </label>
       </div>
-      <label style={S.formLabel}>Supplier
-        <select style={S.input} value={d.supplierId} onChange={e => set('supplierId', e.target.value)}>
-          <option value="">-- Pilih Supplier --</option>
-          {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-      </label>
-      <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={() => onSave(d)}>Simpan</button>
+      <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={() => onSave(d)}>Simpan Produk</button>
     </div>
   )
 }
@@ -287,13 +422,60 @@ function SupplierForm({ initial, onSave }) {
 // =============================================
 // BARANG MASUK (Stock In)
 // =============================================
-export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProductStock, setModal, showToast, saveHutang }) {
+export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProductStock, setModal, showToast }) {
   const sorted = [...stockIn].sort((a, b) => b.date.localeCompare(a.date))
   const getSupplier = id => suppliers.find(s => s.id === id)
 
+  function openDetail(nota) {
+    const sup = getSupplier(nota.supplierId)
+    setModal({
+      title: 'Detail Nota: ' + (nota.invoice||'-'),
+      content: (
+        <div style={{ fontSize: 13 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16, padding: 12, background: '#f5f6fa', borderRadius: 10 }}>
+            <div><strong>No Invoice:</strong> {nota.invoice||'-'}</div>
+            <div><strong>Tanggal:</strong> {fmtDate(nota.date)}</div>
+            <div><strong>Supplier:</strong> {sup?.name||'-'}</div>
+            <div><strong>Catatan:</strong> {nota.note||'-'}</div>
+          </div>
+          <table style={S.table}>
+            <thead><tr>{['Produk', 'Qty', 'Harga Beli', 'Subtotal'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>
+              {(nota.items||[]).map((it, i) => {
+                const p = products.find(pr => pr.id === it.productId)
+                return (
+                  <tr key={i}><td style={S.td}>{String(p?.name||it.productId)}</td><td style={S.td}>{it.qty}</td>
+                  <td style={S.td}>{formatRp(it.buyPrice||0)}</td><td style={{ ...S.td, fontWeight: 600 }}>{formatRp((it.qty||0)*(it.buyPrice||0))}</td></tr>
+                )
+              })}
+            </tbody>
+          </table>
+          <div style={{ marginTop: 12, padding: 12, background: '#f0f7ff', borderRadius: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}><span>Subtotal</span><strong>{formatRp(nota.subtotal||nota.total||0)}</strong></div>
+            {(nota.ppnPct||0) > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, color: '#c62828' }}><span>PPN {nota.ppnPct}%</span><strong>+ {formatRp(nota.ppnAmount||0)}</strong></div>}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700, color: '#1565c0', borderTop: '1px solid #ddd', paddingTop: 6, marginTop: 4 }}><span>TOTAL</span><span>{formatRp(nota.total||0)}</span></div>
+          </div>
+          <button style={{ ...S.primaryBtn, width: '100%', marginTop: 12, justifyContent: 'center' }} onClick={() => {
+            const win = window.open('', '_blank')
+            win.document.write('<html><head><style>body{font-family:Arial;font-size:12px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:5px 8px;text-align:left}th{background:#f5f5f5}.r{text-align:right}.b{font-weight:bold}@media print{button{display:none}}</style></head><body>')
+            win.document.write('<h2>NOTA PEMBELIAN</h2>')
+            win.document.write('<p>No: '+(nota.invoice||'-')+' | Tanggal: '+(nota.date||'')+' | Supplier: '+(sup?.name||'-')+'</p>')
+            win.document.write('<table><tr><th>Produk</th><th>Qty</th><th class="r">Harga</th><th class="r">Subtotal</th></tr>')
+            ;(nota.items||[]).forEach(it => { const p = products.find(pr => pr.id === it.productId); win.document.write('<tr><td>'+(p?.name||'-')+'</td><td>'+it.qty+'</td><td class="r">'+Number(it.buyPrice||0).toLocaleString('id-ID')+'</td><td class="r">'+Number((it.qty||0)*(it.buyPrice||0)).toLocaleString('id-ID')+'</td></tr>') })
+            win.document.write('<tr class="b"><td colspan="3" class="r">Subtotal</td><td class="r">'+Number(nota.subtotal||nota.total||0).toLocaleString('id-ID')+'</td></tr>')
+            if ((nota.ppnPct||0)>0) win.document.write('<tr><td colspan="3" class="r">PPN '+nota.ppnPct+'%</td><td class="r">+'+Number(nota.ppnAmount||0).toLocaleString('id-ID')+'</td></tr>')
+            win.document.write('<tr class="b"><td colspan="3" class="r">TOTAL</td><td class="r">Rp '+Number(nota.total||0).toLocaleString('id-ID')+'</td></tr></table>')
+            win.document.write('<script>setTimeout(()=>{window.print()},400)<\/script></body></html>')
+            win.document.close()
+          }}>Cetak Nota</button>
+        </div>
+      )
+    })
+  }
+
   function openForm() {
     setModal({
-      title: 'Catat Barang Masuk / Pembelian',
+      title: 'Catat Barang Masuk',
       content: <StockInForm products={products} suppliers={suppliers} onSave={async d => {
         await saveStockIn(d)
         // Update stok produk
@@ -301,34 +483,20 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
           const prod = products.find(p => p.id === item.productId)
           if (prod) await updateProductStock(prod.id, prod.stock + item.qty)
         }
-        // Jika KREDIT, catat hutang ke supplier
-        if (d.caraBayar === 'KREDIT' && saveHutang) {
-          const sup = suppliers.find(s => s.id === d.supplierId)
-          await saveHutang({
-            noFaktur: d.invoice, date: d.date, supplierId: d.supplierId,
-            supplierName: sup?.name || '-', total: d.total,
-            dp: d.dp || 0, totalBayar: d.dp || 0,
-            sisa: d.total - (d.dp || 0), status: 'KREDIT',
-            payments: d.dp > 0 ? [{ date: d.date, amount: d.dp }] : []
-          })
-        }
         setModal(null)
-        showToast(d.caraBayar === 'KREDIT'
-          ? 'Barang masuk dicatat (KREDIT). Hutang: ' + formatRp(d.total - (d.dp||0))
-          : 'Barang masuk berhasil dicatat (LUNAS)')
+        showToast('Barang masuk berhasil dicatat')
       }} />,
     })
   }
 
   return (
     <div>
-      <div style={S.pageHead}><h2 style={S.title}>Barang Masuk / Pembelian</h2><button style={S.primaryBtn} onClick={openForm}>{IC.plus} Catat Barang Masuk</button></div>
+      <div style={S.pageHead}><h2 style={S.title}>Barang Masuk</h2><button style={S.primaryBtn} onClick={openForm}>{IC.plus} Catat Barang Masuk</button></div>
       <div style={S.card}>
         <table style={S.table}>
-          <thead><tr>{['Tanggal', 'No. Invoice', 'Supplier', 'Item', 'Total', 'Bayar', 'Status', 'Catatan'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>{['Tanggal', 'No. Invoice', 'Supplier', 'Item', 'Subtotal', 'PPN', 'Total', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
           <tbody>{sorted.map(s => {
             const sup = getSupplier(s.supplierId)
-            const isKredit = s.caraBayar === 'KREDIT'
             return (
               <tr key={s.id} style={S.tr}>
                 <td style={S.td}>{fmtDate(s.date)}</td>
@@ -337,13 +505,13 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
                 <td style={S.td}>
                   {(s.items||[]).map((it, i) => {
                     const p = products.find(pr => pr.id === it.productId)
-                    return <div key={i} style={{ fontSize: 12 }}>{p?.name || it.productId} × {it.qty}</div>
+                    return <div key={i} style={{ fontSize: 12 }}>{String(p?.name || it.productId)} × {it.qty} @ {formatRp(it.buyPrice||0)}</div>
                   })}
                 </td>
-                <td style={{ ...S.td, fontWeight: 600, color: 'var(--b)' }}>{formatRp(s.total)}</td>
-                <td style={S.td}>{isKredit ? formatRp(s.dp||0) + ' (DP)' : formatRp(s.total)}</td>
-                <td style={S.td}><span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600, background: isKredit ? '#fff3e0' : '#e8f5e9', color: isKredit ? '#e65100' : '#2e7d32' }}>{isKredit ? 'KREDIT' : 'LUNAS'}</span></td>
-                <td style={S.td}>{s.note || '-'}</td>
+                <td style={S.td}>{formatRp(s.subtotal || s.total || 0)}</td>
+                <td style={S.td}>{(s.ppnPct||0) > 0 ? <span style={{ color: '#c62828' }}>{s.ppnPct}% (+{formatRp(s.ppnAmount||0)})</span> : '-'}</td>
+                <td style={{ ...S.td, fontWeight: 600, color: 'var(--b)' }}>{formatRp(s.total||0)}</td>
+                <td style={S.td}><button style={{ ...S.smallBtn, color: '#1565c0', fontWeight: 600, fontSize: 12 }} onClick={() => openDetail(s)}>Detail</button></td>
               </tr>
             )
           })}{sorted.length === 0 && <tr><td colSpan={8} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Belum ada data barang masuk</td></tr>}</tbody>
@@ -358,9 +526,10 @@ function StockInForm({ products, suppliers, onSave }) {
   const [supplierId, setSupplierId] = useState(suppliers[0]?.id || '')
   const [invoice, setInvoice] = useState('INV-' + Date.now().toString().slice(-6))
   const [note, setNote] = useState('')
-  const [caraBayar, setCaraBayar] = useState('LUNAS')
-  const [dp, setDp] = useState('')
+  const [ppnPct, setPpnPct] = useState(0)
   const [items, setItems] = useState([{ productId: products[0]?.id || '', qty: 1, buyPrice: products[0]?.buyPrice || 0 }])
+  const [showScanIdx, setShowScanIdx] = useState(-1)
+  const [updateNotice, setUpdateNotice] = useState([])
 
   function addItem() { setItems(prev => [...prev, { productId: products[0]?.id || '', qty: 1, buyPrice: products[0]?.buyPrice || 0 }]) }
   function removeItem(i) { setItems(prev => prev.filter((_, idx) => idx !== i)) }
@@ -372,17 +541,43 @@ function StockInForm({ products, suppliers, onSave }) {
         const p = products.find(pr => pr.id === v)
         if (p) updated.buyPrice = p.buyPrice
       }
+      // Feature 9: Warn if new price > old price
+      if (k === 'buyPrice') {
+        const p = products.find(pr => pr.id === item.productId)
+        if (p && v > (p.buyPrice||0)) {
+          setUpdateNotice(prev => { const n = [...prev]; n[i] = 'Harga naik! ' + formatRp(p.buyPrice) + ' → ' + formatRp(v) + ' (harga jual akan otomatis diupdate)'; return n })
+        } else {
+          setUpdateNotice(prev => { const n = [...prev]; n[i] = ''; return n })
+        }
+      }
       return updated
     }))
   }
 
-  const total = items.reduce((a, it) => a + ((it.qty||0) * (it.buyPrice||0)), 0)
+  // Feature 10: Scan barcode → cari produk yang sama → auto-select
+  function handleBarcodeScan(code, itemIdx) {
+    const found = products.find(p =>
+      String(p.sku||'').toLowerCase() === code.toLowerCase() ||
+      String(p.sku||'').toLowerCase().includes(code.toLowerCase())
+    )
+    setShowScanIdx(-1)
+    if (found) {
+      updateItem(itemIdx, 'productId', found.id)
+      updateItem(itemIdx, 'buyPrice', found.buyPrice||0)
+    } else {
+      alert('Produk dengan barcode "' + code + '" tidak ditemukan.\nTambah produk baru dulu di Stok Barang.')
+    }
+  }
+
+  const subtotal = items.reduce((a, it) => a + ((it.qty||0) * (it.buyPrice||0)), 0)
+  const ppnAmount = Math.round(subtotal * (ppnPct||0) / 100)
+  const total = subtotal + ppnAmount
 
   return (
     <div style={S.form}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <label style={S.formLabel}>Tanggal<input style={S.input} type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
-        <label style={S.formLabel}>No. Invoice / Nota Beli<input style={S.input} value={invoice} onChange={e => setInvoice(e.target.value)} /></label>
+        <label style={S.formLabel}>No. Invoice / Nota<input style={S.input} value={invoice} onChange={e => setInvoice(e.target.value)} /></label>
       </div>
       <label style={S.formLabel}>Supplier
         <select style={S.input} value={supplierId} onChange={e => setSupplierId(e.target.value)}>
@@ -392,41 +587,46 @@ function StockInForm({ products, suppliers, onSave }) {
 
       <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)', marginTop: 8 }}>Item Barang</div>
       {items.map((it, i) => (
-        <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: 6, alignItems: 'end' }}>
-          <label style={S.formLabel}>Produk
-            <select style={S.input} value={it.productId} onChange={e => updateItem(i, 'productId', e.target.value)}>
-              {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </label>
-          <label style={S.formLabel}>Qty<input style={S.input} type="number" min="1" value={it.qty} onChange={e => updateItem(i, 'qty', Number(e.target.value))} /></label>
-          <label style={S.formLabel}>Harga Beli<input style={S.input} type="number" value={it.buyPrice} onChange={e => updateItem(i, 'buyPrice', Number(e.target.value))} /></label>
-          {items.length > 1 && <button style={{ ...S.smallBtn, color: 'var(--r)', marginBottom: 4 }} onClick={() => removeItem(i)}>{IC.x}</button>}
+        <div key={i}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'auto 2fr 1fr 1fr auto', gap: 6, alignItems: 'end' }}>
+            <button type="button" style={{ ...S.filterBtn, padding: '8px', marginBottom: 2, color: '#7b1fa2' }} onClick={() => setShowScanIdx(i)} title="Scan Barcode">
+              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"/><path d="M7 8v8M12 8v8M17 8v8"/></svg>
+            </button>
+            <label style={S.formLabel}>Produk
+              <select style={S.input} value={it.productId} onChange={e => updateItem(i, 'productId', e.target.value)}>
+                {products.map(p => <option key={p.id} value={p.id}>{String(p.sku||'')} - {p.name} (stok: {p.stock||0})</option>)}
+              </select>
+            </label>
+            <label style={S.formLabel}>Qty<input style={S.input} type="number" min="1" value={it.qty} onChange={e => updateItem(i, 'qty', Number(e.target.value))} /></label>
+            <label style={S.formLabel}>Harga Beli<input style={S.input} type="number" value={it.buyPrice} onChange={e => updateItem(i, 'buyPrice', Number(e.target.value))} /></label>
+            {items.length > 1 && <button style={{ ...S.smallBtn, color: 'var(--r)', marginBottom: 4 }} onClick={() => removeItem(i)}>{IC.x}</button>}
+          </div>
+          {updateNotice[i] && <div style={{ fontSize: 11, color: '#e65100', padding: '2px 8px', background: '#fff3e0', borderRadius: 4, marginTop: 2 }}>{updateNotice[i]}</div>}
+          {showScanIdx === i && <BarcodeScanner onScan={(code) => handleBarcodeScan(code, i)} onClose={() => setShowScanIdx(-1)} />}
         </div>
       ))}
       <button style={{ ...S.filterBtn, width: '100%' }} onClick={addItem}>{IC.plus} Tambah Item</button>
 
-      {/* Cara Bayar - seperti Pembelian di Kartika */}
-      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)', marginTop: 8 }}>Pembayaran</div>
-      <div style={{ display: 'flex', gap: 4 }}>
-        <button style={{ flex: 1, padding: '8px', border: '2px solid', borderColor: caraBayar === 'LUNAS' ? '#2e7d32' : '#e5e7eb', background: caraBayar === 'LUNAS' ? '#e8f5e9' : '#fff', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13, color: caraBayar === 'LUNAS' ? '#2e7d32' : '#6b7280' }}
-          onClick={() => setCaraBayar('LUNAS')}>LUNAS</button>
-        <button style={{ flex: 1, padding: '8px', border: '2px solid', borderColor: caraBayar === 'KREDIT' ? '#e65100' : '#e5e7eb', background: caraBayar === 'KREDIT' ? '#fff3e0' : '#fff', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13, color: caraBayar === 'KREDIT' ? '#e65100' : '#6b7280' }}
-          onClick={() => setCaraBayar('KREDIT')}>KREDIT (Hutang)</button>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>PPN (%)<input style={S.input} type="number" min="0" max="100" value={ppnPct} onChange={e => setPpnPct(Number(e.target.value))} /></label>
+        <label style={S.formLabel}>Catatan<input style={S.input} value={note} onChange={e => setNote(e.target.value)} /></label>
       </div>
-      {caraBayar === 'KREDIT' && (
-        <>
-          <label style={S.formLabel}>Bayar DP (Rp)<input style={S.input} type="number" value={dp} onChange={e => setDp(e.target.value)} placeholder="0 (boleh kosong)" /></label>
-          <div style={{ padding: '8px 12px', background: '#fff3e0', borderRadius: 8, fontSize: 13, color: '#e65100' }}>Sisa Hutang: <strong>{formatRp(total - (Number(dp) || 0))}</strong></div>
-        </>
-      )}
 
-      <label style={S.formLabel}>Catatan<input style={S.input} value={note} onChange={e => setNote(e.target.value)} /></label>
-
-      <div style={{ padding: '10px 14px', background: '#f0f7ff', borderRadius: 8, fontSize: 14, fontWeight: 700, color: 'var(--b)' }}>
-        Total Pembelian: {formatRp(total)}
+      <div style={{ padding: '12px 16px', background: '#f0f7ff', borderRadius: 10, fontSize: 13 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+          <span>Subtotal ({items.length} item)</span><strong>{formatRp(subtotal)}</strong>
+        </div>
+        {ppnPct > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, color: '#c62828' }}>
+            <span>PPN {ppnPct}%</span><strong>+ {formatRp(ppnAmount)}</strong>
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700, color: 'var(--b)', borderTop: '1px solid #ddd', paddingTop: 6, marginTop: 4 }}>
+          <span>TOTAL</span><span>{formatRp(total)}</span>
+        </div>
       </div>
-      <button style={{ ...S.primaryBtn, width: '100%' }} onClick={() => onSave({ date, supplierId, invoice, note, items, total, caraBayar, dp: Number(dp) || 0 })}>
-        {caraBayar === 'KREDIT' ? 'Simpan (Kredit)' : 'Simpan (Lunas)'}
+      <button style={{ ...S.primaryBtn, width: '100%' }} onClick={() => onSave({ date, supplierId, invoice, note, items, subtotal, ppnPct, ppnAmount, total })}>
+        Simpan Barang Masuk
       </button>
     </div>
   )
@@ -445,35 +645,13 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   const [lastScanned, setLastScanned] = useState('')
   const [caraBayar, setCaraBayar] = useState('LUNAS') // LUNAS | KREDIT
   const [dp, setDp] = useState('')
-  const [processing, setProcessing] = useState(false)
-
-  const [memberSearch, setMemberSearch] = useState('')
-  const [showMemberDrop, setShowMemberDrop] = useState(false)
-  const filteredMembers = members.filter(m => !m.status || m.status === 'active').filter(m => {
-    if (!memberSearch) return true
-    const q = memberSearch.toLowerCase()
-    return (m.no||'').toLowerCase().includes(q) || (m.name||'').toLowerCase().includes(q) || (m.nrp||'').toLowerCase().includes(q) || (m.kompi||'').toLowerCase().includes(q)
-  })
-  const selectedMemberObj = members.find(m => m.id === memberId)
 
   const filteredProducts = products.filter(p =>
     p.stock > 0 && (search === '' || String(p.name||'').toLowerCase().includes(search.toLowerCase()) || String(p.sku||'').toLowerCase().includes(search.toLowerCase()))
   )
 
   function handleBarcodeScan(code) {
-    // 1. Cek apakah ini barcode kartu anggota (format: M21, A5, C79, dll)
-    const memberMatch = members.find(m =>
-      String(m.no||'').toLowerCase() === code.toLowerCase() ||
-      String(m.no||'').toLowerCase() === code.toLowerCase().replace(/^0+/, '')
-    )
-    if (memberMatch) {
-      setMemberId(memberMatch.id)
-      setLastScanned('👤 ' + memberMatch.name + ' (' + memberMatch.no + ')')
-      showToast('Pelanggan: ' + memberMatch.name + ' (' + memberMatch.no + ')')
-      return
-    }
-
-    // 2. Cari produk berdasarkan SKU atau nama
+    // Cari produk berdasarkan SKU atau nama
     const found = products.find(p =>
       String(p.sku||'').toLowerCase() === code.toLowerCase() ||
       String(p.name||'').toLowerCase() === code.toLowerCase() ||
@@ -493,44 +671,25 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
     }
   }
 
-  // Hitung harga otomatis berdasarkan qty dan 3 level harga (seperti Kartika VB6)
-  function autoPrice(product, qty, mid) {
-    const member = members.find(m => m.id === mid)
-    const useH2 = member?.tingkatHrg === '2'
-    const useH3 = member?.tingkatHrg === '3'
-    // Prioritas: Limit3 > Limit2 > tingkatHrg > Harga1
-    if (product.limitQty3 && qty >= product.limitQty3 && product.sellPrice3) return product.sellPrice3
-    if (product.limitQty && qty >= product.limitQty && product.sellPrice2) return product.sellPrice2
-    if (useH3 && product.sellPrice3) return product.sellPrice3
-    if (useH2 && product.sellPrice2) return product.sellPrice2
-    return product.sellPrice
-  }
-
   function addToCart(product) {
+    // Pilih harga berdasarkan tipe pelanggan
+    const member = members.find(m => m.id === memberId)
+    const useHarga2 = member?.tingkatHrg === '2'
+    const price = useHarga2 && product.sellPrice2 ? product.sellPrice2 : product.sellPrice
+
     setCart(prev => {
       const existing = prev.find(c => c.productId === product.id)
       if (existing) {
         if (existing.qty >= product.stock) return prev
-        const newQty = existing.qty + 1
-        const price = autoPrice(product, newQty, memberId)
-        return prev.map(c => c.productId === product.id ? { ...c, qty: newQty, price } : c)
+        return prev.map(c => c.productId === product.id ? { ...c, qty: c.qty + 1 } : c)
       }
-      const price = autoPrice(product, 1, memberId)
-      return [...prev, { productId: product.id, name: product.name, price, qty: 1, maxStock: product.stock, diskon: 0,
-        limitQty: product.limitQty || 0, limitQty3: product.limitQty3 || 0,
-        sellPrice: product.sellPrice, sellPrice2: product.sellPrice2 || 0, sellPrice3: product.sellPrice3 || 0 }]
+      return [...prev, { productId: product.id, name: product.name, price, qty: 1, maxStock: product.stock, diskon: 0 }]
     })
   }
 
   function updateQty(productId, qty) {
     if (qty <= 0) { setCart(prev => prev.filter(c => c.productId !== productId)); return }
-    setCart(prev => prev.map(c => {
-      if (c.productId !== productId) return c
-      const newQty = Math.min(qty, c.maxStock)
-      const prod = products.find(p => p.id === productId)
-      const price = prod ? autoPrice(prod, newQty, memberId) : c.price
-      return { ...c, qty: newQty, price }
-    }))
+    setCart(prev => prev.map(c => c.productId === productId ? { ...c, qty: Math.min(qty, c.maxStock) } : c))
   }
 
   function updateDiskon(productId, diskon) {
@@ -543,53 +702,50 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   const total = totalSebelumDiskon - totalDiskon
   const change = caraBayar === 'LUNAS' ? Number(payment) - total : Number(dp) - 0
 
-  function checkout() {
+  async function checkout() {
     if (cart.length === 0) { showToast('Keranjang kosong', 'error'); return }
     if (caraBayar === 'LUNAS' && Number(payment) < total) { showToast('Pembayaran kurang', 'error'); return }
-    if (caraBayar === 'KREDIT' && !memberId) { showToast('Pilih anggota untuk transaksi KREDIT', 'error'); return }
-    if (processing) return
-    setProcessing(true)
 
-    const selectedMember = members.find(m => m.id === memberId)
-    const customerName = selectedMember?.name || 'Umum'
     const noNota = 'N' + Date.now().toString().slice(-7)
     const tx = {
-      noNota, date: today(), memberId: memberId || null, customerName,
+      noNota,
+      date: today(),
+      memberId: memberId || null,
+      customerName: members.find(m => m.id === memberId)?.name || 'Umum',
       items: cart.map(c => ({ productId: c.productId, name: c.name, qty: c.qty, price: c.price, diskon: c.diskon || 0, subtotal: c.price * c.qty * (1 - (c.diskon || 0) / 100) })),
-      totalSebelumDiskon, totalDiskon, total,
+      totalSebelumDiskon,
+      totalDiskon,
+      total,
       payment: caraBayar === 'LUNAS' ? Number(payment) : Number(dp),
       change: caraBayar === 'LUNAS' ? Number(payment) - total : 0,
-      caraBayar, cashier: 'user',
+      caraBayar,
+      cashier: 'user',
+    }
+    await saveTransaction(tx)
+
+    // Kalau KREDIT, catat piutang
+    if (caraBayar === 'KREDIT' && savePiutang) {
+      await savePiutang({
+        noNota, date: today(), memberId: memberId || null,
+        customerName: members.find(m => m.id === memberId)?.name || 'Umum',
+        total, dp: Number(dp) || 0, totalBayar: Number(dp) || 0,
+        sisa: total - (Number(dp) || 0), status: 'KREDIT', payments: Number(dp) > 0 ? [{ date: today(), amount: Number(dp) }] : []
+      })
     }
 
-    // Simpan data sebelum reset
-    const _payment = payment, _total = total, _dp = dp, _cara = caraBayar
-    const _cart = [...cart], _mid = memberId
+    // Kurangi stok
+    for (const item of cart) {
+      const prod = products.find(p => p.id === item.productId)
+      if (prod) await updateProductStock(prod.id, prod.stock - item.qty)
+    }
 
-    // ===== RESET UI LANGSUNG — TIDAK TUNGGU APAPUN =====
-    setCart([]); setPayment(''); setDp(''); setMemberId(''); setMemberSearch(''); setCaraBayar('LUNAS')
-    setProcessing(false)
-    showToast(_cara === 'LUNAS'
-      ? 'Transaksi LUNAS! Kembalian: ' + formatRp(Number(_payment) - _total)
-      : 'Transaksi KREDIT dicatat. Sisa piutang: ' + formatRp(_total - (Number(_dp) || 0)))
+    // Cetak struk otomatis
+    try { cetakStruk(tx, settings, members) } catch(e) { console.log('Struk print skipped:', e) }
 
-    // ===== BACKGROUND: Simpan ke Firestore + Cetak (fire-and-forget) =====
-    setTimeout(() => {
-      try { cetakStruk(tx, settings, members) } catch(e) { /* skip */ }
-      saveTransaction(tx).catch(e => console.warn('tx err:', e))
-      if (_cara === 'KREDIT' && savePiutang) {
-        savePiutang({
-          noNota, date: today(), memberId: _mid || null, customerName,
-          total: _total, dp: Number(_dp) || 0, totalBayar: Number(_dp) || 0,
-          sisa: _total - (Number(_dp) || 0), status: 'KREDIT',
-          payments: Number(_dp) > 0 ? [{ date: today(), amount: Number(_dp) }] : []
-        }).catch(e => console.warn('piutang err:', e))
-      }
-      for (const item of _cart) {
-        const prod = products.find(p => p.id === item.productId)
-        if (prod) updateProductStock(prod.id, prod.stock - item.qty).catch(e => console.warn('stok err:', e))
-      }
-    }, 50)
+    setCart([]); setPayment(''); setDp(''); setMemberId(''); setCaraBayar('LUNAS')
+    showToast(caraBayar === 'LUNAS'
+      ? 'Transaksi LUNAS! Kembalian: ' + formatRp(Number(payment) - total)
+      : 'Transaksi KREDIT dicatat. Sisa piutang: ' + formatRp(total - (Number(dp) || 0)))
   }
 
   const sortedTx = [...transactions].sort((a, b) => b.date.localeCompare(a.date))
@@ -693,43 +849,22 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
               </div>
 
               <label style={S.formLabel}>Pelanggan / Anggota
-                <div style={{ position: 'relative' }}>
-                  <input style={S.input} placeholder="Ketik kode (C79) atau nama anggota..."
-                    value={showMemberDrop ? memberSearch : (selectedMemberObj ? `${selectedMemberObj.no} - ${selectedMemberObj.name}` : '')}
-                    onFocus={() => { setShowMemberDrop(true); setMemberSearch('') }}
-                    onBlur={() => setTimeout(() => setShowMemberDrop(false), 200)}
-                    onKeyDown={e => { if (e.key === 'Escape') { setShowMemberDrop(false); e.target.blur() } }}
-                    onChange={e => setMemberSearch(e.target.value)} />
-                  {memberId && !showMemberDrop && <button style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#999', fontSize: 16 }}
-                    onClick={() => { setMemberId(''); setMemberSearch('') }}>×</button>}
-                  {showMemberDrop && (
-                    <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, maxHeight: 200, overflowY: 'auto', zIndex: 50, boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
-                      <div style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid #f0f0f0', color: '#666' }}
-                        onClick={() => { setMemberId(''); setShowMemberDrop(false); setMemberSearch('') }}>-- Umum (Harga Eceran) --</div>
-                      {filteredMembers.slice(0, 50).map(m => (
-                        <div key={m.id} style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid #f5f5f5', background: m.id === memberId ? '#e3f2fd' : '#fff' }}
-                          onClick={() => {
-                            setMemberId(m.id)
-                            setShowMemberDrop(false)
-                            setMemberSearch('')
-                            const useH2 = m?.tingkatHrg === '2'
-                            setCart(prev => prev.map(c => {
-                              const prod = products.find(p => p.id === c.productId)
-                              if (!prod) return c
-                              const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
-                              return { ...c, price: newPrice }
-                            }))
-                          }}
-                          onMouseEnter={e => e.target.style.background = '#f0f7ff'}
-                          onMouseLeave={e => e.target.style.background = m.id === memberId ? '#e3f2fd' : '#fff'}>
-                          <strong>{m.no}</strong> - {m.name} {m.kompi ? <span style={{ fontSize: 10, color: '#1565c0', background: '#e3f2fd', padding: '1px 4px', borderRadius: 3, marginLeft: 4 }}>{m.kompi}</span> : ''} {m.tingkatHrg === '2' ? '(Grosir)' : ''}
-                        </div>
-                      ))}
-                      {filteredMembers.length === 0 && <div style={{ padding: '12px', fontSize: 12, color: '#999', textAlign: 'center' }}>Tidak ditemukan</div>}
-                      {filteredMembers.length > 50 && <div style={{ padding: '8px 12px', fontSize: 11, color: '#999', textAlign: 'center' }}>Ketik untuk menyaring...</div>}
-                    </div>
-                  )}
-                </div>
+                <select style={S.input} value={memberId} onChange={e => {
+                  const newMid = e.target.value
+                  setMemberId(newMid)
+                  // Update harga di keranjang sesuai tipe pelanggan
+                  const m = members.find(x => x.id === newMid)
+                  const useH2 = m?.tingkatHrg === '2'
+                  setCart(prev => prev.map(c => {
+                    const prod = products.find(p => p.id === c.productId)
+                    if (!prod) return c
+                    const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
+                    return { ...c, price: newPrice }
+                  }))
+                }}>
+                  <option value="">-- Umum (Harga Eceran) --</option>
+                  {members.filter(m => m.status === 'active').map(m => <option key={m.id} value={m.id}>{m.no} - {m.name} {m.tingkatHrg === '2' ? '(Grosir)' : ''}</option>)}
+                </select>
               </label>
 
               {/* Cara Bayar: LUNAS / KREDIT */}
@@ -762,10 +897,10 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
                 </>
               )}
 
-              <button style={{ ...S.primaryBtn, width: '100%', marginTop: 12, justifyContent: 'center', fontSize: 16, padding: '14px', background: processing ? '#9e9e9e' : caraBayar === 'KREDIT' ? '#e65100' : '#1565c0', opacity: processing ? 0.7 : 1 }}
-                disabled={processing || cart.length === 0 || (caraBayar === 'LUNAS' && Number(payment) < total)}
+              <button style={{ ...S.primaryBtn, width: '100%', marginTop: 12, justifyContent: 'center', fontSize: 16, padding: '14px', background: caraBayar === 'KREDIT' ? '#e65100' : '#1565c0' }}
+                disabled={cart.length === 0 || (caraBayar === 'LUNAS' && Number(payment) < total)}
                 onClick={checkout}>
-                {processing ? 'Memproses...' : caraBayar === 'LUNAS' ? 'Bayar ' + formatRp(total) : 'Catat Kredit ' + formatRp(total)}
+                {caraBayar === 'LUNAS' ? 'Bayar ' + formatRp(total) : 'Catat Kredit ' + formatRp(total)}
               </button>
             </div>
           </div>

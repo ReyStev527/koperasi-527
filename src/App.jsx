@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { db } from './firebase'
 import {
-  getAll, getOne, setOne, addOne, removeOne, listenCollection, seedIfEmpty, seedInventoryIfEmpty, batchSet, updateField
+  getAll, getOne, setOne, addOne, removeOne, listenCollection, seedIfEmpty, seedInventoryIfEmpty, batchSet
 } from './db'
 import { Products, Suppliers, StockIn, POS } from './Inventory'
 import { KasMasukKeluar, JurnalUmum, LabaRugi, HitungSHU, CetakKwitansi } from './Finance'
 import { ExportData, RekapBulanan, GrafikTrend, AuditTrail, createAuditLog, LaporanPenjualan } from './Reporting'
 import { ReturBarang, PiutangPage, HargaBertingkat, MutasiStok, SetoranHarian } from './Legacy'
-import { HutangSupplier, BackupRestore, DashboardCharts, cetakStruk, cetakLaporanPDF, KartuAnggota } from './Extra'
+import { HutangSupplier, BackupRestore, DashboardCharts, cetakStruk, cetakLaporanPDF, KartuAnggota, LaporanTutupBuku, StokHistori, TagihanJuyar, LabaPerAnggota } from './Extra'
 import logoSrc from '/logo.png?url'
 
 // =============================================
@@ -77,9 +77,7 @@ export default function App() {
   const [setorans, setSetorans] = useState([])
   const [hutangs, setHutangs] = useState([])
   const [settings, setSettings] = useState({
-    name: 'KOPERASI YONIF 527/BY', simpPokok: 500000, simpWajib: 100000, bungaPinjaman: 1.5, maxPinjaman: 10000000,
-    kompiList: ['KOMPI A', 'KOMPI B', 'KOMPI C', 'KOMPI D', 'KOMPI E', 'STAF', 'BAND'],
-    jenisList: ['Sembako', 'Makanan', 'Minuman', 'Toiletries', 'ATK', 'Elektronik', 'Pakaian', 'Lainnya']
+    name: 'KOPERASI YONIF 527/BY', simpPokok: 500000, simpWajib: 100000, bungaPinjaman: 1.5, maxPinjaman: 10000000
   })
 
   const [modal, setModal] = useState(null)
@@ -100,14 +98,8 @@ export default function App() {
         const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms))
 
         try {
-          // Seed HANYA jika belum pernah dijalankan (cek localStorage)
-          // Ini mencegah data import tertimpa data contoh
-          const seeded = localStorage.getItem('koperasi_seeded')
-          if (!seeded) {
-            await Promise.race([seedIfEmpty(), timeout(10000)])
-            await Promise.race([seedInventoryIfEmpty(), timeout(10000)])
-            localStorage.setItem('koperasi_seeded', 'true')
-          }
+          await Promise.race([seedIfEmpty(), timeout(10000)])
+          await Promise.race([seedInventoryIfEmpty(), timeout(10000)])
         } catch (seedErr) {
           console.warn('Seed timeout/error (lanjut tanpa seed):', seedErr.message)
         }
@@ -211,16 +203,80 @@ export default function App() {
     if (isEdit) await setOne('products', p.id, p)
     else { p.id = genId(); await setOne('products', p.id, p) }
   }
-  async function deleteProduct(id) { await removeOne('products', id) }
+  async function deleteProduct(id) {
+    const p = products.find(x => x.id === id)
+    if (!p) return
+    if ((p.stock||0) > 0 && p.tipe !== 'titipan') {
+      if (!confirm('Produk "' + p.name + '" masih ada stok ' + p.stock + ' ' + (p.unit||'pcs') + '.\nHapus paksa? Stok akan dianggap hilang.')) return false
+    }
+    const hasTransactions = transactions.some(t => (t.items||[]).some(it => it.productId === id))
+    if (hasTransactions) {
+      if (!confirm('Produk "' + p.name + '" memiliki riwayat transaksi.\nData transaksi TIDAK akan dihapus. Lanjutkan?')) return false
+    }
+    await removeOne('products', id)
+    await logAction('Produk', 'delete', 'Hapus: ' + p.name + ' (stok: ' + (p.stock||0) + ')')
+    return true
+  }
   async function updateProductStock(id, newStock) {
-    await updateField('products', id, { stock: newStock })
+    const p = products.find(pr => pr.id === id)
+    if (p) await setOne('products', id, { ...p, stock: newStock })
   }
   async function saveSupplier(s, isEdit) {
     if (isEdit) await setOne('suppliers', s.id, s)
     else { s.id = genId(); await setOne('suppliers', s.id, s) }
   }
   async function deleteSupplier(id) { await removeOne('suppliers', id) }
-  async function saveStockIn(si) { si.id = genId(); await setOne('stockIn', si.id, si) }
+  async function saveStockIn(si) {
+    si.id = genId()
+    await setOne('stockIn', si.id, si)
+
+    // Feature 9: Update harga beli produk jika harga baru lebih mahal
+    for (const item of (si.items||[])) {
+      const prod = products.find(p => p.id === item.productId)
+      if (prod && (item.buyPrice||0) > (prod.buyPrice||0)) {
+        const updatedProd = { ...prod, buyPrice: item.buyPrice }
+        // Auto-update harga jual dengan margin yang sama
+        if (prod.buyPrice > 0 && prod.sellPrice > 0) {
+          const oldMargin = (prod.sellPrice - prod.buyPrice) / prod.buyPrice
+          updatedProd.sellPrice = Math.round(item.buyPrice * (1 + oldMargin))
+          if (prod.sellPrice2) {
+            const oldMargin2 = (prod.sellPrice2 - prod.buyPrice) / prod.buyPrice
+            updatedProd.sellPrice2 = Math.round(item.buyPrice * (1 + oldMargin2))
+          }
+        }
+        await setOne('products', prod.id, updatedProd)
+      }
+    }
+
+    // Auto-create Kas Keluar untuk sinkron keuangan
+    const supName = suppliers.find(s => s.id === si.supplierId)?.name || 'Supplier'
+    const kasEntry = {
+      id: genId(),
+      date: si.date,
+      type: 'keluar',
+      amount: si.total || 0,
+      category: 'Pembelian Barang',
+      description: 'Beli barang - ' + (si.invoice||'') + ' (' + supName + ')' + (si.ppnPct ? ' +PPN ' + si.ppnPct + '%' : ''),
+      ref: si.invoice || si.id,
+    }
+    await setOne('kasData', kasEntry.id, kasEntry)
+
+    // Auto-create Jurnal entry (double entry)
+    const jurnalEntry = {
+      id: genId(),
+      date: si.date,
+      description: 'Pembelian barang - ' + (si.invoice||'') + ' (' + supName + ')',
+      entries: [
+        { account: 'Persediaan Barang', type: 'debit', amount: si.subtotal || si.total || 0 },
+        ...(si.ppnAmount > 0 ? [{ account: 'PPN Masukan', type: 'debit', amount: si.ppnAmount }] : []),
+        { account: 'Kas/Bank', type: 'kredit', amount: si.total || 0 },
+      ],
+      ref: si.invoice || si.id,
+    }
+    await setOne('jurnalData', jurnalEntry.id, jurnalEntry)
+
+    await logAction('Barang Masuk', 'create', 'Invoice ' + (si.invoice||'') + ': ' + (si.items||[]).length + ' item, total ' + (si.total||0))
+  }
   async function saveTransaction(tx) { tx.id = genId(); await setOne('transactions', tx.id, tx) }
 
   // ---- Legacy CRUD ----
@@ -288,8 +344,11 @@ export default function App() {
   const allNavItems = [
     { id: 'dashboard', label: 'Dashboard', icon: I.home, roles: ['admin','bendahara','ketua','staff'] },
     { id: 'members', label: 'Anggota', icon: I.users, roles: ['admin','bendahara','ketua'] },
+    { id: 'savings', label: 'Simpanan', icon: I.wallet, roles: ['admin','bendahara'] },
+    { id: 'loans', label: 'Pinjaman', icon: I.loan, roles: ['admin','bendahara','ketua'] },
     { id: '_sep1', label: 'TOKO', sep: true, roles: ['admin','bendahara','staff'] },
     { id: 'products', label: 'Stok Barang', icon: I.box, roles: ['admin','bendahara','staff'] },
+    { id: 'stokhistori', label: 'Stok per Tanggal', icon: I.chart, roles: ['admin','bendahara'] },
     { id: 'stockin', label: 'Barang Masuk', icon: I.truck, roles: ['admin','bendahara'] },
     { id: 'pos', label: 'Kasir / POS', icon: I.cart, roles: ['admin','bendahara','staff'] },
     { id: 'suppliers', label: 'Supplier', icon: I.supplier, roles: ['admin','bendahara'] },
@@ -298,13 +357,21 @@ export default function App() {
     { id: 'mutasi', label: 'Mutasi Stok', icon: I.box, roles: ['admin','bendahara'] },
     { id: '_sep2', label: 'KEUANGAN', sep: true, roles: ['admin','bendahara','ketua'] },
     { id: 'kas', label: 'Kas Masuk/Keluar', icon: I.wallet, roles: ['admin','bendahara'] },
-    { id: 'setoran', label: 'Setoran Bulanan', icon: I.wallet, roles: ['admin','bendahara'] },
+    { id: 'jurnal', label: 'Jurnal Umum', icon: I.chart, roles: ['admin','bendahara'] },
+    { id: 'piutang', label: 'Piutang Pelanggan', icon: I.loan, roles: ['admin','bendahara'] },
+    { id: 'setoran', label: 'Setoran Harian', icon: I.wallet, roles: ['admin','bendahara'] },
     { id: 'hutang', label: 'Hutang Supplier', icon: I.truck, roles: ['admin','bendahara'] },
+    { id: 'labarugi', label: 'Laba Rugi', icon: I.chart, roles: ['admin','bendahara','ketua'] },
     { id: 'shu', label: 'Hitung SHU', icon: I.loan, roles: ['admin','ketua'] },
     { id: 'kwitansi', label: 'Cetak Kwitansi', icon: I.home, roles: ['admin','bendahara','staff'] },
     { id: '_sep3', label: 'LAPORAN', sep: true, roles: ['admin','bendahara','ketua'] },
-    { id: 'lapjual', label: 'Laporan Penjualan', icon: I.chart, roles: ['admin','bendahara','ketua'] },
+    { id: 'tutupbuku', label: 'Tutup Buku', icon: I.chart, roles: ['admin','bendahara','ketua'] },
+    { id: 'juyar', label: 'Tagihan Juyar', icon: I.loan, roles: ['admin','bendahara'] },
+    { id: 'labaanggota', label: 'Laba per Anggota', icon: I.chart, roles: ['admin','bendahara','ketua'] },
+    { id: 'reports', label: 'Neraca', icon: I.chart, roles: ['admin','bendahara','ketua'] },
     { id: 'rekap', label: 'Rekap Bulanan', icon: I.chart, roles: ['admin','bendahara','ketua'] },
+    { id: 'lapjual', label: 'Laporan Penjualan', icon: I.chart, roles: ['admin','bendahara','ketua'] },
+    { id: 'grafik', label: 'Grafik Trend', icon: I.chart, roles: ['admin','bendahara','ketua'] },
     { id: 'export', label: 'Import/Export', icon: I.home, roles: ['admin','bendahara'] },
     { id: 'audit', label: 'Audit Trail', icon: I.gear, roles: ['admin'] },
     { id: 'notif', label: 'Notifikasi', icon: I.home, roles: ['admin','bendahara','ketua'] },
@@ -388,21 +455,32 @@ export default function App() {
       {/* MAIN */}
       <main className="app-main" style={S.main}>
         {page === 'dashboard' && <Dashboard {...{ totalMembers, totalSavings, totalLoansOut, members, savings, loans, getMember, setPage, products, transactions, kasData }} />}
-        {page === 'members' && <Members {...{ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc, kompiList: settings.kompiList || [] }} />}
-        {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, jenisList: settings.jenisList || [] }} />}
-        {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, products, suppliers, updateProductStock, setModal, showToast, saveHutang }} />}
+        {page === 'members' && <Members {...{ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc }} />}
+        {page === 'savings' && <Savings {...{ savings, saveSaving, deleteSaving, members, getMember, setModal, showToast }} />}
+        {page === 'loans' && <Loans {...{ loans, saveLoan, payLoan, members, getMember, setModal, showToast, settings }} />}
+        {page === 'tutupbuku' && <LaporanTutupBuku transactions={transactions} members={members} settings={settings} />}
+        {page === 'juyar' && <TagihanJuyar {...{ transactions, piutangs, members, settings, savePiutang, showToast, setModal }} />}
+        {page === 'labaanggota' && <LabaPerAnggota {...{ transactions, members, products, settings }} />}
+        {page === 'reports' && <Reports {...{ members, savings, loans, getMember }} />}
+        {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, transactions, stockInData }} />}
+        {page === 'stokhistori' && <StokHistori products={products} stockIn={stockInData} transactions={transactions} mutasis={mutasis} />}
+        {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, products, suppliers, updateProductStock, setModal, showToast }} />}
         {page === 'pos' && <POS {...{ products, transactions, saveTransaction, updateProductStock, members, showToast, savePiutang, settings }} />}
         {page === 'suppliers' && <Suppliers {...{ suppliers, saveSupplier, deleteSupplier, products, setModal, showToast }} />}
         {page === 'retur' && <ReturBarang {...{ returs, saveRetur, products, suppliers, updateProductStock, setModal, showToast }} />}
         {page === 'harga' && <HargaBertingkat {...{ products, saveProduct, setModal, showToast }} />}
         {page === 'mutasi' && <MutasiStok {...{ mutasis, saveMutasi, products, updateProductStock, setModal, showToast }} />}
         {page === 'kas' && <KasMasukKeluar {...{ kasData, saveKas, deleteKas, setModal, showToast }} />}
+        {page === 'jurnal' && <JurnalUmum {...{ jurnalData, saveJurnal, deleteJurnal, setModal, showToast }} />}
+        {page === 'piutang' && <PiutangPage {...{ piutangs, savePiutang, bayarPiutang, members, getMember, setModal, showToast }} />}
         {page === 'setoran' && <SetoranHarian {...{ setorans, saveSetoran, transactions, kasData, loans, setModal, showToast }} />}
         {page === 'hutang' && <HutangSupplier {...{ hutangs, saveHutang, bayarHutang, suppliers, setModal, showToast }} />}
+        {page === 'labarugi' && <LabaRugi {...{ kasData, transactions, loans, products, settings }} />}
         {page === 'shu' && <HitungSHU {...{ members, savings, loans, transactions, kasData, products, settings }} />}
         {page === 'kwitansi' && <CetakKwitansi {...{ transactions, savings, loans, members, getMember, settings, setModal }} />}
         {page === 'rekap' && <RekapBulanan {...{ members, savings, loans, transactions, kasData, products, settings }} />}
         {page === 'lapjual' && <LaporanPenjualan {...{ transactions, products, members, suppliers, settings, stockIn: stockInData, returs }} />}
+        {page === 'grafik' && <GrafikTrend {...{ savings, loans, transactions, kasData, products }} />}
         {page === 'export' && <ExportData {...{ members, savings, loans, products, transactions, kasData, settings,
           saveImportedMembers: async (items, onProgress) => { return await batchSet('members', items, onProgress) },
           saveImportedProducts: async (items, onProgress) => { return await batchSet('products', items, onProgress) },
@@ -516,15 +594,17 @@ function LoginScreen({ onLogin }) {
 function Dashboard({ totalMembers, totalSavings, totalLoansOut, members, savings, loans, getMember, setPage, products, transactions, kasData }) {
   const totalInventory = products.reduce((a, p) => a + ((p.stock||0) * (p.buyPrice||0)), 0)
   const todaySales = transactions.filter(t => t.date === today()).reduce((a, t) => a + (t.total||0), 0)
-  const todayCount = transactions.filter(t => t.date === today()).length
   const lowStock = products.filter(p => (p.stock||0) <= (p.minStock||2)).length
   const cards = [
     { label: 'Total Anggota', value: totalMembers, icon: I.users, color: 'var(--b)' },
-    { label: 'Total Produk', value: products.length, icon: I.box, color: 'var(--p)' },
-    { label: 'Nilai Inventaris', value: formatRp(totalInventory), icon: I.wallet, color: 'var(--g)' },
-    { label: 'Penjualan Hari Ini', value: formatRp(todaySales) + ` (${todayCount} nota)`, icon: I.cart, color: 'var(--g)' },
+    { label: 'Total Simpanan', value: formatRp(totalSavings), icon: I.wallet, color: 'var(--g)' },
+    { label: 'Pinjaman Berjalan', value: formatRp(totalLoansOut), icon: I.loan, color: 'var(--o)' },
+    { label: 'Nilai Inventaris', value: formatRp(totalInventory), icon: I.box, color: 'var(--p)' },
+    { label: 'Penjualan Hari Ini', value: formatRp(todaySales), icon: I.cart, color: 'var(--g)' },
     { label: 'Stok Menipis', value: lowStock + ' item', icon: I.chart, color: lowStock > 0 ? 'var(--r)' : 'var(--g)' },
   ]
+  const recentSavings = [...savings].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5)
+  const activeLoans = loans.filter(l => l.status === 'active')
 
   return (
     <div>
@@ -546,32 +626,34 @@ function Dashboard({ totalMembers, totalSavings, totalLoansOut, members, savings
 
       <div style={S.row2}>
         <div style={S.card}>
-          <div style={S.cardHead}><h3 style={S.cardTitle}>Transaksi Terakhir</h3><button style={S.linkBtn} onClick={() => setPage('pos')}>Lihat Semua</button></div>
+          <div style={S.cardHead}><h3 style={S.cardTitle}>Simpanan Terakhir</h3><button style={S.linkBtn} onClick={() => setPage('savings')}>Lihat Semua</button></div>
           <table style={S.table}>
-            <thead><tr>{['Nota', 'Pembeli', 'Total', 'Status'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-            <tbody>{[...transactions].sort((a, b) => (b.date||'').localeCompare(a.date||'')).slice(0, 5).map(tx => (
-              <tr key={tx.id} style={S.tr}>
-                <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{tx.noNota || '-'}</td>
-                <td style={S.td}>{tx.customerName || 'Umum'}</td>
-                <td style={{ ...S.td, fontWeight: 600 }}>{formatRp(tx.total)}</td>
-                <td style={S.td}><span style={{ ...S.badge, background: tx.caraBayar === 'KREDIT' ? '#fff3e0' : '#e8f5e9', color: tx.caraBayar === 'KREDIT' ? '#e65100' : '#2e7d32' }}>{tx.caraBayar || 'LUNAS'}</span></td>
-              </tr>
-            ))}{transactions.length === 0 && <tr><td colSpan={4} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Belum ada transaksi</td></tr>}</tbody>
+            <thead><tr>{['Anggota', 'Jenis', 'Jumlah', 'Tanggal'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{recentSavings.map(s => {
+              const m = getMember(s.memberId)
+              return (<tr key={s.id} style={S.tr}>
+                <td style={S.td}>{m?.name || '-'}</td>
+                <td style={S.td}><span style={{ ...S.badge, ...badgeColor(s.type) }}>{s.type}</span></td>
+                <td style={S.td}>{formatRp(s.amount)}</td>
+                <td style={S.td}>{fmtDate(s.date)}</td>
+              </tr>)
+            })}</tbody>
           </table>
         </div>
         <div style={S.card}>
-          <div style={S.cardHead}><h3 style={S.cardTitle}>Stok Menipis</h3><button style={S.linkBtn} onClick={() => setPage('products')}>Lihat Semua</button></div>
-          {products.filter(p => (p.stock||0) <= (p.minStock||2) && p.name).length === 0 ? <p style={S.empty}>Semua stok aman</p> : (
+          <div style={S.cardHead}><h3 style={S.cardTitle}>Pinjaman Aktif</h3><button style={S.linkBtn} onClick={() => setPage('loans')}>Lihat Semua</button></div>
+          {activeLoans.length === 0 ? <p style={S.empty}>Tidak ada pinjaman aktif</p> : (
             <table style={S.table}>
-              <thead><tr>{['Produk', 'Stok', 'Min', 'Status'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-              <tbody>{products.filter(p => (p.stock||0) <= (p.minStock||2) && p.name).slice(0, 8).map(p => (
-                <tr key={p.id} style={S.tr}>
-                  <td style={{ ...S.td, fontWeight: 600 }}>{p.name}</td>
-                  <td style={{ ...S.td, color: p.stock <= 0 ? 'var(--r)' : 'var(--o)', fontWeight: 600 }}>{p.stock} {p.unit}</td>
-                  <td style={S.td}>{p.minStock}</td>
-                  <td style={S.td}><span style={{ ...S.badge, background: p.stock <= 0 ? '#ffebee' : '#fff3e0', color: p.stock <= 0 ? '#c62828' : '#e65100' }}>{p.stock <= 0 ? 'Habis' : 'Menipis'}</span></td>
-                </tr>
-              ))}</tbody>
+              <thead><tr>{['Anggota', 'Jumlah', 'Sisa', 'Tenor'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <tbody>{activeLoans.map(l => {
+                const m = getMember(l.memberId)
+                return (<tr key={l.id} style={S.tr}>
+                  <td style={S.td}>{m?.name || '-'}</td>
+                  <td style={S.td}>{formatRp(l.amount)}</td>
+                  <td style={S.td}>{formatRp(l.amount - l.paid)}</td>
+                  <td style={S.td}>{l.tenor} bln</td>
+                </tr>)
+              })}</tbody>
             </table>
           )}
         </div>
@@ -586,27 +668,23 @@ function Dashboard({ totalMembers, totalSavings, totalLoansOut, members, savings
 // =============================================
 // MEMBERS
 // =============================================
-function Members({ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc, kompiList }) {
+function Members({ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc }) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
-  const [kompiFilter, setKompiFilter] = useState('all')
-
-  const allKompi = [...new Set(members.map(m => m.kompi).filter(Boolean))].sort()
 
   const filtered = members.filter(m => {
     if (filter === 'active' && m.status !== 'active') return false
     if (filter === 'inactive' && m.status !== 'inactive') return false
-    if (kompiFilter !== 'all' && m.kompi !== kompiFilter) return false
-    if (search && !m.name.toLowerCase().includes(search.toLowerCase()) && !m.no.includes(search) && !(m.nrp||'').includes(search)) return false
+    if (search && !m.name.toLowerCase().includes(search.toLowerCase()) && !m.no.includes(search)) return false
     return true
   })
 
   function openForm(member) {
     const isEdit = !!member
-    const data = member ? { ...member } : { no: String(members.length + 1).padStart(3, '0'), name: '', phone: '', address: '', nrp: '', kompi: '', joinDate: today(), status: 'active' }
+    const data = member ? { ...member } : { no: String(members.length + 1).padStart(3, '0'), name: '', pangkat: '', nrp: '', kompi: 'KOMPI MARKAS', phone: '', address: '', joinDate: today(), status: 'active' }
     setModal({
       title: isEdit ? 'Edit Anggota' : 'Tambah Anggota',
-      content: <MemberForm initial={data} kompiList={kompiList} onSave={async d => {
+      content: <MemberForm initial={data} onSave={async d => {
         await saveMember(isEdit ? { ...member, ...d } : d, isEdit)
         setModal(null)
         showToast(isEdit ? 'Anggota diperbarui' : 'Anggota ditambahkan')
@@ -618,7 +696,7 @@ function Members({ members, saveMember, deleteMember, memberSavings, memberLoans
     <div>
       <div style={S.pageHead}><h2 style={S.title}>Data Anggota</h2><button style={S.primaryBtn} onClick={() => openForm(null)}>{I.plus} Tambah Anggota</button></div>
       <div style={S.toolbar}>
-        <div style={S.searchBox}>{I.search}<input style={S.searchInput} placeholder="Cari nama / NRP / no anggota..." value={search} onChange={e => setSearch(e.target.value)} /></div>
+        <div style={S.searchBox}>{I.search}<input style={S.searchInput} placeholder="Cari nama / no anggota..." value={search} onChange={e => setSearch(e.target.value)} /></div>
         <div style={S.filterGroup}>
           {['all', 'active', 'inactive'].map(f => (
             <button key={f} style={{ ...S.filterBtn, ...(filter === f ? S.filterActive : {}) }} onClick={() => setFilter(f)}>
@@ -626,27 +704,23 @@ function Members({ members, saveMember, deleteMember, memberSavings, memberLoans
             </button>
           ))}
         </div>
-        {allKompi.length > 0 && <select style={{ ...S.input, width: 'auto', minWidth: 130 }} value={kompiFilter} onChange={e => setKompiFilter(e.target.value)}>
-          <option value="all">Semua Kompi</option>
-          {allKompi.map(k => <option key={k} value={k}>{k}</option>)}
-        </select>}
       </div>
       <div style={S.card}>
         <table style={S.table}>
-          <thead><tr>{['No', 'NRP', 'Nama', 'Kompi', 'Telepon', 'Simpanan', 'Pinjaman', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>{['No', 'Pangkat', 'Nama', 'NRP', 'Kompi', 'Simpanan', 'Pinjaman', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
           <tbody>{filtered.map(m => (
             <tr key={m.id} style={S.tr}>
               <td style={S.td}>{m.no}</td>
-              <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 12 }}>{m.nrp || '-'}</td>
+              <td style={{ ...S.td, fontSize: 12 }}>{m.pangkat||'-'}</td>
               <td style={{ ...S.td, fontWeight: 600 }}>{m.name}</td>
-              <td style={S.td}>{m.kompi || '-'}</td>
-              <td style={S.td}>{m.phone}</td>
+              <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 12 }}>{m.nrp||'-'}</td>
+              <td style={{ ...S.td, fontSize: 12 }}>{m.kompi||'-'}</td>
               <td style={{ ...S.td, color: 'var(--g)' }}>{formatRp(memberSavings(m.id))}</td>
               <td style={{ ...S.td, color: 'var(--o)' }}>{formatRp(memberLoans(m.id))}</td>
               <td style={S.td}><span style={{ ...S.badge, background: m.status === 'active' ? 'var(--g)20' : '#eee', color: m.status === 'active' ? 'var(--g)' : '#888' }}>{m.status === 'active' ? 'Aktif' : 'Nonaktif'}</span></td>
               <td style={S.td}>
                 <button style={S.smallBtn} onClick={() => openForm(m)}>{I.edit}</button>
-                <button style={{ ...S.smallBtn, color: 'var(--b)' }} onClick={() => setModal({ title: 'Kartu Anggota - ' + m.name, content: <KartuAnggota member={m} members={members.filter(x => x.status === 'active')} settings={settings} logoSrc={logoSrc} /> })}>
+                <button style={{ ...S.smallBtn, color: 'var(--b)' }} onClick={() => setModal({ title: 'Kartu Anggota - ' + m.name, content: <KartuAnggota member={m} settings={settings} logoSrc={logoSrc} /> })}>
                   <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 10h4M7 14h2"/><circle cx="16" cy="11" r="2"/></svg>
                 </button>
                 <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus anggota ' + m.name + '?')) { await deleteMember(m.id); showToast('Anggota dihapus', 'error') } }}>{I.trash}</button>
@@ -659,29 +733,40 @@ function Members({ members, saveMember, deleteMember, memberSavings, memberLoans
   )
 }
 
-function MemberForm({ initial, onSave, kompiList }) {
+function MemberForm({ initial, onSave }) {
   const [d, setD] = useState(initial)
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
+  const pangkatList = ['Jenderal','Letjen','Mayjen','Brigjen','Kolonel','Letkol','Mayor','Kapten','Lettu','Letda','Peltu','Pelda','Serma','Serka','Sertu','Serda','Kopka','Koptu','Kopda','Praka','Prakka','Prada','Tamtama','PNS','Honorer','Lainnya']
+  const kompiList = ['KOMPI MARKAS','KOMPI A','KOMPI B','KOMPI C','KOMPI D','KOMPI BANTUAN','STAF','LAINNYA']
   return (
     <div style={S.form}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <label style={S.formLabel}>No Anggota<input style={S.input} value={d.no} onChange={e => set('no', e.target.value)} /></label>
-        <label style={S.formLabel}>NRP<input style={S.input} value={d.nrp||''} onChange={e => set('nrp', e.target.value)} placeholder="NRP anggota" /></label>
+        <label style={S.formLabel}>NRP<input style={S.input} value={d.nrp||''} onChange={e => set('nrp', e.target.value)} placeholder="Nomor Registrasi Pokok" /></label>
       </div>
       <label style={S.formLabel}>Nama Lengkap<input style={S.input} value={d.name} onChange={e => set('name', e.target.value)} /></label>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <label style={S.formLabel}>Telepon<input style={S.input} type="tel" value={d.phone} onChange={e => set('phone', e.target.value)} /></label>
+        <label style={S.formLabel}>Pangkat
+          <select style={S.input} value={d.pangkat||''} onChange={e => set('pangkat', e.target.value)}>
+            <option value="">-- Pilih Pangkat --</option>
+            {pangkatList.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </label>
         <label style={S.formLabel}>Kompi / Satuan
           <select style={S.input} value={d.kompi||''} onChange={e => set('kompi', e.target.value)}>
             <option value="">-- Pilih Kompi --</option>
-            {(kompiList||[]).map(k => <option key={k} value={k}>{k}</option>)}
+            {kompiList.map(k => <option key={k} value={k}>{k}</option>)}
           </select>
         </label>
       </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>Telepon<input style={S.input} type="tel" value={d.phone} onChange={e => set('phone', e.target.value)} /></label>
+        <label style={S.formLabel}>Tgl Gabung<input style={S.input} type="date" value={d.joinDate} onChange={e => set('joinDate', e.target.value)} /></label>
+      </div>
       <label style={S.formLabel}>Alamat<input style={S.input} value={d.address} onChange={e => set('address', e.target.value)} /></label>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <label style={S.formLabel}>Tanggal Gabung<input style={S.input} type="date" value={d.joinDate} onChange={e => set('joinDate', e.target.value)} /></label>
         <label style={S.formLabel}>Status<select style={S.input} value={d.status} onChange={e => set('status', e.target.value)}><option value="active">Aktif</option><option value="inactive">Nonaktif</option></select></label>
+        <label style={S.formLabel}>Tipe Harga<select style={S.input} value={d.tingkatHrg||'1'} onChange={e => set('tingkatHrg', e.target.value)}><option value="1">Harga 1 (Eceran)</option><option value="2">Harga 2 (Grosir)</option></select></label>
       </div>
       <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={() => onSave(d)}>Simpan</button>
     </div>
@@ -789,22 +874,10 @@ function Loans({ loans, saveLoan, payLoan, members, getMember, setModal, showToa
   function openPay(loan) {
     const remaining = loan.amount - loan.paid
     const mp = Math.min(Math.ceil(loan.amount / loan.tenor), remaining)
-    const metode = loan.metodeBunga || 'flat'
-    let mi = 0
-    if (metode === 'flat') {
-      mi = Math.round(loan.amount * loan.interest / 100)
-    } else if (metode === 'anuitas') {
-      const r = loan.interest / 100
-      if (r > 0) {
-        const angsuran = loan.amount * (r / (1 - Math.pow(1 + r, -loan.tenor)))
-        mi = Math.round(remaining * r)
-      }
-    } else {
-      mi = Math.round(remaining * loan.interest / 100)
-    }
+    const mi = Math.round(remaining * loan.interest / 100)
     setModal({
       title: 'Bayar Angsuran - ' + (getMember(loan.memberId)?.name || ''),
-      content: <InstallmentForm remaining={remaining} sp={mp} si={mi} metode={metode} onSave={async (p, i) => { await payLoan(loan, p, i); setModal(null); showToast('Angsuran berhasil dicatat') }} />,
+      content: <InstallmentForm remaining={remaining} sp={mp} si={mi} onSave={async (p, i) => { await payLoan(loan, p, i); setModal(null); showToast('Angsuran berhasil dicatat') }} />,
     })
   }
 
@@ -825,7 +898,7 @@ function Loans({ loans, saveLoan, payLoan, members, getMember, setModal, showToa
       </div>
       <div style={S.card}>
         <table style={S.table}>
-          <thead><tr>{['Tanggal', 'Anggota', 'Pinjaman', 'Dibayar', 'Sisa', 'Bunga', 'Metode', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>{['Tanggal', 'Anggota', 'Pinjaman', 'Dibayar', 'Sisa', 'Bunga', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
           <tbody>{filtered.map(l => {
             const m = getMember(l.memberId); const rem = l.amount - l.paid; const pct = Math.round((l.paid / l.amount) * 100)
             return (<tr key={l.id} style={S.tr}>
@@ -835,7 +908,6 @@ function Loans({ loans, saveLoan, payLoan, members, getMember, setModal, showToa
               <td style={{ ...S.td, color: 'var(--g)' }}>{formatRp(l.paid)}</td>
               <td style={{ ...S.td, color: 'var(--o)' }}>{formatRp(rem)}</td>
               <td style={S.td}>{l.interest}%</td>
-              <td style={S.td}><span style={{ ...S.badge, background: '#f0f7ff', color: 'var(--b)', fontSize: 10 }}>{(l.metodeBunga||'flat').toUpperCase()}</span></td>
               <td style={S.td}><span style={{ ...S.badge, background: l.status === 'active' ? 'var(--o)20' : 'var(--g)20', color: l.status === 'active' ? 'var(--o)' : 'var(--g)' }}>{l.status === 'active' ? `${pct}%` : 'Lunas'}</span></td>
               <td style={S.td}>{l.status === 'active' && <button style={{ ...S.smallBtn, color: 'var(--g)', fontSize: 12, fontWeight: 600 }} onClick={() => openPay(l)}>Bayar</button>}</td>
             </tr>)
@@ -847,53 +919,17 @@ function Loans({ loans, saveLoan, payLoan, members, getMember, setModal, showToa
 }
 
 function LoanForm({ members, settings, onSave }) {
-  const [d, setD] = useState({ memberId: members[0]?.id || '', amount: '', interest: settings.bungaPinjaman, tenor: 12, date: today(), metodeBunga: 'flat' })
+  const [d, setD] = useState({ memberId: members[0]?.id || '', amount: '', interest: settings.bungaPinjaman, tenor: 12, date: today() })
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
-  const amt = Number(d.amount) || 0
-  const rate = Number(d.interest) || 0
-  const tnr = Number(d.tenor) || 1
-
-  // Estimasi angsuran per bulan berdasarkan metode
-  let estPokok = 0, estBunga = 0
-  if (amt > 0 && tnr > 0) {
-    if (d.metodeBunga === 'flat') {
-      estPokok = Math.ceil(amt / tnr)
-      estBunga = Math.round(amt * rate / 100)
-    } else if (d.metodeBunga === 'anuitas') {
-      const r = rate / 100
-      if (r > 0) {
-        const angsuran = amt * (r / (1 - Math.pow(1 + r, -tnr)))
-        estPokok = Math.ceil(angsuran - (amt * r))
-        estBunga = Math.round(amt * r)
-      } else {
-        estPokok = Math.ceil(amt / tnr); estBunga = 0
-      }
-    } else if (d.metodeBunga === 'menurun') {
-      estPokok = Math.ceil(amt / tnr)
-      estBunga = Math.round(amt * rate / 100)
-    }
-  }
-
+  const monthly = d.amount && d.tenor ? Math.ceil(Number(d.amount) / Number(d.tenor)) : 0
   return (
     <div style={S.form}>
       <label style={S.formLabel}>Anggota<select style={S.input} value={d.memberId} onChange={e => set('memberId', e.target.value)}>{members.map(m => <option key={m.id} value={m.id}>{m.no} - {m.name}</option>)}</select></label>
       <label style={S.formLabel}>Jumlah Pinjaman (Rp)<input style={S.input} type="number" max={settings.maxPinjaman} value={d.amount} onChange={e => set('amount', e.target.value)} /></label>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <label style={S.formLabel}>Bunga (% / bulan)<input style={S.input} type="number" step="0.1" value={d.interest} onChange={e => set('interest', e.target.value)} /></label>
-        <label style={S.formLabel}>Tenor (bulan)<select style={S.input} value={d.tenor} onChange={e => set('tenor', e.target.value)}>{[3, 6, 12, 18, 24, 36].map(t => <option key={t} value={t}>{t} bulan</option>)}</select></label>
-      </div>
-      <label style={S.formLabel}>Metode Bunga
-        <select style={S.input} value={d.metodeBunga} onChange={e => set('metodeBunga', e.target.value)}>
-          <option value="flat">Flat (Tetap)</option>
-          <option value="anuitas">Anuitas (Menurun)</option>
-          <option value="menurun">Efektif (Sisa Pokok)</option>
-        </select>
-      </label>
+      <label style={S.formLabel}>Bunga (% / bulan)<input style={S.input} type="number" step="0.1" value={d.interest} onChange={e => set('interest', e.target.value)} /></label>
+      <label style={S.formLabel}>Tenor (bulan)<select style={S.input} value={d.tenor} onChange={e => set('tenor', e.target.value)}>{[3, 6, 12, 18, 24].map(t => <option key={t} value={t}>{t} bulan</option>)}</select></label>
       <label style={S.formLabel}>Tanggal<input style={S.input} type="date" value={d.date} onChange={e => set('date', e.target.value)} /></label>
-      {amt > 0 && <div style={{ padding: '8px 12px', background: '#f0f7ff', borderRadius: 8, fontSize: 13 }}>
-        Estimasi bulan 1: Pokok <strong>{formatRp(estPokok)}</strong> + Bunga <strong>{formatRp(estBunga)}</strong> = <strong>{formatRp(estPokok + estBunga)}</strong>/bln
-        <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>Metode: {d.metodeBunga === 'flat' ? 'Bunga tetap setiap bulan' : d.metodeBunga === 'anuitas' ? 'Angsuran tetap, bunga menurun' : 'Bunga dihitung dari sisa pokok'}</div>
-      </div>}
+      {monthly > 0 && <div style={{ padding: '8px 12px', background: '#f0f7ff', borderRadius: 8, fontSize: 13 }}>Estimasi: <strong>{formatRp(monthly)}</strong>/bln + bunga</div>}
       <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={() => onSave({ ...d, amount: Number(d.amount), interest: Number(d.interest), tenor: Number(d.tenor) })}>Ajukan Pinjaman</button>
     </div>
   )
@@ -978,12 +1014,7 @@ function SettingsPage({ settings, saveSettings, showToast, users, saveUser, dele
   const [d, setD] = useState({ ...settings })
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
   const [nu, setNu] = useState({ username: '', password: '', name: '', role: 'bendahara' })
-  const [newKompi, setNewKompi] = useState('')
-  const [newJenis, setNewJenis] = useState('')
   const isAdmin = user?.role === 'admin'
-
-  const kompiList = d.kompiList || []
-  const jenisList = d.jenisList || []
 
   return (
     <div>
@@ -1001,91 +1032,42 @@ function SettingsPage({ settings, saveSettings, showToast, users, saveUser, dele
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {/* Setting Kompi */}
-          <div style={S.card}>
-            <h3 style={{ ...S.cardTitle, marginBottom: 12 }}>Daftar Kompi / Satuan</h3>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-              {kompiList.map((k, i) => (
-                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: '#e3f2fd', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>
-                  {k}
-                  <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c62828', fontSize: 14, padding: 0, lineHeight: 1 }}
-                    onClick={() => set('kompiList', kompiList.filter((_, j) => j !== i))}>×</button>
-                </span>
-              ))}
-              {kompiList.length === 0 && <span style={{ fontSize: 12, color: '#999' }}>Belum ada kompi</span>}
+        <div style={S.card}>
+          <h3 style={{ ...S.cardTitle, marginBottom: 16 }}>Manajemen User</h3>
+          <table style={S.table}>
+            <thead><tr>{['Username', 'Nama', 'Role', ''].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{users.map(u => (
+              <tr key={u.id} style={S.tr}>
+                <td style={{ ...S.td, fontWeight: 600 }}>{u.username}</td>
+                <td style={S.td}>{u.name}</td>
+                <td style={S.td}><span style={{ ...S.badge, background: u.role === 'admin' ? 'var(--r)20' : 'var(--b)20', color: u.role === 'admin' ? 'var(--r)' : 'var(--b)', textTransform: 'capitalize' }}>{u.role}</span></td>
+                <td style={S.td}>{isAdmin && u.id !== user.id && <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus user?')) { await deleteUser(u.id); showToast('User dihapus', 'error') } }}>{I.trash}</button>}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+          {isAdmin && (
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #eee' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: 'var(--muted)' }}>Tambah User Baru</div>
+              <div style={S.form}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <label style={S.formLabel}>Username<input style={S.input} value={nu.username} onChange={e => setNu(p => ({ ...p, username: e.target.value }))} /></label>
+                  <label style={S.formLabel}>Password<input style={S.input} value={nu.password} onChange={e => setNu(p => ({ ...p, password: e.target.value }))} /></label>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <label style={S.formLabel}>Nama<input style={S.input} value={nu.name} onChange={e => setNu(p => ({ ...p, name: e.target.value }))} /></label>
+                  <label style={S.formLabel}>Role<select style={S.input} value={nu.role} onChange={e => setNu(p => ({ ...p, role: e.target.value }))}><option value="admin">Admin</option><option value="bendahara">Bendahara</option><option value="ketua">Ketua</option><option value="staff">Staff</option></select></label>
+                </div>
+                <button style={{ ...S.primaryBtn, width: '100%' }} onClick={async () => {
+                  if (!nu.username || !nu.password || !nu.name) { showToast('Lengkapi semua field', 'error'); return }
+                  if (users.some(u => u.username === nu.username)) { showToast('Username sudah ada', 'error'); return }
+                  await saveUser(nu)
+                  setNu({ username: '', password: '', name: '', role: 'bendahara' })
+                  showToast('User berhasil ditambahkan')
+                }}>{I.plus} Tambah User</button>
+              </div>
             </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <input style={{ ...S.input, flex: 1, fontSize: 12 }} value={newKompi} onChange={e => setNewKompi(e.target.value.toUpperCase())} placeholder="Nama kompi baru..." onKeyDown={e => {
-                if (e.key === 'Enter' && newKompi.trim()) { set('kompiList', [...kompiList, newKompi.trim()]); setNewKompi('') }
-              }} />
-              <button style={{ ...S.primaryBtn, fontSize: 12, padding: '6px 12px' }} onClick={() => {
-                if (newKompi.trim()) { set('kompiList', [...kompiList, newKompi.trim()]); setNewKompi('') }
-              }}>Tambah</button>
-            </div>
-          </div>
-
-          {/* Setting Jenis Barang */}
-          <div style={S.card}>
-            <h3 style={{ ...S.cardTitle, marginBottom: 12 }}>Jenis / Kategori Barang</h3>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-              {jenisList.map((j, i) => (
-                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: '#fff3e0', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>
-                  {j}
-                  <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c62828', fontSize: 14, padding: 0, lineHeight: 1 }}
-                    onClick={() => set('jenisList', jenisList.filter((_, k) => k !== i))}>×</button>
-                </span>
-              ))}
-              {jenisList.length === 0 && <span style={{ fontSize: 12, color: '#999' }}>Belum ada jenis</span>}
-            </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <input style={{ ...S.input, flex: 1, fontSize: 12 }} value={newJenis} onChange={e => setNewJenis(e.target.value)} placeholder="Jenis barang baru..." onKeyDown={e => {
-                if (e.key === 'Enter' && newJenis.trim()) { set('jenisList', [...jenisList, newJenis.trim()]); setNewJenis('') }
-              }} />
-              <button style={{ ...S.primaryBtn, fontSize: 12, padding: '6px 12px' }} onClick={() => {
-                if (newJenis.trim()) { set('jenisList', [...jenisList, newJenis.trim()]); setNewJenis('') }
-              }}>Tambah</button>
-            </div>
-          </div>
+          )}
         </div>
-      </div>
-
-      {/* Manajemen User */}
-      <div style={{ ...S.card, marginTop: 16 }}>
-        <h3 style={{ ...S.cardTitle, marginBottom: 16 }}>Manajemen User</h3>
-        <table style={S.table}>
-          <thead><tr>{['Username', 'Nama', 'Role', ''].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-          <tbody>{users.map(u => (
-            <tr key={u.id} style={S.tr}>
-              <td style={{ ...S.td, fontWeight: 600 }}>{u.username}</td>
-              <td style={S.td}>{u.name}</td>
-              <td style={S.td}><span style={{ ...S.badge, background: u.role === 'admin' ? 'var(--r)20' : 'var(--b)20', color: u.role === 'admin' ? 'var(--r)' : 'var(--b)', textTransform: 'capitalize' }}>{u.role}</span></td>
-              <td style={S.td}>{isAdmin && u.id !== user.id && <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus user?')) { await deleteUser(u.id); showToast('User dihapus', 'error') } }}>{I.trash}</button>}</td>
-            </tr>
-          ))}</tbody>
-        </table>
-        {isAdmin && (
-          <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #eee' }}>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: 'var(--muted)' }}>Tambah User Baru</div>
-            <div style={S.form}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                <label style={S.formLabel}>Username<input style={S.input} value={nu.username} onChange={e => setNu(p => ({ ...p, username: e.target.value }))} /></label>
-                <label style={S.formLabel}>Password<input style={S.input} value={nu.password} onChange={e => setNu(p => ({ ...p, password: e.target.value }))} /></label>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                <label style={S.formLabel}>Nama<input style={S.input} value={nu.name} onChange={e => setNu(p => ({ ...p, name: e.target.value }))} /></label>
-                <label style={S.formLabel}>Role<select style={S.input} value={nu.role} onChange={e => setNu(p => ({ ...p, role: e.target.value }))}><option value="admin">Admin</option><option value="bendahara">Bendahara</option><option value="ketua">Ketua</option><option value="staff">Staff</option></select></label>
-              </div>
-              <button style={{ ...S.primaryBtn, width: '100%' }} onClick={async () => {
-                if (!nu.username || !nu.password || !nu.name) { showToast('Lengkapi semua field', 'error'); return }
-                if (users.some(u => u.username === nu.username)) { showToast('Username sudah ada', 'error'); return }
-                await saveUser(nu)
-                setNu({ username: '', password: '', name: '', role: 'bendahara' })
-                showToast('User berhasil ditambahkan')
-              }}>{I.plus} Tambah User</button>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )

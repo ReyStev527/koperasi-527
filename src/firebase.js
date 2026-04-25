@@ -10,8 +10,9 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 }
 
+// Debug: cek apakah config terbaca
 if (!firebaseConfig.apiKey || firebaseConfig.apiKey === 'undefined') {
-  console.error('FIREBASE CONFIG ERROR: .env file belum terbaca!')
+  console.error('FIREBASE CONFIG ERROR: .env file belum terbaca! Pastikan file bernama .env (bukan .env.txt) dan restart npm run dev')
 }
 console.log('Firebase project:', firebaseConfig.projectId)
 
