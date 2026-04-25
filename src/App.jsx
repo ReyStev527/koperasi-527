@@ -249,36 +249,132 @@ export default function App() {
       }
     }
 
-    // Auto-create Kas Keluar untuk sinkron keuangan
+    // Auto-create Kas Keluar / Hutang Supplier sesuai jenis bayar
     const supName = suppliers.find(s => s.id === si.supplierId)?.name || 'Supplier'
-    const kasEntry = {
-      id: genId(),
-      date: si.date,
-      type: 'keluar',
-      amount: si.total || 0,
-      category: 'Pembelian Barang',
-      description: 'Beli barang - ' + (si.invoice||'') + ' (' + supName + ')' + (si.ppnPct ? ' +PPN ' + si.ppnPct + '%' : ''),
-      ref: si.invoice || si.id,
+    const jenisBayar = si.jenisBayar || 'TUNAI' // default TUNAI
+
+    if (jenisBayar === 'TUNAI') {
+      // Tunai → langsung Kas Keluar
+      const kasEntry = {
+        id: genId(),
+        date: si.date,
+        type: 'keluar',
+        amount: si.total || 0,
+        category: 'Pembelian Barang',
+        description: 'Beli barang - ' + (si.invoice||'') + ' (' + supName + ')' + (si.ppnPct ? ' +PPN ' + si.ppnPct + '%' : ''),
+        ref: si.invoice || si.id,
+      }
+      await setOne('kas', kasEntry.id, kasEntry)
+    } else {
+      // KREDIT → catat sebagai Hutang Supplier (bukan Kas Keluar)
+      const hutangEntry = {
+        id: genId(),
+        date: si.date,
+        noFaktur: si.invoice || ('SI-' + si.id.slice(-6)),
+        supplierId: si.supplierId,
+        supplierName: supName,
+        total: si.total || 0,
+        totalBayar: 0,
+        sisa: si.total || 0,
+        jatuhTempo: si.jatuhTempo || '',
+        status: 'BELUM_LUNAS',
+        payments: [],
+        ref: si.id,
+      }
+      await setOne('hutangs', hutangEntry.id, hutangEntry)
     }
-    await setOne('kasData', kasEntry.id, kasEntry)
 
     // Auto-create Jurnal entry (double entry)
     const jurnalEntry = {
       id: genId(),
       date: si.date,
-      description: 'Pembelian barang - ' + (si.invoice||'') + ' (' + supName + ')',
+      description: 'Pembelian barang - ' + (si.invoice||'') + ' (' + supName + ')' + (jenisBayar === 'KREDIT' ? ' [KREDIT]' : ''),
       entries: [
         { account: 'Persediaan Barang', type: 'debit', amount: si.subtotal || si.total || 0 },
         ...(si.ppnAmount > 0 ? [{ account: 'PPN Masukan', type: 'debit', amount: si.ppnAmount }] : []),
-        { account: 'Kas/Bank', type: 'kredit', amount: si.total || 0 },
+        { account: jenisBayar === 'TUNAI' ? 'Kas/Bank' : 'Hutang Supplier', type: 'kredit', amount: si.total || 0 },
       ],
       ref: si.invoice || si.id,
     }
-    await setOne('jurnalData', jurnalEntry.id, jurnalEntry)
+    await setOne('jurnal', jurnalEntry.id, jurnalEntry)
 
     await logAction('Barang Masuk', 'create', 'Invoice ' + (si.invoice||'') + ': ' + (si.items||[]).length + ' item, total ' + (si.total||0))
   }
-  async function saveTransaction(tx) { tx.id = genId(); await setOne('transactions', tx.id, tx) }
+  async function saveTransaction(tx) {
+    tx.id = genId()
+    await setOne('transactions', tx.id, tx)
+
+    // BUG #7 FIX: Auto-create Kas Masuk + Jurnal saat penjualan
+    // Hitung HPP (modal) untuk jurnal
+    const hpp = (tx.items || []).reduce((sum, item) => {
+      const prod = products.find(p => p.id === item.productId)
+      return sum + ((prod?.buyPrice || 0) * (item.qty || 0))
+    }, 0)
+
+    if (tx.caraBayar === 'LUNAS') {
+      // TUNAI → Kas Masuk untuk full amount
+      const kasEntry = {
+        id: genId(),
+        date: tx.date,
+        type: 'masuk',
+        amount: tx.total || 0,
+        category: 'Penjualan Tunai',
+        description: 'Penjualan ' + (tx.noNota || '') + ' (' + (tx.customerName || 'Umum') + ')',
+        ref: tx.noNota || tx.id,
+      }
+      await setOne('kas', kasEntry.id, kasEntry)
+
+      // Jurnal: Kas → Pendapatan, HPP → Persediaan
+      const jurnalEntry = {
+        id: genId(),
+        date: tx.date,
+        description: 'Penjualan tunai ' + (tx.noNota || '') + ' (' + (tx.customerName || 'Umum') + ')',
+        entries: [
+          { account: 'Kas/Bank', type: 'debit', amount: tx.total || 0 },
+          { account: 'Pendapatan Penjualan', type: 'kredit', amount: tx.total || 0 },
+          ...(hpp > 0 ? [
+            { account: 'HPP (Harga Pokok Penjualan)', type: 'debit', amount: hpp },
+            { account: 'Persediaan Barang', type: 'kredit', amount: hpp },
+          ] : []),
+        ],
+        ref: tx.noNota || tx.id,
+      }
+      await setOne('jurnal', jurnalEntry.id, jurnalEntry)
+    } else if (tx.caraBayar === 'KREDIT') {
+      // KREDIT → Kas Masuk hanya untuk DP, sisanya jadi piutang
+      const dp = Number(tx.payment) || 0
+      if (dp > 0) {
+        const kasEntry = {
+          id: genId(),
+          date: tx.date,
+          type: 'masuk',
+          amount: dp,
+          category: 'DP Penjualan Kredit',
+          description: 'DP ' + (tx.noNota || '') + ' (' + (tx.customerName || 'Umum') + ')',
+          ref: tx.noNota || tx.id,
+        }
+        await setOne('kas', kasEntry.id, kasEntry)
+      }
+
+      // Jurnal: Kas (DP) + Piutang → Pendapatan, HPP → Persediaan
+      const jurnalEntry = {
+        id: genId(),
+        date: tx.date,
+        description: 'Penjualan kredit ' + (tx.noNota || '') + ' (' + (tx.customerName || 'Umum') + ')',
+        entries: [
+          ...(dp > 0 ? [{ account: 'Kas/Bank', type: 'debit', amount: dp }] : []),
+          { account: 'Piutang Anggota', type: 'debit', amount: (tx.total || 0) - dp },
+          { account: 'Pendapatan Penjualan', type: 'kredit', amount: tx.total || 0 },
+          ...(hpp > 0 ? [
+            { account: 'HPP (Harga Pokok Penjualan)', type: 'debit', amount: hpp },
+            { account: 'Persediaan Barang', type: 'kredit', amount: hpp },
+          ] : []),
+        ],
+        ref: tx.noNota || tx.id,
+      }
+      await setOne('jurnal', jurnalEntry.id, jurnalEntry)
+    }
+  }
 
   // ---- Legacy CRUD ----
   async function saveRetur(r) { r.id = genId(); await setOne('returs', r.id, r); await logAction('Retur', 'create', `Retur ${r.noRetur}: ${r.productName} x${r.qty}`) }
@@ -289,6 +385,31 @@ export default function App() {
     const totalBayar = (piutang.totalBayar || 0) + amount
     const sisa = piutang.total - totalBayar
     await setOne('piutangs', piutang.id, { ...piutang, totalBayar, sisa: Math.max(0, sisa), payments, status: sisa <= 0 ? 'LUNAS' : 'KREDIT' })
+
+    // BUG #8 FIX: Auto-create Kas Masuk + Jurnal saat pembayaran piutang
+    const kasEntry = {
+      id: genId(),
+      date: today(),
+      type: 'masuk',
+      amount: amount,
+      category: 'Pembayaran Piutang',
+      description: 'Bayar piutang ' + (piutang.noNota || '') + ' (' + (piutang.customerName || 'Umum') + ')',
+      ref: piutang.noNota || piutang.id,
+    }
+    await setOne('kas', kasEntry.id, kasEntry)
+
+    const jurnalEntry = {
+      id: genId(),
+      date: today(),
+      description: 'Bayar piutang ' + (piutang.noNota || '') + ' (' + (piutang.customerName || 'Umum') + ')',
+      entries: [
+        { account: 'Kas/Bank', type: 'debit', amount: amount },
+        { account: 'Piutang Anggota', type: 'kredit', amount: amount },
+      ],
+      ref: piutang.noNota || piutang.id,
+    }
+    await setOne('jurnal', jurnalEntry.id, jurnalEntry)
+
     await logAction('Piutang', 'bayar', `Bayar piutang ${piutang.noNota}: ${amount}`)
   }
   async function saveMutasi(m) { m.id = genId(); await setOne('mutasis', m.id, m); await logAction('Mutasi', 'create', `Mutasi ${m.noMutasi}: ${m.productName} ${m.tipe} ${m.qty}`) }
@@ -299,7 +420,32 @@ export default function App() {
     payments.push({ date: today(), amount })
     const totalBayar = (hutang.totalBayar || 0) + amount
     const sisa = hutang.total - totalBayar
-    await setOne('hutangs', hutang.id, { ...hutang, totalBayar, sisa: Math.max(0, sisa), payments })
+    await setOne('hutangs', hutang.id, { ...hutang, totalBayar, sisa: Math.max(0, sisa), payments, status: sisa <= 0 ? 'LUNAS' : 'BELUM_LUNAS' })
+
+    // Auto-create Kas Keluar + Jurnal saat pembayaran hutang ke supplier
+    const kasEntry = {
+      id: genId(),
+      date: today(),
+      type: 'keluar',
+      amount: amount,
+      category: 'Pembayaran Hutang',
+      description: 'Bayar hutang ' + (hutang.noFaktur || '') + ' (' + (hutang.supplierName || '') + ')',
+      ref: hutang.noFaktur || hutang.id,
+    }
+    await setOne('kas', kasEntry.id, kasEntry)
+
+    const jurnalEntry = {
+      id: genId(),
+      date: today(),
+      description: 'Bayar hutang ' + (hutang.noFaktur || '') + ' (' + (hutang.supplierName || '') + ')',
+      entries: [
+        { account: 'Hutang Supplier', type: 'debit', amount: amount },
+        { account: 'Kas/Bank', type: 'kredit', amount: amount },
+      ],
+      ref: hutang.noFaktur || hutang.id,
+    }
+    await setOne('jurnal', jurnalEntry.id, jurnalEntry)
+
     await logAction('Hutang', 'bayar', `Bayar hutang ${hutang.noFaktur}: ${amount}`)
   }
 

@@ -530,6 +530,8 @@ function StockInForm({ products, suppliers, onSave }) {
   const [invoice, setInvoice] = useState('INV-' + Date.now().toString().slice(-6))
   const [note, setNote] = useState('')
   const [ppnPct, setPpnPct] = useState(0)
+  const [jenisBayar, setJenisBayar] = useState('TUNAI') // BUG #9 FIX: TUNAI / KREDIT
+  const [jatuhTempo, setJatuhTempo] = useState('') // untuk KREDIT
   const [items, setItems] = useState([{ productId: products[0]?.id || '', qty: 1, buyPrice: products[0]?.buyPrice || 0 }])
   const [showScanIdx, setShowScanIdx] = useState(-1)
   const [updateNotice, setUpdateNotice] = useState([])
@@ -615,6 +617,25 @@ function StockInForm({ products, suppliers, onSave }) {
         <label style={S.formLabel}>Catatan<input style={S.input} value={note} onChange={e => setNote(e.target.value)} /></label>
       </div>
 
+      <div style={{ display: 'grid', gridTemplateColumns: jenisBayar === 'KREDIT' ? '1fr 1fr' : '1fr', gap: 8 }}>
+        <label style={S.formLabel}>Jenis Bayar
+          <select style={S.input} value={jenisBayar} onChange={e => setJenisBayar(e.target.value)}>
+            <option value="TUNAI">TUNAI (langsung kas keluar)</option>
+            <option value="KREDIT">KREDIT (jadi hutang supplier)</option>
+          </select>
+        </label>
+        {jenisBayar === 'KREDIT' && (
+          <label style={S.formLabel}>Jatuh Tempo
+            <input style={S.input} type="date" value={jatuhTempo} onChange={e => setJatuhTempo(e.target.value)} />
+          </label>
+        )}
+      </div>
+      {jenisBayar === 'KREDIT' && (
+        <div style={{ fontSize: 11, color: '#e65100', padding: '6px 10px', background: '#fff3e0', borderRadius: 4 }}>
+          ⚠️ Pembelian KREDIT akan masuk ke menu <strong>Hutang Supplier</strong>, bukan langsung Kas Keluar.
+        </div>
+      )}
+
       <div style={{ padding: '12px 16px', background: '#f0f7ff', borderRadius: 10, fontSize: 13 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
           <span>Subtotal ({items.length} item)</span><strong>{formatRp(subtotal)}</strong>
@@ -628,7 +649,7 @@ function StockInForm({ products, suppliers, onSave }) {
           <span>TOTAL</span><span>{formatRp(total)}</span>
         </div>
       </div>
-      <button style={{ ...S.primaryBtn, width: '100%' }} onClick={() => onSave({ date, supplierId, invoice, note, items, subtotal, ppnPct, ppnAmount, total })}>
+      <button style={{ ...S.primaryBtn, width: '100%' }} onClick={() => onSave({ date, supplierId, invoice, note, items, subtotal, ppnPct, ppnAmount, total, jenisBayar, jatuhTempo })}>
         Simpan Barang Masuk
       </button>
     </div>
