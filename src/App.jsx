@@ -201,8 +201,9 @@ export default function App() {
 
   // ---- Inventory CRUD ----
   async function saveProduct(p, isEdit) {
+    p.updatedAt = today()
     if (isEdit) await setOne('products', p.id, p)
-    else { p.id = genId(); await setOne('products', p.id, p) }
+    else { p.id = genId(); p.createdAt = today(); await setOne('products', p.id, p) }
   }
   async function deleteProduct(id) {
     const p = products.find(x => x.id === id)

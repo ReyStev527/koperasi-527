@@ -39,6 +39,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   const [tipeFilter, setTipeFilter] = useState('all') // all | MILIK | TITIPAN
   const [showBulkDelete, setShowBulkDelete] = useState(false)
   const [bulkThreshold, setBulkThreshold] = useState(0)
+  const [dateFilter, setDateFilter] = useState('') // filter by updatedAt date
   const pageSize = 50
 
   const categories = [...new Set(products.map(p => p.category || 'Lainnya'))].filter(Boolean).sort()
@@ -46,6 +47,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
     if (catFilter === '_low') return (p.stock||0) <= (p.minStock || 10)
     if (catFilter !== 'all' && p.category !== catFilter) return false
     if (tipeFilter !== 'all' && (p.tipeBarang||'MILIK') !== tipeFilter) return false
+    if (dateFilter && (p.updatedAt||p.createdAt||'') !== dateFilter) return false
     if (search && !String(p.name||'').toLowerCase().includes(search.toLowerCase()) && !String(p.sku||'').toLowerCase().includes(search.toLowerCase())) return false
     return true
   })
@@ -93,10 +95,10 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   }
 
   function exportCSV() {
-    const header = 'SKU,Nama Produk,Kategori,Harga Beli,Harga Jual Lunas,Harga Jual Kredit,Stok,Satuan,Min Stok,Status\n'
+    const header = 'SKU,Nama Produk,Kategori,Harga Beli,Harga Jual Lunas,Harga Jual Kredit,Stok,Satuan,Min Stok,Status,Terakhir Update\n'
     const rows = products.map(p => {
       const status = p.stock <= 0 ? 'Habis' : p.stock <= p.minStock ? 'Menipis' : 'Aman'
-      return [p.sku, '"'+p.name+'"', p.category, p.buyPrice, p.sellPrice, p.sellPrice2||'', p.stock, p.unit, p.minStock, status].join(',')
+      return [p.sku, '"'+p.name+'"', p.category, p.buyPrice, p.sellPrice, p.sellPrice2||'', p.stock, p.unit, p.minStock, status, p.updatedAt||''].join(',')
     }).join('\n')
     const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' })
     const a = document.createElement('a')
@@ -239,7 +241,14 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
       )}
 
       <div style={S.toolbar}>
-        <div style={S.searchBox}>{IC.search}<input style={S.searchInput} placeholder="Cari produk / SKU..." value={search} onChange={e => { setSearch(e.target.value); setPage_(1) }} /></div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={S.searchBox}>{IC.search}<input style={S.searchInput} placeholder="Cari produk / SKU..." value={search} onChange={e => { setSearch(e.target.value); setPage_(1) }} /></div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <input style={{ ...S.input, padding: '7px 10px', fontSize: 12, width: 145 }} type="date" value={dateFilter} onChange={e => { setDateFilter(e.target.value); setPage_(1) }} title="Filter tanggal update" />
+            {dateFilter && <button style={{ ...S.smallBtn, color: '#c62828', fontSize: 16, padding: '2px 6px' }} onClick={() => { setDateFilter(''); setPage_(1) }} title="Hapus filter tanggal">×</button>}
+          </div>
+          {dateFilter && <span style={{ fontSize: 12, color: '#1565c0', fontWeight: 600 }}>Update: {fmtDate(dateFilter)} ({filtered.length} produk)</span>}
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <button style={{ ...S.filterBtn, ...(catFilter === 'all' ? S.filterActive : {}) }} onClick={() => { setCatFilter('all'); setPage_(1) }}>Semua</button>
           <button style={{ ...S.filterBtn, ...(catFilter === '_low' ? { background: '#c62828', color: '#fff', borderColor: '#c62828' } : { color: '#c62828' }) }} onClick={() => { setCatFilter('_low'); setPage_(1) }}>Stok Menipis ({lowStock.length})</button>
@@ -272,7 +281,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
           )}
         </div>
         <table style={S.table}>
-          <thead><tr>{['SKU', 'Nama Produk', 'Tipe', 'Kategori', 'Harga Beli', 'Harga Jual', 'Stok', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>{['SKU', 'Nama Produk', 'Tipe', 'Kategori', 'Harga Beli', 'Harga Jual', 'Stok', 'Update', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
           <tbody>{paginated.map(p => {
             const isLow = (p.stock||0) <= (p.minStock||10)
             const isTitipan = (p.tipeBarang||'MILIK') === 'TITIPAN'
@@ -288,6 +297,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
                 </td>
                 <td style={S.td}>{formatRp(p.sellPrice)}</td>
                 <td style={{ ...S.td, fontWeight: 600, color: isLow ? 'var(--r)' : 'var(--g)' }}>{p.stock||0} {p.unit||'pcs'}</td>
+                <td style={{ ...S.td, fontSize: 11, color: '#6b7280' }}>{p.updatedAt ? fmtDate(p.updatedAt) : '-'}</td>
                 <td style={S.td}>
                   {isLow ? <span style={{ ...S.badge, background: '#ffebee', color: '#c62828' }}>Menipis</span> :
                     <span style={{ ...S.badge, background: '#e8f5e9', color: '#2e7d32' }}>Aman</span>}
@@ -298,7 +308,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
                 </td>
               </tr>
             )
-          })}{filtered.length === 0 && <tr><td colSpan={9} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Tidak ada data</td></tr>}</tbody>
+          })}{filtered.length === 0 && <tr><td colSpan={10} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Tidak ada data</td></tr>}</tbody>
         </table>
         {totalPages > 1 && (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 4, marginTop: 16 }}>
