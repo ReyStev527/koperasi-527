@@ -20,15 +20,47 @@ export function BarcodeScanner({ onScan, onClose }) {
   const [status, setStatus] = useState('loading')
   const [error, setError] = useState('')
   const scannerRef = useRef(null)
-  const containerRef = useRef('barcode-reader-' + Date.now())
+  const onScanRef = useRef(onScan)
+  const containerId = useRef('barcode-reader-' + Math.random().toString(36).slice(2, 8))
+  const mountedRef = useRef(true)
+
+  // Update ref setiap render agar callback selalu terbaru
+  useEffect(() => { onScanRef.current = onScan }, [onScan])
 
   useEffect(() => {
+    mountedRef.current = true
     let scanner = null
 
     async function startScanner() {
       try {
+        // Minta izin kamera dulu sebelum load library
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+          // Stop stream setelah dapat izin, biar html5-qrcode yang kelola
+          stream.getTracks().forEach(t => t.stop())
+        } catch (permErr) {
+          if (!mountedRef.current) return
+          console.error('Camera permission error:', permErr)
+          setError('Izin kamera ditolak. Buka Settings browser → izinkan kamera untuk situs ini.')
+          setStatus('error')
+          return
+        }
+
         const Html5Qrcode = await loadScanner()
-        scanner = new Html5Qrcode(containerRef.current)
+        if (!mountedRef.current) return
+
+        // Tunggu DOM container siap
+        await new Promise(r => setTimeout(r, 300))
+        if (!mountedRef.current) return
+
+        const el = document.getElementById(containerId.current)
+        if (!el) {
+          setError('Container scanner tidak ditemukan')
+          setStatus('error')
+          return
+        }
+
+        scanner = new Html5Qrcode(containerId.current)
         scannerRef.current = scanner
 
         await scanner.start(
@@ -39,17 +71,19 @@ export function BarcodeScanner({ onScan, onClose }) {
             aspectRatio: 1.0,
           },
           (decodedText) => {
-            // Berhasil scan
-            onScan(decodedText.trim())
+            // Berhasil scan — pakai ref bukan langsung onScan
+            if (onScanRef.current) onScanRef.current(decodedText.trim())
             // Vibrate HP sebagai feedback
             if (navigator.vibrate) navigator.vibrate(100)
           },
           () => {} // Ignore scan errors
         )
-        setStatus('scanning')
+        if (mountedRef.current) setStatus('scanning')
       } catch (err) {
         console.error('Scanner error:', err)
-        setError(err.message || 'Gagal mengakses kamera')
+        if (!mountedRef.current) return
+        const msg = typeof err === 'string' ? err : err?.message || 'Gagal mengakses kamera'
+        setError(msg)
         setStatus('error')
       }
     }
@@ -57,11 +91,12 @@ export function BarcodeScanner({ onScan, onClose }) {
     startScanner()
 
     return () => {
+      mountedRef.current = false
       if (scanner && scanner.isScanning) {
         scanner.stop().catch(() => {})
       }
     }
-  }, [onScan])
+  }, []) // Tidak ada dependency — hanya jalankan sekali
 
   function handleClose() {
     if (scannerRef.current && scannerRef.current.isScanning) {
@@ -107,7 +142,7 @@ export function BarcodeScanner({ onScan, onClose }) {
           </div>
         )}
 
-        <div id={containerRef.current} style={{ width: '100%', borderRadius: 8, overflow: 'hidden' }} />
+        <div id={containerId.current} style={{ width: '100%', borderRadius: 8, overflow: 'hidden' }} />
 
         {status === 'scanning' && (
           <div style={{ textAlign: 'center', padding: '12px 0' }}>

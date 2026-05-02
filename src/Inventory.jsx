@@ -296,7 +296,11 @@ function ProductForm({ initial, suppliers, onSave }) {
             {['Sembako', 'Makanan', 'Minuman', 'Toiletries', 'ATK', 'Obat', 'Elektronik', 'Pakaian', 'Lainnya'].map(c => <option key={c}>{c}</option>)}
           </select>
         </label>
-        <label style={S.formLabel}>Satuan<input style={S.input} value={d.unit} onChange={e => set('unit', e.target.value)} placeholder="pcs, botol, box..." /></label>
+        <label style={S.formLabel}>Satuan
+          <select style={S.input} value={d.unit} onChange={e => set('unit', e.target.value)}>
+            {['pcs', 'buah', 'lbr', 'bks', 'btl', 'box', 'dus', 'kg', 'gram', 'ltr', 'ml', 'sct', 'pak', 'roll', 'set', 'lusin', 'rim', 'pasang', 'unit', 'kaleng', 'botol', 'karung'].map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+        </label>
         <label style={S.formLabel}>Tipe Barang
           <select style={S.input} value={d.tipeBarang||'MILIK'} onChange={e => set('tipeBarang', e.target.value)}>
             <option value="MILIK">Milik Koperasi</option>
