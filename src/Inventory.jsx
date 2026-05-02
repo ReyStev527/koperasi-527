@@ -84,7 +84,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
     }
     setModal({
       title: isEdit ? 'Edit Produk' : 'Tambah Produk',
-      content: <ProductForm initial={data} suppliers={suppliers} onSave={async d => {
+      content: <ProductForm initial={data} suppliers={suppliers} existingCategories={categories} onSave={async d => {
         await saveProduct(isEdit ? { ...product, ...d } : d, isEdit)
         setModal(null)
         showToast(isEdit ? 'Produk diperbarui' : 'Produk ditambahkan')
@@ -316,9 +316,10 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   )
 }
 
-function ProductForm({ initial, suppliers, onSave }) {
+function ProductForm({ initial, suppliers, onSave, existingCategories }) {
   const [d, setD] = useState(initial)
   const [showScan, setShowScan] = useState(false)
+  const [customCat, setCustomCat] = useState('')
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
 
   // Hitung harga per unit dari harga box + PPN
@@ -362,9 +363,21 @@ function ProductForm({ initial, suppliers, onSave }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
         <label style={S.formLabel}>Kategori
-          <select style={S.input} value={d.category} onChange={e => set('category', e.target.value)}>
-            {['Sembako', 'Makanan', 'Minuman', 'Toiletries', 'ATK', 'Obat', 'Elektronik', 'Pakaian', 'Lainnya'].map(c => <option key={c}>{c}</option>)}
+          <select style={S.input} value={d.category === '__custom__' ? '__custom__' : d.category} onChange={e => {
+            const val = e.target.value
+            if (val === '__custom__') { set('category', '__custom__'); setCustomCat('') }
+            else { set('category', val); setCustomCat('') }
+          }}>
+            {(() => {
+              const defaults = ['Sembako', 'Makanan', 'Minuman', 'Rokok', 'Sabun', 'Alat Mandi', 'Toiletries', 'ATK', 'Obat', 'Elektronik', 'Pakaian', 'Pakaian KAP TNI', 'Pangkat', 'Barcil', 'Perabotan Rumah', 'Lainnya']
+              const extra = (existingCategories||[]).filter(c => c && !defaults.includes(c) && c !== '__custom__')
+              return [...defaults, ...extra].map(c => <option key={c} value={c}>{c}</option>)
+            })()}
+            <option value="__custom__">+ Tambah Kategori Baru...</option>
           </select>
+          {d.category === '__custom__' && (
+            <input style={{ ...S.input, marginTop: 4, borderColor: '#1565c0' }} value={customCat} onChange={e => setCustomCat(e.target.value)} placeholder="Ketik nama kategori baru..." autoFocus />
+          )}
         </label>
         <label style={S.formLabel}>Satuan
           <select style={S.input} value={d.unit} onChange={e => set('unit', e.target.value)}>
@@ -429,7 +442,14 @@ function ProductForm({ initial, suppliers, onSave }) {
           </select>
         </label>
       </div>
-      <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={() => onSave(d)}>Simpan Produk</button>
+      <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={() => {
+        const saveData = { ...d }
+        if (saveData.category === '__custom__') {
+          if (!customCat.trim()) { alert('Nama kategori baru tidak boleh kosong'); return }
+          saveData.category = customCat.trim()
+        }
+        onSave(saveData)
+      }}>Simpan Produk</button>
     </div>
   )
 }
@@ -1065,8 +1085,18 @@ function catColor(cat) {
     Sembako: { bg: '#e8f5e9', fg: '#2e7d32' },
     Makanan: { bg: '#fff3e0', fg: '#e65100' },
     Minuman: { bg: '#e3f2fd', fg: '#1565c0' },
+    Rokok: { bg: '#efebe9', fg: '#4e342e' },
+    Sabun: { bg: '#e0f7fa', fg: '#00695c' },
+    'Alat Mandi': { bg: '#e0f7fa', fg: '#00838f' },
     Toiletries: { bg: '#fce4ec', fg: '#c62828' },
     ATK: { bg: '#f3e5f5', fg: '#7b1fa2' },
+    Obat: { bg: '#ffebee', fg: '#b71c1c' },
+    Elektronik: { bg: '#e8eaf6', fg: '#283593' },
+    Pakaian: { bg: '#fce4ec', fg: '#880e4f' },
+    'Pakaian KAP TNI': { bg: '#e8eaf6', fg: '#1a237e' },
+    Pangkat: { bg: '#fff8e1', fg: '#f57f17' },
+    Barcil: { bg: '#f1f8e9', fg: '#33691e' },
+    'Perabotan Rumah': { bg: '#efebe9', fg: '#3e2723' },
     Lainnya: { bg: '#f5f5f5', fg: '#616161' },
   }
   return map[cat] || map.Lainnya
