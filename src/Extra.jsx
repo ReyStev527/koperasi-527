@@ -136,8 +136,8 @@ export function KartuAnggota({ member, settings, logoSrc }) {
           font: 'Arial',
           textMargin: 2,
           margin: 0,
-          background: 'transparent',
-          lineColor: '#ffffff',
+          background: '#ffffff',
+          lineColor: '#000000',
         })
       }
     }).catch(err => console.warn('Barcode load error:', err))
@@ -149,20 +149,21 @@ export function KartuAnggota({ member, settings, logoSrc }) {
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
     <style>
       @page { margin: 10mm; size: 86mm 54mm; }
+      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
       body { margin: 0; font-family: Arial, sans-serif; }
-      .card { width: 86mm; height: 54mm; border: 2px solid #1565c0; border-radius: 10px; overflow: hidden; position: relative; background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); color: #fff; padding: 8px 12px; box-sizing: border-box; }
+      .card { width: 86mm; height: 54mm; border: 2px solid #1565c0; border-radius: 10px; overflow: hidden; position: relative; background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%) !important; color: #fff; padding: 8px 12px; box-sizing: border-box; }
       .logo { width: 32px; height: 32px; border-radius: 6px; object-fit: contain; }
       .header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
       .title { font-size: 10px; font-weight: bold; line-height: 1.2; }
       .subtitle { font-size: 7px; opacity: 0.7; }
       .info { font-size: 8px; margin-top: 2px; }
       .info div { margin-bottom: 1px; }
-      .no { font-size: 14px; font-weight: bold; letter-spacing: 2px; color: #ffd54f; margin-top: 2px; }
+      .no { font-size: 14px; font-weight: bold; letter-spacing: 2px; color: #ffd54f !important; margin-top: 2px; }
       .name { font-size: 12px; font-weight: bold; margin-top: 1px; }
-      .barcode-area { position: absolute; bottom: 4px; left: 12px; right: 12px; text-align: center; }
+      .barcode-area { position: absolute; bottom: 4px; left: 12px; right: 12px; text-align: center; background: #fff !important; border-radius: 4px; padding: 3px 6px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
       .barcode-area canvas { max-width: 100%; }
       .footer { position: absolute; bottom: 4px; right: 12px; font-size: 7px; opacity: 0.5; }
-      @media print { body { margin: 0; } }
+      @media print { body { margin: 0; } .card { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%) !important; } }
     </style></head><body>
       <div class="card">
         <div class="header">
@@ -185,7 +186,7 @@ export function KartuAnggota({ member, settings, logoSrc }) {
               format: "CODE128", width: 1.2, height: 22,
               displayValue: true, fontSize: 8, font: "Arial",
               textMargin: 1, margin: 0,
-              background: "transparent", lineColor: "#ffffff"
+              background: "#ffffff", lineColor: "#000000"
             });
           } catch(e) { console.warn('Barcode error:', e); }
           setTimeout(function(){ window.print(); }, 500);
@@ -211,7 +212,7 @@ export function KartuAnggota({ member, settings, logoSrc }) {
           <div>Telepon: {member.phone || '-'}</div>
         </div>
         {/* Barcode area */}
-        <div style={{ position: 'absolute', bottom: 8, left: 18, right: 18, textAlign: 'center' }}>
+        <div style={{ position: 'absolute', bottom: 8, left: 18, right: 18, textAlign: 'center', background: '#fff', borderRadius: 4, padding: '3px 6px' }}>
           <canvas ref={barcodeRef} style={{ maxWidth: '100%' }} />
         </div>
       </div>
@@ -270,7 +271,7 @@ export function cetakSemuaKartu(members, settings, logoSrc, perPage = 6) {
   <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
   <style>
     @page { margin: 8mm; size: A4 portrait; }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
     body { font-family: Arial, sans-serif; background: #fff; }
     .print-info { padding: 10px 20px; background: #e3f2fd; text-align: center; font-size: 13px; color: #1565c0; }
     .print-info button { margin-left: 12px; padding: 6px 20px; background: #1565c0; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
@@ -290,8 +291,9 @@ export function cetakSemuaKartu(members, settings, logoSrc, perPage = 6) {
     .card {
       width: ${cardW}; height: ${cardH};
       border: 1.5px solid #1565c0; border-radius: 8px; overflow: hidden;
-      position: relative; background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+      position: relative; background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%) !important;
       color: #fff; padding: 5px 8px;
+      -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important;
     }
     .header { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; }
     .logo { width: 22px; height: 22px; border-radius: 4px; object-fit: contain; }
@@ -301,12 +303,14 @@ export function cetakSemuaKartu(members, settings, logoSrc, perPage = 6) {
     .name { font-size: 9px; font-weight: bold; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .info { font-size: 6.5px; margin-top: 1px; line-height: 1.4; opacity: 0.85; }
     .info div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .barcode-area { position: absolute; bottom: 3px; left: 8px; right: 8px; text-align: center; }
+    .barcode-area { position: absolute; bottom: 3px; left: 8px; right: 8px; text-align: center; background: #fff !important; border-radius: 3px; padding: 2px 4px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
     .barcode-area canvas { max-width: 100%; height: 18px; }
     .footer { position: absolute; bottom: 2px; right: 8px; font-size: 5px; opacity: 0.4; }
     @media print { 
       .print-info { display: none; } 
       body { background: #fff; }
+      .card { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%) !important; color: #fff !important; }
+      .no { color: #ffd54f !important; }
     }
   </style></head><body>
     <div class="print-info">
@@ -324,7 +328,7 @@ export function cetakSemuaKartu(members, settings, logoSrc, perPage = 6) {
                 format: 'CODE128', width: 1, height: 16,
                 displayValue: true, fontSize: 6, font: 'Arial',
                 textMargin: 1, margin: 0,
-                background: 'transparent', lineColor: '#ffffff'
+                background: '#ffffff', lineColor: '#000000'
               });
             } catch(e) { console.warn('Barcode error:', e); }
           }

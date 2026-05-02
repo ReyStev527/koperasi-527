@@ -93,7 +93,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   }
 
   function exportCSV() {
-    const header = 'SKU,Nama Produk,Kategori,Harga Beli,Harga Jual 1,Harga Jual 2,Stok,Satuan,Min Stok,Status\n'
+    const header = 'SKU,Nama Produk,Kategori,Harga Beli,Harga Jual Lunas,Harga Jual Kredit,Stok,Satuan,Min Stok,Status\n'
     const rows = products.map(p => {
       const status = p.stock <= 0 ? 'Habis' : p.stock <= p.minStock ? 'Menipis' : 'Aman'
       return [p.sku, '"'+p.name+'"', p.category, p.buyPrice, p.sellPrice, p.sellPrice2||'', p.stock, p.unit, p.minStock, status].join(',')
@@ -423,10 +423,10 @@ function ProductForm({ initial, suppliers, onSave, existingCategories }) {
         <label style={S.formLabel}>Harga Beli / Unit (Rp)
           <input style={S.input} type="number" value={d.buyPrice} onChange={e => set('buyPrice', Number(e.target.value))} />
         </label>
-        <label style={S.formLabel}>Harga Jual 1 (Rp)
+        <label style={S.formLabel}>Harga Jual Lunas (Rp)
           <input style={S.input} type="number" value={d.sellPrice} onChange={e => set('sellPrice', Number(e.target.value))} />
         </label>
-        <label style={S.formLabel}>Harga Jual 2 / Grosir (Rp)
+        <label style={S.formLabel}>Harga Jual Kredit (Rp)
           <input style={S.input} type="number" value={d.sellPrice2||''} onChange={e => set('sellPrice2', Number(e.target.value))} placeholder="Opsional" />
         </label>
       </div>
@@ -787,7 +787,7 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
           return { ...c, price: newPrice }
         }))
         setLastScanned('Anggota: ' + found.name + ' (' + found.no + ')')
-        showToast('Anggota dipilih: ' + found.name + (useH2 ? ' (Harga Grosir)' : ''))
+        showToast('Anggota dipilih: ' + found.name + (useH2 ? ' (Harga Kredit)' : ''))
       } else {
         showToast('Anggota tidak ditemukan: ' + memberNo, 'error')
         setLastScanned('Anggota tidak ditemukan: ' + memberNo)
@@ -1006,8 +1006,8 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
                     return { ...c, price: newPrice }
                   }))
                 }}>
-                  <option value="">-- Umum (Harga Eceran) --</option>
-                  {members.filter(m => m.status === 'active').map(m => <option key={m.id} value={m.id}>{m.no} - {m.name} {m.tingkatHrg === '2' ? '(Grosir)' : ''}</option>)}
+                  <option value="">-- Umum (Harga Lunas) --</option>
+                  {members.filter(m => m.status === 'active').map(m => <option key={m.id} value={m.id}>{m.no} - {m.name} {m.tingkatHrg === '2' ? '(Kredit)' : ''}</option>)}
                 </select>
               </label>
 

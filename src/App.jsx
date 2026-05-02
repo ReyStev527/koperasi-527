@@ -925,7 +925,7 @@ function MemberForm({ initial, onSave }) {
       <label style={S.formLabel}>Alamat<input style={S.input} value={d.address} onChange={e => set('address', e.target.value)} /></label>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <label style={S.formLabel}>Status<select style={S.input} value={d.status} onChange={e => set('status', e.target.value)}><option value="active">Aktif</option><option value="inactive">Nonaktif</option></select></label>
-        <label style={S.formLabel}>Tipe Harga<select style={S.input} value={d.tingkatHrg||'1'} onChange={e => set('tingkatHrg', e.target.value)}><option value="1">Harga 1 (Eceran)</option><option value="2">Harga 2 (Grosir)</option></select></label>
+        <label style={S.formLabel}>Tipe Harga<select style={S.input} value={d.tingkatHrg||'1'} onChange={e => set('tingkatHrg', e.target.value)}><option value="1">Harga Lunas</option><option value="2">Harga Kredit</option></select></label>
       </div>
       <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={() => onSave(d)}>Simpan</button>
     </div>

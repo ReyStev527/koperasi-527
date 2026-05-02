@@ -45,7 +45,7 @@ export function ExportData({ members, savings, loans, products, transactions, ka
 
   const exports = [
     { id: 'members', label: 'Data Anggota', desc: 'No, Nama, Telepon, Alamat, Status', run: () => exportCSV('anggota.csv', ['No','Nama','Telepon','Alamat','Tgl Gabung','Status'], members.map(m => [m.no, m.name, m.phone, m.address, m.joinDate, m.status])) },
-    { id: 'products', label: 'Stok Barang', desc: 'SKU, Nama, Harga Beli/Jual, Stok', run: () => exportCSV('stok_barang.csv', ['SKU','Nama','Kategori','Harga Beli','Harga Jual 1','Harga Jual 2','Stok','Satuan','Min Stok'], products.map(p => [p.sku, p.name, p.category, p.buyPrice, p.sellPrice, p.sellPrice2||'', p.stock, p.unit, p.minStock])) },
+    { id: 'products', label: 'Stok Barang', desc: 'SKU, Nama, Harga Beli/Jual, Stok', run: () => exportCSV('stok_barang.csv', ['SKU','Nama','Kategori','Harga Beli','Harga Jual Lunas','Harga Jual Kredit','Stok','Satuan','Min Stok'], products.map(p => [p.sku, p.name, p.category, p.buyPrice, p.sellPrice, p.sellPrice2||'', p.stock, p.unit, p.minStock])) },
     { id: 'kas', label: 'Data Kas', desc: 'Kas masuk & keluar', run: () => exportCSV('kas.csv', ['Tanggal','Tipe','Kategori','Jumlah','Keterangan'], kasData.map(k => [k.date, k.type, k.category, k.amount, k.note])) },
   ]
 
@@ -176,7 +176,7 @@ export function ExportData({ members, savings, loans, products, transactions, ka
           rak: String(r['Rak']||r['rak']||r['Lokasi']||''),
           buyPrice: Number(r['Harga Beli']||r['harga_beli']||r['Hpp']||r['buyPrice']||0),
           sellPrice: Number(r['Harga Jual']||r['harga_jual']||r['Harga1']||r['sellPrice']||0),
-          sellPrice2: Number(r['Harga Jual 2']||r['harga_jual_2']||r['Harga2']||r['sellPrice2']||0),
+          sellPrice2: Number(r['Harga Jual Kredit']||r['harga_jual_2']||r['Harga2']||r['sellPrice2']||0),
           limitQty: Number(r['Limit Qty']||r['limitQty']||r['Limit2']||0),
           stock: Number(r['Stok']||r['stok']||r['Stock']||r['JmlStock']||r['stock']||0),
           unit: String(r['Satuan']||r['satuan']||r['Unit']||r['Sat']||r['unit']||'pcs'),

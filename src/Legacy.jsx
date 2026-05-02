@@ -224,7 +224,7 @@ export function HargaBertingkat({ products, saveProduct, setModal, showToast }) 
   return (
     <div>
       <h2 style={S.title}>Harga Bertingkat</h2>
-      <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 16, marginTop: -12 }}>Atur harga eceran (Harga 1) dan harga grosir (Harga 2) untuk setiap produk. Di kasir, harga otomatis dipilih berdasarkan tipe pelanggan.</p>
+      <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 16, marginTop: -12 }}>Atur harga jual lunas dan harga jual kredit untuk setiap produk. Di kasir, harga otomatis dipilih berdasarkan cara bayar pelanggan.</p>
 
       <div style={{ ...S.searchBox, marginBottom: 16 }}>
         <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
@@ -233,7 +233,7 @@ export function HargaBertingkat({ products, saveProduct, setModal, showToast }) 
 
       <div style={S.card}>
         <table style={S.table}>
-          <thead><tr>{['SKU', 'Produk', 'Harga Beli', 'Harga 1 (Eceran)', 'Harga 2 (Grosir)', 'Margin 1', 'Margin 2', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>{['SKU', 'Produk', 'Harga Beli', 'Harga Jual Lunas', 'Harga Jual Kredit', 'Margin 1', 'Margin 2', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
           <tbody>{filtered.map(p => {
             const h2 = p.sellPrice2 || Math.round(p.sellPrice * 0.9)
             const m1 = p.buyPrice > 0 ? Math.round(((p.sellPrice - p.buyPrice) / p.buyPrice) * 100) : 0
@@ -267,11 +267,11 @@ function HargaForm({ product, onSave }) {
       <div style={{ padding: '10px 14px', background: '#f5f5f5', borderRadius: 8, fontSize: 13 }}>
         Harga Beli: <strong>{formatRp(product.buyPrice)}</strong> | Stok: <strong>{product.stock} {product.unit}</strong>
       </div>
-      <label style={S.formLabel}>Harga 1 - Eceran (Rp)
+      <label style={S.formLabel}>Harga Jual Lunas (Rp)
         <input style={S.input} type="number" value={h1} onChange={e => setH1(Number(e.target.value))} />
         <span style={{ fontSize: 11, color: m1 >= 0 ? '#2e7d32' : '#c62828' }}>Margin: {m1}%</span>
       </label>
-      <label style={S.formLabel}>Harga 2 - Grosir (Rp)
+      <label style={S.formLabel}>Harga Jual Kredit (Rp)
         <input style={S.input} type="number" value={h2} onChange={e => setH2(Number(e.target.value))} />
         <span style={{ fontSize: 11, color: m2 >= 0 ? '#2e7d32' : '#c62828' }}>Margin: {m2}%</span>
       </label>
