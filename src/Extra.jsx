@@ -2,7 +2,7 @@
 // MODUL TAMBAHAN: PDF, Hutang Supplier, Kartu Anggota,
 // Struk Thermal, Backup/Restore, Dashboard Grafik
 // =============================================
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7) }
 function formatRp(n) { return 'Rp ' + Number(n || 0).toLocaleString('id-ID') }
@@ -102,26 +102,66 @@ export function cetakLaporanPDF(title, headers, rows, settings, summary) {
 }
 
 // =============================================
-// 3. KARTU ANGGOTA DIGITAL
+// 3. KARTU ANGGOTA DIGITAL + BARCODE
 // =============================================
+// Load JsBarcode dari CDN
+async function loadJsBarcode() {
+  if (window.JsBarcode) return window.JsBarcode
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script')
+    s.src = 'https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js'
+    s.onload = () => resolve(window.JsBarcode)
+    s.onerror = () => reject(new Error('Gagal memuat JsBarcode'))
+    document.head.appendChild(s)
+  })
+}
+
 export function KartuAnggota({ member, settings, logoSrc }) {
   const cardRef = useRef()
+  const barcodeRef = useRef()
+
+  // Kode barcode: prefix AGT- + nomor anggota
+  const barcodeValue = 'AGT-' + (member.no || member.id || '000')
+
+  // Render barcode di canvas saat komponen dimuat
+  useEffect(() => {
+    loadJsBarcode().then(JsBarcode => {
+      if (barcodeRef.current) {
+        JsBarcode(barcodeRef.current, barcodeValue, {
+          format: 'CODE128',
+          width: 1.5,
+          height: 30,
+          displayValue: true,
+          fontSize: 10,
+          font: 'Arial',
+          textMargin: 2,
+          margin: 0,
+          background: 'transparent',
+          lineColor: '#ffffff',
+        })
+      }
+    }).catch(err => console.warn('Barcode load error:', err))
+  }, [barcodeValue])
 
   function cetakKartu() {
     const win = window.open('', '_blank', 'width=500,height=350')
-    win.document.write(`<!DOCTYPE html><html><head><style>
+    win.document.write(`<!DOCTYPE html><html><head>
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
+    <style>
       @page { margin: 10mm; size: 86mm 54mm; }
       body { margin: 0; font-family: Arial, sans-serif; }
       .card { width: 86mm; height: 54mm; border: 2px solid #1565c0; border-radius: 10px; overflow: hidden; position: relative; background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); color: #fff; padding: 8px 12px; box-sizing: border-box; }
       .logo { width: 32px; height: 32px; border-radius: 6px; object-fit: contain; }
-      .header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+      .header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
       .title { font-size: 10px; font-weight: bold; line-height: 1.2; }
       .subtitle { font-size: 7px; opacity: 0.7; }
-      .info { font-size: 9px; margin-top: 4px; }
-      .info div { margin-bottom: 2px; }
-      .no { font-size: 16px; font-weight: bold; letter-spacing: 2px; color: #ffd54f; margin-top: 4px; }
-      .name { font-size: 13px; font-weight: bold; margin-top: 2px; }
-      .footer { position: absolute; bottom: 6px; right: 12px; font-size: 7px; opacity: 0.5; }
+      .info { font-size: 8px; margin-top: 2px; }
+      .info div { margin-bottom: 1px; }
+      .no { font-size: 14px; font-weight: bold; letter-spacing: 2px; color: #ffd54f; margin-top: 2px; }
+      .name { font-size: 12px; font-weight: bold; margin-top: 1px; }
+      .barcode-area { position: absolute; bottom: 4px; left: 12px; right: 12px; text-align: center; }
+      .barcode-area canvas { max-width: 100%; }
+      .footer { position: absolute; bottom: 4px; right: 12px; font-size: 7px; opacity: 0.5; }
       @media print { body { margin: 0; } }
     </style></head><body>
       <div class="card">
@@ -133,36 +173,52 @@ export function KartuAnggota({ member, settings, logoSrc }) {
         <div class="name">${member.name}</div>
         <div class="info">
           <div>Telepon: ${member.phone || '-'}</div>
-          <div>Alamat: ${member.address || '-'}</div>
-          <div>Bergabung: ${fmtDate(member.joinDate)}</div>
         </div>
-        <div class="footer">Valid s/d 31 Des ${new Date().getFullYear() + 1}</div>
+        <div class="barcode-area">
+          <canvas id="print-barcode"></canvas>
+        </div>
       </div>
-      <script>setTimeout(()=>{window.print();},400)</script>
+      <script>
+        window.onload = function() {
+          try {
+            JsBarcode("#print-barcode", "${barcodeValue}", {
+              format: "CODE128", width: 1.2, height: 22,
+              displayValue: true, fontSize: 8, font: "Arial",
+              textMargin: 1, margin: 0,
+              background: "transparent", lineColor: "#ffffff"
+            });
+          } catch(e) { console.warn('Barcode error:', e); }
+          setTimeout(function(){ window.print(); }, 500);
+        }
+      <\/script>
     </body></html>`)
     win.document.close()
   }
 
   return (
     <div>
-      <div ref={cardRef} style={{ width: 340, height: 210, borderRadius: 12, overflow: 'hidden', position: 'relative', background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)', color: '#fff', padding: '14px 18px', boxSizing: 'border-box', fontFamily: 'Arial, sans-serif', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+      <div ref={cardRef} style={{ width: 340, height: 220, borderRadius: 12, overflow: 'hidden', position: 'relative', background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)', color: '#fff', padding: '12px 18px', boxSizing: 'border-box', fontFamily: 'Arial, sans-serif', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
           {logoSrc && <img src={logoSrc} style={{ width: 36, height: 36, borderRadius: 6, objectFit: 'contain' }} />}
           <div>
             <div style={{ fontSize: 11, fontWeight: 700 }}>{settings?.name || 'KOPERASI YONIF 527/BY'}</div>
             <div style={{ fontSize: 8, opacity: 0.6 }}>Baladibya Yudha — Kartu Anggota</div>
           </div>
         </div>
-        <div style={{ fontSize: 18, fontWeight: 700, color: '#ffd54f', letterSpacing: 2, marginTop: 4 }}>No. {member.no}</div>
-        <div style={{ fontSize: 15, fontWeight: 700, marginTop: 2 }}>{member.name}</div>
-        <div style={{ fontSize: 10, marginTop: 6, lineHeight: 1.6, opacity: 0.85 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: '#ffd54f', letterSpacing: 2, marginTop: 2 }}>No. {member.no}</div>
+        <div style={{ fontSize: 14, fontWeight: 700, marginTop: 2 }}>{member.name}</div>
+        <div style={{ fontSize: 10, marginTop: 4, lineHeight: 1.5, opacity: 0.85 }}>
           <div>Telepon: {member.phone || '-'}</div>
-          <div>Alamat: {member.address || '-'}</div>
-          <div>Bergabung: {fmtDate(member.joinDate)}</div>
         </div>
-        <div style={{ position: 'absolute', bottom: 8, right: 14, fontSize: 7, opacity: 0.4 }}>Valid s/d 31 Des {new Date().getFullYear() + 1}</div>
+        {/* Barcode area */}
+        <div style={{ position: 'absolute', bottom: 8, left: 18, right: 18, textAlign: 'center' }}>
+          <canvas ref={barcodeRef} style={{ maxWidth: '100%' }} />
+        </div>
       </div>
-      <button onClick={cetakKartu} style={{ marginTop: 12, padding: '8px 20px', background: '#1565c0', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>Cetak Kartu</button>
+      <div style={{ marginTop: 10, padding: '8px 12px', background: '#e3f2fd', borderRadius: 8, fontSize: 12, color: '#1565c0' }}>
+        Kode Barcode: <strong>{barcodeValue}</strong> — scan di Kasir untuk auto-pilih anggota
+      </div>
+      <button onClick={cetakKartu} style={{ marginTop: 10, padding: '8px 20px', background: '#1565c0', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>Cetak Kartu</button>
     </div>
   )
 }

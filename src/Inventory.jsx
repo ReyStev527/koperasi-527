@@ -679,7 +679,33 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   )
 
   function handleBarcodeScan(code) {
-    // Cari produk berdasarkan SKU atau nama
+    // Cek dulu apakah ini barcode kartu anggota (prefix AGT-)
+    if (code.toUpperCase().startsWith('AGT-')) {
+      const memberNo = code.substring(4) // ambil nomor setelah "AGT-"
+      const found = members.find(m =>
+        String(m.no||'').toLowerCase() === memberNo.toLowerCase() ||
+        String(m.id||'').toLowerCase() === memberNo.toLowerCase()
+      )
+      if (found) {
+        setMemberId(found.id)
+        // Update harga keranjang sesuai tipe pelanggan
+        const useH2 = found.tingkatHrg === '2'
+        setCart(prev => prev.map(c => {
+          const prod = products.find(p => p.id === c.productId)
+          if (!prod) return c
+          const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
+          return { ...c, price: newPrice }
+        }))
+        setLastScanned('Anggota: ' + found.name + ' (' + found.no + ')')
+        showToast('Anggota dipilih: ' + found.name + (useH2 ? ' (Harga Grosir)' : ''))
+      } else {
+        showToast('Anggota tidak ditemukan: ' + memberNo, 'error')
+        setLastScanned('Anggota tidak ditemukan: ' + memberNo)
+      }
+      return
+    }
+
+    // Kalau bukan kartu anggota, cari produk berdasarkan SKU atau nama
     const found = products.find(p =>
       String(p.sku||'').toLowerCase() === code.toLowerCase() ||
       String(p.name||'').toLowerCase() === code.toLowerCase() ||
