@@ -37,6 +37,8 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   const [showStokTgl, setShowStokTgl] = useState(false)
   const [stokTglDate, setStokTglDate] = useState(today())
   const [tipeFilter, setTipeFilter] = useState('all') // all | MILIK | TITIPAN
+  const [showBulkDelete, setShowBulkDelete] = useState(false)
+  const [bulkThreshold, setBulkThreshold] = useState(0)
   const pageSize = 50
 
   const categories = [...new Set(products.map(p => p.category || 'Lainnya'))].filter(Boolean).sort()
@@ -104,6 +106,20 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
     showToast('Export ' + products.length + ' produk berhasil')
   }
 
+  // Hapus massal barang berdasarkan threshold stok
+  const bulkProducts = products.filter(p => (p.stock||0) <= bulkThreshold)
+  async function bulkDeleteProducts() {
+    if (bulkProducts.length === 0) { showToast('Tidak ada produk dengan stok ≤ ' + bulkThreshold, 'error'); return }
+    const confirm1 = confirm('Hapus ' + bulkProducts.length + ' produk dengan stok ≤ ' + bulkThreshold + '?\n\nDaftar:\n' + bulkProducts.slice(0, 15).map(p => '- ' + p.name + ' (stok: ' + (p.stock||0) + ')').join('\n') + (bulkProducts.length > 15 ? '\n... dan ' + (bulkProducts.length - 15) + ' lainnya' : '') + '\n\nAKSI INI TIDAK BISA DIBATALKAN!')
+    if (!confirm1) return
+    let deleted = 0
+    for (const p of bulkProducts) {
+      try { await deleteProduct(p.id); deleted++ } catch(e) { console.error('Gagal hapus:', p.name, e) }
+    }
+    showToast(deleted + ' produk berhasil dihapus', 'error')
+    setShowBulkDelete(false)
+  }
+
   return (
     <div>
       <div style={S.pageHead}><h2 style={S.title}>Stok Barang</h2>
@@ -113,6 +129,10 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
             Stok per Tanggal
           </button>
           <button style={{ ...S.primaryBtn, background: '#2e7d32' }} onClick={exportCSV}><svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg> Export</button>
+          <button style={{ ...S.primaryBtn, background: '#c62828' }} onClick={() => setShowBulkDelete(!showBulkDelete)}>
+            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+            Hapus Massal
+          </button>
           <ScanButton onClick={() => setShowScanner(true)} label="Scan" />
           <button style={S.primaryBtn} onClick={() => openForm(null)}>{IC.plus} Tambah Produk</button>
         </div>
@@ -150,6 +170,53 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
       )}
 
       {showScanner && <BarcodeScanner onScan={(code) => { setSearch(code); setShowScanner(false); showToast('Mencari: ' + code) }} onClose={() => setShowScanner(false)} />}
+
+      {/* Panel Hapus Massal */}
+      {showBulkDelete && (
+        <div style={{ ...S.card, marginBottom: 16, border: '2px solid #c62828', background: '#fff8f8' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: '#c62828' }}>Hapus Massal Barang</h3>
+            <button style={S.smallBtn} onClick={() => setShowBulkDelete(false)}>{IC.x}</button>
+          </div>
+          <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>Pilih batas stok, semua produk dengan stok ≤ angka yang dipilih akan dihapus.</p>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap' }}>
+            <label style={S.formLabel}>Hapus produk dengan stok ≤
+              <select style={{ ...S.input, minWidth: 120 }} value={bulkThreshold} onChange={e => setBulkThreshold(Number(e.target.value))}>
+                <option value={0}>0 (Habis)</option>
+                <option value={1}>≤ 1</option>
+                <option value={2}>≤ 2</option>
+                <option value={3}>≤ 3</option>
+                <option value={5}>≤ 5</option>
+                <option value={10}>≤ 10</option>
+                <option value={20}>≤ 20</option>
+                <option value={50}>≤ 50</option>
+              </select>
+            </label>
+            <div style={{ padding: '8px 14px', background: bulkProducts.length > 0 ? '#ffebee' : '#e8f5e9', borderRadius: 8, fontSize: 14, fontWeight: 700, color: bulkProducts.length > 0 ? '#c62828' : '#2e7d32' }}>
+              {bulkProducts.length} produk ditemukan
+            </div>
+            <button style={{ ...S.primaryBtn, background: '#c62828' }} disabled={bulkProducts.length === 0} onClick={bulkDeleteProducts}>
+              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg>
+              Hapus {bulkProducts.length} Produk
+            </button>
+          </div>
+          {bulkProducts.length > 0 && (
+            <div style={{ marginTop: 12, maxHeight: 200, overflow: 'auto', fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 8 }}>
+              <table style={{ ...S.table, fontSize: 12 }}>
+                <thead><tr>{['Nama', 'SKU', 'Stok', 'Kategori'].map(h => <th key={h} style={{ ...S.th, padding: '6px 10px', fontSize: 11 }}>{h}</th>)}</tr></thead>
+                <tbody>{bulkProducts.map(p => (
+                  <tr key={p.id} style={S.tr}>
+                    <td style={{ ...S.td, padding: '4px 10px', fontWeight: 600 }}>{p.name}</td>
+                    <td style={{ ...S.td, padding: '4px 10px', fontFamily: 'monospace' }}>{p.sku||'-'}</td>
+                    <td style={{ ...S.td, padding: '4px 10px', color: '#c62828', fontWeight: 700 }}>{p.stock||0} {p.unit||'pcs'}</td>
+                    <td style={{ ...S.td, padding: '4px 10px' }}>{p.category}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       <div style={S.grid4}>
         <div style={S.statCard}><div style={S.statLabel}>Total Produk</div><div style={S.statVal}>{products.length}</div></div>
@@ -215,7 +282,10 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
                 <td style={{ ...S.td, fontWeight: 600 }}>{p.name}</td>
                 <td style={S.td}><span style={{ ...S.badge, background: isTitipan ? '#fff3e0' : '#e3f2fd', color: isTitipan ? '#e65100' : '#1565c0', fontSize: 10 }}>{isTitipan ? 'TITIPAN' : 'MILIK'}</span></td>
                 <td style={S.td}><span style={{ ...S.badge, background: catColor(p.category).bg, color: catColor(p.category).fg }}>{p.category}</span></td>
-                <td style={S.td}>{formatRp(p.buyPrice)}</td>
+                <td style={S.td}>
+                  <div>{formatRp(p.buyPrice)}</div>
+                  {(p.ppn||0) > 0 && <div style={{ fontSize: 10, color: '#c62828', marginTop: 2 }}>+PPN {p.ppn}% ({formatRp(Math.round((p.buyPriceBox||p.buyPrice||0) * p.ppn / 100))})</div>}
+                </td>
                 <td style={S.td}>{formatRp(p.sellPrice)}</td>
                 <td style={{ ...S.td, fontWeight: 600, color: isLow ? 'var(--r)' : 'var(--g)' }}>{p.stock||0} {p.unit||'pcs'}</td>
                 <td style={S.td}>
