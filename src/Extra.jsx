@@ -224,6 +224,119 @@ export function KartuAnggota({ member, settings, logoSrc }) {
 }
 
 // =============================================
+// 3b. CETAK SEMUA KARTU ANGGOTA (4 atau 6 per halaman A4)
+// Ukuran kartu = ukuran ATM: 85.6mm x 54mm
+// =============================================
+export function cetakSemuaKartu(members, settings, logoSrc, perPage = 6) {
+  const activeMembers = members.filter(m => m.status === 'active')
+  if (activeMembers.length === 0) { alert('Tidak ada anggota aktif'); return }
+
+  const cols = 2
+  const rows = perPage === 4 ? 2 : 3
+  const cardW = '85.6mm'
+  const cardH = '54mm'
+  const totalPages = Math.ceil(activeMembers.length / perPage)
+
+  let cardsHtml = ''
+  activeMembers.forEach((m, i) => {
+    const barcodeId = 'bc-' + i
+    const barcodeValue = 'AGT-' + (m.no || m.id || '000')
+    if (i > 0 && i % perPage === 0) {
+      cardsHtml += '<div class="page-break"></div>'
+    }
+    cardsHtml += `
+      <div class="card">
+        <div class="header">
+          ${logoSrc ? '<img src="' + logoSrc + '" class="logo">' : ''}
+          <div>
+            <div class="title">${settings?.name || 'KOPERASI YONIF 527/BY'}</div>
+            <div class="subtitle">Baladibya Yudha — Kartu Anggota</div>
+          </div>
+        </div>
+        <div class="no">No. ${m.no}</div>
+        <div class="name">${m.pangkat ? m.pangkat + ' ' : ''}${m.name}</div>
+        <div class="info">
+          <div>${m.nrp ? 'NRP: ' + m.nrp : ''} ${m.kompi ? '| ' + m.kompi : ''}</div>
+          <div>Telp: ${m.phone || '-'}</div>
+        </div>
+        <div class="barcode-area"><canvas id="${barcodeId}" data-value="${barcodeValue}"></canvas></div>
+        <div class="footer">Valid s/d 31 Des ${new Date().getFullYear() + 1}</div>
+      </div>`
+  })
+
+  const win = window.open('', '_blank', 'width=800,height=600')
+  win.document.write(`<!DOCTYPE html><html><head>
+  <title>Cetak Kartu Anggota - ${activeMembers.length} kartu</title>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
+  <style>
+    @page { margin: 8mm; size: A4 portrait; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #fff; }
+    .print-info { padding: 10px 20px; background: #e3f2fd; text-align: center; font-size: 13px; color: #1565c0; }
+    .print-info button { margin-left: 12px; padding: 6px 20px; background: #1565c0; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+    .grid { 
+      display: grid; 
+      grid-template-columns: repeat(${cols}, ${cardW}); 
+      gap: 6mm; 
+      justify-content: center; 
+      padding: 4mm 0;
+    }
+    .page-break { 
+      grid-column: 1 / -1; 
+      height: 0; 
+      page-break-after: always; 
+      break-after: page; 
+    }
+    .card {
+      width: ${cardW}; height: ${cardH};
+      border: 1.5px solid #1565c0; border-radius: 8px; overflow: hidden;
+      position: relative; background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+      color: #fff; padding: 5px 8px;
+    }
+    .header { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; }
+    .logo { width: 22px; height: 22px; border-radius: 4px; object-fit: contain; }
+    .title { font-size: 7.5px; font-weight: bold; line-height: 1.2; }
+    .subtitle { font-size: 5.5px; opacity: 0.7; }
+    .no { font-size: 11px; font-weight: bold; letter-spacing: 1.5px; color: #ffd54f; margin-top: 1px; }
+    .name { font-size: 9px; font-weight: bold; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .info { font-size: 6.5px; margin-top: 1px; line-height: 1.4; opacity: 0.85; }
+    .info div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .barcode-area { position: absolute; bottom: 3px; left: 8px; right: 8px; text-align: center; }
+    .barcode-area canvas { max-width: 100%; height: 18px; }
+    .footer { position: absolute; bottom: 2px; right: 8px; font-size: 5px; opacity: 0.4; }
+    @media print { 
+      .print-info { display: none; } 
+      body { background: #fff; }
+    }
+  </style></head><body>
+    <div class="print-info">
+      Cetak ${activeMembers.length} Kartu Anggota — ${totalPages} halaman (${perPage} kartu/halaman)
+      <button onclick="window.print()">🖨️ Print Sekarang</button>
+    </div>
+    <div class="grid">${cardsHtml}</div>
+    <script>
+      window.onload = function() {
+        document.querySelectorAll('.barcode-area canvas').forEach(function(canvas) {
+          var val = canvas.getAttribute('data-value');
+          if (val) {
+            try {
+              JsBarcode(canvas, val, {
+                format: 'CODE128', width: 1, height: 16,
+                displayValue: true, fontSize: 6, font: 'Arial',
+                textMargin: 1, margin: 0,
+                background: 'transparent', lineColor: '#ffffff'
+              });
+            } catch(e) { console.warn('Barcode error:', e); }
+          }
+        });
+        setTimeout(function(){ window.print(); }, 800);
+      }
+    <\/script>
+  </body></html>`)
+  win.document.close()
+}
+
+// =============================================
 // 4. HUTANG KE SUPPLIER
 // =============================================
 export function HutangSupplier({ hutangs, saveHutang, bayarHutang, suppliers, setModal, showToast }) {

@@ -7,7 +7,7 @@ import { Products, Suppliers, StockIn, POS } from './Inventory'
 import { KasMasukKeluar, JurnalUmum, LabaRugi, HitungSHU, CetakKwitansi } from './Finance'
 import { ExportData, RekapBulanan, GrafikTrend, AuditTrail, createAuditLog, LaporanPenjualan } from './Reporting'
 import { ReturBarang, PiutangPage, HargaBertingkat, MutasiStok, SetoranHarian } from './Legacy'
-import { HutangSupplier, BackupRestore, DashboardCharts, cetakStruk, cetakLaporanPDF, KartuAnggota, LaporanTutupBuku, StokHistori, TagihanJuyar, LabaPerAnggota } from './Extra'
+import { HutangSupplier, BackupRestore, DashboardCharts, cetakStruk, cetakLaporanPDF, KartuAnggota, cetakSemuaKartu, LaporanTutupBuku, StokHistori, TagihanJuyar, LabaPerAnggota } from './Extra'
 import logoSrc from '/logo.png?url'
 
 // =============================================
@@ -841,7 +841,19 @@ function Members({ members, saveMember, deleteMember, memberSavings, memberLoans
 
   return (
     <div>
-      <div style={S.pageHead}><h2 style={S.title}>Data Anggota</h2><button style={S.primaryBtn} onClick={() => openForm(null)}>{I.plus} Tambah Anggota</button></div>
+      <div style={S.pageHead}><h2 style={S.title}>Data Anggota</h2>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button style={{ ...S.primaryBtn, background: '#7b1fa2' }} onClick={() => cetakSemuaKartu(members, settings, logoSrc, 6)}>
+            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 10h4M7 14h2"/></svg>
+            Cetak Semua (6/hal)
+          </button>
+          <button style={{ ...S.primaryBtn, background: '#5c6bc0' }} onClick={() => cetakSemuaKartu(members, settings, logoSrc, 4)}>
+            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 10h4M7 14h2"/></svg>
+            Cetak Semua (4/hal)
+          </button>
+          <button style={S.primaryBtn} onClick={() => openForm(null)}>{I.plus} Tambah Anggota</button>
+        </div>
+      </div>
       <div style={S.toolbar}>
         <div style={S.searchBox}>{I.search}<input style={S.searchInput} placeholder="Cari nama / no anggota..." value={search} onChange={e => setSearch(e.target.value)} /></div>
         <div style={S.filterGroup}>
