@@ -830,15 +830,18 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   )
 
   function handleBarcodeScan(code) {
+    console.log('[SCAN] Kode terbaca:', code)
+
     // Cek dulu apakah ini barcode kartu anggota (prefix AGT-)
     if (code.toUpperCase().startsWith('AGT-')) {
       const memberKey = code.substring(4) // ambil ID setelah "AGT-"
-      const found = members.find(m =>
-        String(m.id||'') === memberKey
-      )
+      console.log('[SCAN] Kartu anggota, cari ID:', memberKey)
+      // Cari by ID dulu (kartu baru), lalu by No Anggota (kartu lama)
+      const found = members.find(m => String(m.id||'') === memberKey) ||
+                    members.find(m => String(m.no||'') === memberKey)
       if (found) {
+        console.log('[SCAN] Ketemu:', found.name, found.no, found.id)
         setMemberId(found.id)
-        // Update harga keranjang sesuai tipe pelanggan
         const useH2 = found.tingkatHrg === '2'
         setCart(prev => prev.map(c => {
           const prod = products.find(p => p.id === c.productId)
@@ -846,11 +849,12 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
           const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
           return { ...c, price: newPrice }
         }))
-        setLastScanned('Anggota: ' + found.name + ' (' + found.no + ')')
+        setLastScanned('✅ Scan: "' + code + '" → ' + found.name + ' (No.' + found.no + ')')
         showToast('Anggota dipilih: ' + found.name + (useH2 ? ' (Harga Kredit)' : ''))
       } else {
-        showToast('Kartu anggota tidak terdaftar. Cetak ulang kartu dari versi terbaru.', 'error')
-        setLastScanned('Kartu tidak terdaftar: ' + memberKey)
+        console.log('[SCAN] Tidak ketemu ID:', memberKey, '| Daftar ID:', members.map(m => m.id).join(', '))
+        setLastScanned('❌ Scan: "' + code + '" → Tidak cocok dengan anggota manapun')
+        showToast('Kartu anggota tidak terdaftar. Cetak ulang kartu!', 'error')
       }
       return
     }
