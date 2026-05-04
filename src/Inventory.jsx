@@ -982,7 +982,34 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
       )}
 
       {tab === 'kasir' ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 16, alignItems: 'start' }}>
+        <div>
+          {/* STEP 1: Pilih Anggota */}
+          <div style={{ background: '#fff', borderRadius: 12, padding: 16, marginBottom: 16, border: '2px solid #e3f2fd', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <span style={{ background: '#1565c0', color: '#fff', borderRadius: '50%', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700 }}>1</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: '#1565c0' }}>Pilih Anggota</span>
+              <span style={{ fontSize: 11, color: '#6b7280' }}>— scan kartu / cari nama / ketik AGT + Enter</span>
+            </div>
+            <MemberSearch members={members} memberId={memberId} onBarcodeScan={handleBarcodeScan} onSelect={(newMid) => {
+              setMemberId(newMid)
+              const m = members.find(x => x.id === newMid)
+              const useH2 = m?.tingkatHrg === '2'
+              setCart(prev => prev.map(c => {
+                const prod = products.find(p => p.id === c.productId)
+                if (!prod) return c
+                const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
+                return { ...c, price: newPrice }
+              }))
+              if (m) showToast('Anggota: ' + m.name + (useH2 ? ' (Harga Kredit)' : ''))
+            }} />
+          </div>
+
+          {/* STEP 2: Scan/Pilih Barang + Keranjang */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <span style={{ background: '#2e7d32', color: '#fff', borderRadius: '50%', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700 }}>2</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#2e7d32' }}>Scan / Pilih Barang</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 16, alignItems: 'start' }}>
           {/* Product picker */}
           <div>
             {/* Input untuk Scanner Fisik + Tombol Kamera */}
@@ -992,7 +1019,7 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
                 <input
                   id="scanner-input"
                   style={{ ...S.searchInput, flex: 1, fontSize: 15, fontWeight: 600, background: 'transparent' }}
-                  placeholder="Scan barcode di sini / ketik kode + Enter..."
+                  placeholder="Scan barcode barang / ketik kode + Enter..."
                   autoFocus
                   onKeyDown={e => {
                     if (e.key === 'Enter' && e.target.value.trim().length >= 1) {
@@ -1080,19 +1107,6 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
                 <span style={{ color: 'var(--b)' }}>{formatRp(total)}</span>
               </div>
 
-              <MemberSearch members={members} memberId={memberId} onSelect={(newMid) => {
-                setMemberId(newMid)
-                const m = members.find(x => x.id === newMid)
-                const useH2 = m?.tingkatHrg === '2'
-                setCart(prev => prev.map(c => {
-                  const prod = products.find(p => p.id === c.productId)
-                  if (!prod) return c
-                  const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
-                  return { ...c, price: newPrice }
-                }))
-                if (m) showToast('Anggota: ' + m.name + (useH2 ? ' (Harga Kredit)' : ''))
-              }} />
-
               {/* Cara Bayar: LUNAS / KREDIT */}
               <div style={{ display: 'flex', gap: 4, marginTop: 8, marginBottom: 8 }}>
                 <button style={{ flex: 1, padding: '8px', border: '2px solid', borderColor: caraBayar === 'LUNAS' ? '#2e7d32' : '#e5e7eb', background: caraBayar === 'LUNAS' ? '#e8f5e9' : '#fff', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13, color: caraBayar === 'LUNAS' ? '#2e7d32' : '#6b7280' }}
@@ -1131,6 +1145,7 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
             </div>
           </div>
         </div>
+        </div>
       ) : (
         /* Riwayat Penjualan */
         <div style={S.card}>
@@ -1165,7 +1180,7 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
 // =============================================
 // PENCARIAN ANGGOTA OTOMATIS (Autocomplete)
 // =============================================
-function MemberSearch({ members, memberId, onSelect }) {
+function MemberSearch({ members, memberId, onSelect, onBarcodeScan }) {
   const [query, setQuery] = useState('')
   const [showList, setShowList] = useState(false)
   const wrapRef = useRef(null)
@@ -1185,6 +1200,27 @@ function MemberSearch({ members, memberId, onSelect }) {
       })
     : activeMembers
 
+  // Deteksi barcode: cek apakah input = barcode AGT-xxx
+  function handleInputChange(val) {
+    // Kalau terdeteksi barcode AGT (dari scanner fisik)
+    if (val.toUpperCase().startsWith('AGT') && onBarcodeScan) {
+      // Tunggu scanner selesai ketik (50ms) lalu proses
+      setTimeout(() => {
+        const input = document.querySelector('[data-member-search]')
+        const finalVal = input?.value || val
+        if (finalVal.toUpperCase().startsWith('AGT')) {
+          onBarcodeScan(finalVal.trim())
+          setQuery('')
+          if (input) input.value = ''
+        }
+      }, 150)
+      setQuery(val)
+      return
+    }
+    setQuery(val)
+    setShowList(true)
+  }
+
   // Tutup dropdown saat klik di luar
   useEffect(() => {
     function handleClick(e) {
@@ -1198,7 +1234,6 @@ function MemberSearch({ members, memberId, onSelect }) {
     <div ref={wrapRef} style={{ position: 'relative', marginBottom: 4 }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Pelanggan / Anggota</div>
 
-      {/* Tampilkan anggota terpilih */}
       {selectedMember ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#e3f2fd', borderRadius: 8, border: '1px solid #90caf9' }}>
           <div style={{ flex: 1 }}>
@@ -1211,11 +1246,20 @@ function MemberSearch({ members, memberId, onSelect }) {
       ) : (
         <div>
           <input
+            data-member-search="true"
             style={{ ...S.input, fontSize: 14, padding: '10px 12px' }}
-            placeholder="Ketik nama / no / NRP anggota..."
+            placeholder="Ketik nama / no / NRP / scan kartu..."
             value={query}
-            onChange={e => { setQuery(e.target.value); setShowList(true) }}
+            onChange={e => handleInputChange(e.target.value)}
             onFocus={() => setShowList(true)}
+            onKeyDown={e => {
+              // Enter di input → kalau AGT prefix, proses sebagai barcode
+              if (e.key === 'Enter' && query.toUpperCase().startsWith('AGT') && onBarcodeScan) {
+                e.preventDefault()
+                onBarcodeScan(query.trim())
+                setQuery('')
+              }
+            }}
           />
         </div>
       )}
