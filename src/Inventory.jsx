@@ -832,10 +832,9 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   function handleBarcodeScan(code) {
     // Cek dulu apakah ini barcode kartu anggota (prefix AGT-)
     if (code.toUpperCase().startsWith('AGT-')) {
-      const memberNo = code.substring(4) // ambil nomor setelah "AGT-"
+      const memberKey = code.substring(4) // ambil ID setelah "AGT-"
       const found = members.find(m =>
-        String(m.no||'').toLowerCase() === memberNo.toLowerCase() ||
-        String(m.id||'').toLowerCase() === memberNo.toLowerCase()
+        String(m.id||'') === memberKey
       )
       if (found) {
         setMemberId(found.id)
@@ -850,8 +849,8 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
         setLastScanned('Anggota: ' + found.name + ' (' + found.no + ')')
         showToast('Anggota dipilih: ' + found.name + (useH2 ? ' (Harga Kredit)' : ''))
       } else {
-        showToast('Anggota tidak ditemukan: ' + memberNo, 'error')
-        setLastScanned('Anggota tidak ditemukan: ' + memberNo)
+        showToast('Kartu anggota tidak terdaftar. Cetak ulang kartu dari versi terbaru.', 'error')
+        setLastScanned('Kartu tidak terdaftar: ' + memberKey)
       }
       return
     }
@@ -963,25 +962,12 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
       <div style={S.pageHead}>
         <h2 style={S.title}>Kasir / POS</h2>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 11, color: '#2e7d32', display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', background: '#e8f5e9', borderRadius: 6 }} title="Scanner fisik USB/Bluetooth siap digunakan. Langsung scan, otomatis masuk.">
-            <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M2 8V6a2 2 0 012-2h3M22 8V6a2 2 0 00-2-2h-3M2 16v2a2 2 0 002 2h3M22 16v2a2 2 0 01-2 2h-3M7 12h10"/></svg>
-            Scanner Ready
-          </span>
-          <ScanButton onClick={() => setShowScanner(true)} label="Scan Kamera" />
           <div style={S.filterGroup}>
             <button style={{ ...S.filterBtn, ...(tab === 'kasir' ? S.filterActive : {}) }} onClick={() => setTab('kasir')}>Kasir</button>
             <button style={{ ...S.filterBtn, ...(tab === 'riwayat' ? S.filterActive : {}) }} onClick={() => setTab('riwayat')}>Riwayat Penjualan</button>
           </div>
         </div>
       </div>
-
-      {/* Barcode Scanner Modal */}
-      {showScanner && (
-        <BarcodeScanner
-          onScan={(code) => handleBarcodeScan(code)}
-          onClose={() => setShowScanner(false)}
-        />
-      )}
 
       {/* Last scanned indicator */}
       {lastScanned && tab === 'kasir' && (
@@ -995,14 +981,14 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 16, alignItems: 'start' }}>
           {/* Product picker */}
           <div>
-            {/* Input untuk Scanner Fisik USB/Bluetooth */}
+            {/* Input untuk Scanner Fisik + Tombol Kamera */}
             <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, background: '#f0fdf4', border: '2px solid #86efac', borderRadius: 10, padding: '8px 14px' }}>
                 <svg width="20" height="20" fill="none" stroke="#16a34a" strokeWidth="2" viewBox="0 0 24 24"><path d="M2 8V6a2 2 0 012-2h3M22 8V6a2 2 0 00-2-2h-3M2 16v2a2 2 0 002 2h3M22 16v2a2 2 0 01-2 2h-3M7 12h10"/></svg>
                 <input
                   id="scanner-input"
                   style={{ ...S.searchInput, flex: 1, fontSize: 15, fontWeight: 600, background: 'transparent' }}
-                  placeholder="Scan barcode di sini / ketik SKU + Enter..."
+                  placeholder="Scan barcode di sini / ketik kode + Enter..."
                   autoFocus
                   onKeyDown={e => {
                     if (e.key === 'Enter' && e.target.value.trim().length >= 1) {
@@ -1014,7 +1000,17 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
                   autoComplete="off"
                 />
               </div>
+              <button style={{ ...S.primaryBtn, background: '#7b1fa2', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 6 }} onClick={() => setShowScanner(true)}>
+                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                Kamera
+              </button>
             </div>
+            {/* Kamera Scanner inline */}
+            {showScanner && (
+              <div style={{ marginBottom: 12 }}>
+                <BarcodeScanner onScan={(code) => { handleBarcodeScan(code); setShowScanner(false) }} onClose={() => setShowScanner(false)} />
+              </div>
+            )}
             <div style={{ ...S.searchBox, marginBottom: 12 }}>{IC.search}<input style={S.searchInput} placeholder="Cari produk..." value={search} onChange={e => setSearch(e.target.value)} /></div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
               {filteredProducts.map(p => (
@@ -1080,24 +1076,18 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
                 <span style={{ color: 'var(--b)' }}>{formatRp(total)}</span>
               </div>
 
-              <label style={S.formLabel}>Pelanggan / Anggota
-                <select style={S.input} value={memberId} onChange={e => {
-                  const newMid = e.target.value
-                  setMemberId(newMid)
-                  // Update harga di keranjang sesuai tipe pelanggan
-                  const m = members.find(x => x.id === newMid)
-                  const useH2 = m?.tingkatHrg === '2'
-                  setCart(prev => prev.map(c => {
-                    const prod = products.find(p => p.id === c.productId)
-                    if (!prod) return c
-                    const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
-                    return { ...c, price: newPrice }
-                  }))
-                }}>
-                  <option value="">-- Umum (Harga Lunas) --</option>
-                  {members.filter(m => m.status === 'active').map(m => <option key={m.id} value={m.id}>{m.no} - {m.name} {m.tingkatHrg === '2' ? '(Kredit)' : ''}</option>)}
-                </select>
-              </label>
+              <MemberSearch members={members} memberId={memberId} onSelect={(newMid) => {
+                setMemberId(newMid)
+                const m = members.find(x => x.id === newMid)
+                const useH2 = m?.tingkatHrg === '2'
+                setCart(prev => prev.map(c => {
+                  const prod = products.find(p => p.id === c.productId)
+                  if (!prod) return c
+                  const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
+                  return { ...c, price: newPrice }
+                }))
+                if (m) showToast('Anggota: ' + m.name + (useH2 ? ' (Harga Kredit)' : ''))
+              }} />
 
               {/* Cara Bayar: LUNAS / KREDIT */}
               <div style={{ display: 'flex', gap: 4, marginTop: 8, marginBottom: 8 }}>
@@ -1168,6 +1158,97 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
 // =============================================
 // HELPERS
 // =============================================
+// =============================================
+// PENCARIAN ANGGOTA OTOMATIS (Autocomplete)
+// =============================================
+function MemberSearch({ members, memberId, onSelect }) {
+  const [query, setQuery] = useState('')
+  const [showList, setShowList] = useState(false)
+  const wrapRef = useRef(null)
+
+  const selectedMember = members.find(m => m.id === memberId)
+  const activeMembers = members.filter(m => m.status === 'active')
+
+  const filtered = query.trim()
+    ? activeMembers.filter(m => {
+        const q = query.toLowerCase()
+        return String(m.name||'').toLowerCase().includes(q) ||
+               String(m.no||'').toLowerCase().includes(q) ||
+               String(m.nrp||'').toLowerCase().includes(q) ||
+               String(m.pangkat||'').toLowerCase().includes(q) ||
+               String(m.phone||'').toLowerCase().includes(q) ||
+               String(m.kompi||'').toLowerCase().includes(q)
+      })
+    : activeMembers
+
+  // Tutup dropdown saat klik di luar
+  useEffect(() => {
+    function handleClick(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setShowList(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative', marginBottom: 4 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Pelanggan / Anggota</div>
+
+      {/* Tampilkan anggota terpilih */}
+      {selectedMember ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#e3f2fd', borderRadius: 8, border: '1px solid #90caf9' }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>{selectedMember.pangkat ? selectedMember.pangkat + ' ' : ''}{selectedMember.name}</div>
+            <div style={{ fontSize: 11, color: '#1565c0' }}>No. {selectedMember.no} {selectedMember.tingkatHrg === '2' ? '• Harga Kredit' : '• Harga Lunas'}</div>
+          </div>
+          <button style={{ border: 'none', background: '#ef5350', color: '#fff', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+            onClick={() => { onSelect(''); setQuery('') }}>× Ganti</button>
+        </div>
+      ) : (
+        <div>
+          <input
+            style={{ ...S.input, fontSize: 14, padding: '10px 12px' }}
+            placeholder="Ketik nama / no / NRP anggota..."
+            value={query}
+            onChange={e => { setQuery(e.target.value); setShowList(true) }}
+            onFocus={() => setShowList(true)}
+          />
+        </div>
+      )}
+
+      {/* Dropdown hasil pencarian */}
+      {showList && !selectedMember && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,0.12)', maxHeight: 250, overflowY: 'auto', marginTop: 4 }}>
+          {/* Opsi Umum */}
+          <div
+            onClick={() => { onSelect(''); setQuery(''); setShowList(false) }}
+            style={{ padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: 13, color: '#6b7280', fontStyle: 'italic' }}
+            onMouseEnter={e => e.target.style.background = '#f9fafb'}
+            onMouseLeave={e => e.target.style.background = ''}
+          >
+            -- Umum (Tanpa Anggota) --
+          </div>
+          {filtered.length > 0 ? filtered.slice(0, 20).map(m => (
+            <div key={m.id}
+              onClick={() => { onSelect(m.id); setQuery(''); setShowList(false) }}
+              style={{ padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid #f9fafb', transition: 'background 0.1s' }}
+              onMouseEnter={e => e.target.style.background = '#e3f2fd'}
+              onMouseLeave={e => e.target.style.background = ''}
+            >
+              <div style={{ fontWeight: 600, fontSize: 13 }}>{m.pangkat ? m.pangkat + ' ' : ''}{m.name}</div>
+              <div style={{ fontSize: 11, color: '#6b7280' }}>
+                No. {m.no} {m.nrp ? '• NRP: ' + m.nrp : ''} {m.kompi ? '• ' + m.kompi : ''} {m.tingkatHrg === '2' ? ' • Kredit' : ''}
+              </div>
+            </div>
+          )) : (
+            <div style={{ padding: '14px', textAlign: 'center', color: '#999', fontSize: 13 }}>Tidak ada anggota yang cocok</div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function catColor(cat) {
   const map = {
     Sembako: { bg: '#e8f5e9', fg: '#2e7d32' },

@@ -120,8 +120,8 @@ export function KartuAnggota({ member, settings, logoSrc }) {
   const cardRef = useRef()
   const barcodeRef = useRef()
 
-  // Kode barcode: prefix AGT- + nomor anggota
-  const barcodeValue = 'AGT-' + (member.no || member.id || '000')
+  // Kode barcode: prefix AGT- + ID unik anggota (dijamin tidak bentrok)
+  const barcodeValue = 'AGT-' + (member.id || '000')
 
   // Render barcode di canvas saat komponen dimuat
   useEffect(() => {
@@ -241,7 +241,7 @@ export function cetakSemuaKartu(members, settings, logoSrc, perPage = 6) {
   let cardsHtml = ''
   activeMembers.forEach((m, i) => {
     const barcodeId = 'bc-' + i
-    const barcodeValue = 'AGT-' + (m.no || m.id || '000')
+    const barcodeValue = 'AGT-' + (m.id || '000')
     if (i > 0 && i % perPage === 0) {
       cardsHtml += '<div class="page-break"></div>'
     }
