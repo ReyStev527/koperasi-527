@@ -21,8 +21,8 @@ export function cetakStruk(tx, settings, members) {
   const member = members?.find(m => m.id === tx.memberId)
   const win = window.open('', '_blank', 'width=320,height=600')
   win.document.write(`<!DOCTYPE html><html><head><style>
-    @page { margin: 0; size: 80mm auto; }
-    body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; margin: 4mm; padding: 0; color: #000; }
+    @page { margin: 0; size: 72mm auto; }
+    body { font-family: 'Courier New', monospace; font-size: 11px; width: 64mm; margin: 3mm; padding: 0; color: #000; }
     .center { text-align: center; }
     .bold { font-weight: bold; }
     .line { border-top: 1px dashed #000; margin: 4px 0; }

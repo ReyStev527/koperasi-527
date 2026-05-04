@@ -1209,20 +1209,26 @@ function MemberSearch({ members, memberId, onSelect, onBarcodeScan }) {
       })
     : activeMembers
 
-  // Deteksi barcode: cek apakah input = barcode AGT (format: AGT-xxx, AGT/xxx, AGTxxx)
+  // Deteksi barcode: cek apakah input = barcode AGT
+  const scanTimerRef = useRef(null)
   function handleInputChange(val) {
-    if (/^AGT[\/\\.\-\s]?/i.test(val) && val.length > 4 && onBarcodeScan) {
-      // Tunggu scanner selesai ketik lalu proses
-      setTimeout(() => {
+    if (/^AGT/i.test(val) && onBarcodeScan) {
+      // Barcode terdeteksi — JANGAN tampilkan dropdown
+      setShowList(false)
+      setQuery(val)
+      // Cancel timer sebelumnya
+      if (scanTimerRef.current) clearTimeout(scanTimerRef.current)
+      // Tunggu scanner selesai ketik (300ms) lalu proses
+      scanTimerRef.current = setTimeout(() => {
         const input = document.querySelector('[data-member-search]')
         const finalVal = (input?.value || val).trim()
         if (/^AGT/i.test(finalVal) && finalVal.length > 4) {
           onBarcodeScan(finalVal)
           setQuery('')
+          setShowList(false)
           if (input) input.value = ''
         }
-      }, 150)
-      setQuery(val)
+      }, 300)
       return
     }
     setQuery(val)
