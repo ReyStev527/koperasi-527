@@ -183,9 +183,9 @@ export function KartuAnggota({ member, settings, logoSrc }) {
         window.onload = function() {
           try {
             JsBarcode("#print-barcode", "${barcodeValue}", {
-              format: "CODE128", width: 1.2, height: 22,
-              displayValue: true, fontSize: 8, font: "Arial",
-              textMargin: 1, margin: 0,
+              format: "CODE128", width: 2, height: 35,
+              displayValue: true, fontSize: 10, font: "Arial",
+              textMargin: 2, margin: 4,
               background: "#ffffff", lineColor: "#000000"
             });
           } catch(e) { console.warn('Barcode error:', e); }
@@ -303,8 +303,8 @@ export function cetakSemuaKartu(members, settings, logoSrc, perPage = 6) {
     .name { font-size: 9px; font-weight: bold; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .info { font-size: 6.5px; margin-top: 1px; line-height: 1.4; opacity: 0.85; }
     .info div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .barcode-area { position: absolute; bottom: 3px; left: 8px; right: 8px; text-align: center; background: #fff !important; border-radius: 3px; padding: 2px 4px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-    .barcode-area canvas { max-width: 100%; height: 18px; }
+    .barcode-area { position: absolute; bottom: 3px; left: 8px; right: 8px; text-align: center; background: #fff !important; border-radius: 3px; padding: 3px 6px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    .barcode-area canvas { max-width: 100%; }
     .footer { position: absolute; bottom: 2px; right: 8px; font-size: 5px; opacity: 0.4; }
     @media print { 
       .print-info { display: none; } 
@@ -325,9 +325,9 @@ export function cetakSemuaKartu(members, settings, logoSrc, perPage = 6) {
           if (val) {
             try {
               JsBarcode(canvas, val, {
-                format: 'CODE128', width: 1, height: 16,
-                displayValue: true, fontSize: 6, font: 'Arial',
-                textMargin: 1, margin: 0,
+                format: 'CODE128', width: 1.8, height: 28,
+                displayValue: true, fontSize: 8, font: 'Arial',
+                textMargin: 2, margin: 3,
                 background: '#ffffff', lineColor: '#000000'
               });
             } catch(e) { console.warn('Barcode error:', e); }
