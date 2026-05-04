@@ -721,16 +721,6 @@ function LoginScreen({ onLogin }) {
             <button onClick={submit} style={LS.submitBtn}>Masuk</button>
           </div>
         </div>
-
-        <div style={LS.hint}>
-          <div style={{ color: '#64748b', fontSize: 11, fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Akun Default</div>
-          {[['Admin', 'admin / admin123'], ['Bendahara', 'bendahara / bend123'], ['Ketua', 'ketua / ketua123']].map(([l, v]) => (
-            <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#94a3b8', marginBottom: 3 }}>
-              <span>{l}</span>
-              <code style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 6px', borderRadius: 4, fontFamily: 'monospace' }}>{v}</code>
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   )
@@ -1168,6 +1158,7 @@ function Reports({ members, savings, loans, getMember }) {
 }
 
 // =============================================
+// =============================================
 // SETTINGS
 // =============================================
 function SettingsPage({ settings, saveSettings, showToast, users, saveUser, deleteUser, user }) {
@@ -1175,6 +1166,7 @@ function SettingsPage({ settings, saveSettings, showToast, users, saveUser, dele
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
   const [nu, setNu] = useState({ username: '', password: '', name: '', role: 'bendahara' })
   const isAdmin = user?.role === 'admin'
+  const [editPwUser, setEditPwUser] = useState(null)
 
   return (
     <div>
@@ -1188,34 +1180,43 @@ function SettingsPage({ settings, saveSettings, showToast, users, saveUser, dele
             <label style={S.formLabel}>Simpanan Wajib (Rp)<input style={S.input} type="number" value={d.simpWajib} onChange={e => set('simpWajib', Number(e.target.value))} /></label>
             <label style={S.formLabel}>Bunga Pinjaman (% / bulan)<input style={S.input} type="number" step="0.1" value={d.bungaPinjaman} onChange={e => set('bungaPinjaman', Number(e.target.value))} /></label>
             <label style={S.formLabel}>Maks. Pinjaman (Rp)<input style={S.input} type="number" value={d.maxPinjaman} onChange={e => set('maxPinjaman', Number(e.target.value))} /></label>
-            <label style={S.formLabel}>PIN Akses Kas (untuk buka Kas Masuk/Keluar)
-              <input style={S.input} value={d.kasPin||''} onChange={e => set('kasPin', e.target.value)} placeholder="Masukkan PIN, contoh: 527" />
-              <span style={{ fontSize: 11, color: '#6b7280' }}>PIN ini diminta saat akan menambah/menghapus data kas</span>
-            </label>
-            <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={async () => { await saveSettings(d); showToast('Pengaturan disimpan') }}>Simpan Pengaturan</button>
+            <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={async () => { const { kasPin, ...rest } = d; await saveSettings({ ...rest, kasPin: settings?.kasPin || '527' }); showToast('Pengaturan disimpan') }}>Simpan Pengaturan</button>
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #eee' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#374151' }}>\ud83d\udd12 PIN Akses Kas</div>
+              <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>PIN diminta saat akan menambah/menghapus data Kas Masuk & Keluar</p>
+              <UbahPinKas settings={settings} saveSettings={saveSettings} showToast={showToast} currentSettings={d} setD={setD} />
+            </div>
           </div>
         </div>
 
         <div style={S.card}>
           <h3 style={{ ...S.cardTitle, marginBottom: 16 }}>Manajemen User</h3>
           <table style={S.table}>
-            <thead><tr>{['Username', 'Nama', 'Role', ''].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <thead><tr>{['Username', 'Nama', 'Role', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
             <tbody>{users.map(u => (
               <tr key={u.id} style={S.tr}>
                 <td style={{ ...S.td, fontWeight: 600 }}>{u.username}</td>
                 <td style={S.td}>{u.name}</td>
                 <td style={S.td}><span style={{ ...S.badge, background: u.role === 'admin' ? 'var(--r)20' : 'var(--b)20', color: u.role === 'admin' ? 'var(--r)' : 'var(--b)', textTransform: 'capitalize' }}>{u.role}</span></td>
-                <td style={S.td}>{isAdmin && u.id !== user.id && <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus user?')) { await deleteUser(u.id); showToast('User dihapus', 'error') } }}>{I.trash}</button>}</td>
+                <td style={{ ...S.td, whiteSpace: 'nowrap' }}>
+                  {isAdmin && <button style={{ ...S.smallBtn, color: 'var(--b)', fontSize: 11 }} onClick={() => setEditPwUser(editPwUser?.id === u.id ? null : u)} title="Ubah Password">\ud83d\udd11</button>}
+                  {isAdmin && u.id !== user.id && <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus user?')) { await deleteUser(u.id); showToast('User dihapus', 'error') } }}>{I.trash}</button>}
+                </td>
               </tr>
             ))}</tbody>
           </table>
+          {editPwUser && (
+            <div style={{ marginTop: 12, padding: 16, background: '#fff8e1', borderRadius: 10, border: '1px solid #ffe082' }}>
+              <UbahPasswordUser targetUser={editPwUser} saveUser={saveUser} showToast={showToast} onClose={() => setEditPwUser(null)} />
+            </div>
+          )}
           {isAdmin && (
             <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #eee' }}>
               <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: 'var(--muted)' }}>Tambah User Baru</div>
               <div style={S.form}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   <label style={S.formLabel}>Username<input style={S.input} value={nu.username} onChange={e => setNu(p => ({ ...p, username: e.target.value }))} /></label>
-                  <label style={S.formLabel}>Password<input style={S.input} value={nu.password} onChange={e => setNu(p => ({ ...p, password: e.target.value }))} /></label>
+                  <label style={S.formLabel}>Password<input style={S.input} type="password" value={nu.password} onChange={e => setNu(p => ({ ...p, password: e.target.value }))} /></label>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   <label style={S.formLabel}>Nama<input style={S.input} value={nu.name} onChange={e => setNu(p => ({ ...p, name: e.target.value }))} /></label>
@@ -1233,6 +1234,75 @@ function SettingsPage({ settings, saveSettings, showToast, users, saveUser, dele
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// Komponen Ubah PIN Kas
+function UbahPinKas({ settings, saveSettings, showToast, currentSettings, setD }) {
+  const [show, setShow] = useState(false)
+  const [pinOld, setPinOld] = useState('')
+  const [pinNew, setPinNew] = useState('')
+  const [pinConfirm, setPinConfirm] = useState('')
+  const [error, setError] = useState('')
+
+  async function handleSave() {
+    const currentPin = settings?.kasPin || '527'
+    if (pinOld !== currentPin) { setError('PIN lama salah!'); return }
+    if (!pinNew || pinNew.length < 3) { setError('PIN baru minimal 3 karakter'); return }
+    if (pinNew !== pinConfirm) { setError('Konfirmasi PIN baru tidak cocok!'); return }
+    const updated = { ...currentSettings, kasPin: pinNew }
+    setD(updated)
+    await saveSettings(updated)
+    setPinOld(''); setPinNew(''); setPinConfirm(''); setError('')
+    setShow(false)
+    showToast('PIN Kas berhasil diubah')
+  }
+
+  if (!show) return <button style={{ ...S.filterBtn, padding: '6px 16px' }} onClick={() => setShow(true)}>Ubah PIN Kas</button>
+
+  return (
+    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 12 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Ubah PIN Kas</div>
+      {error && <div style={{ padding: '6px 10px', background: '#ffebee', color: '#c62828', borderRadius: 6, marginBottom: 8, fontSize: 12 }}>{error}</div>}
+      <label style={S.formLabel}>PIN Lama<input style={S.input} type="password" value={pinOld} onChange={e => { setPinOld(e.target.value); setError('') }} placeholder="Masukkan PIN saat ini" /></label>
+      <label style={S.formLabel}>PIN Baru<input style={S.input} type="password" value={pinNew} onChange={e => setPinNew(e.target.value)} placeholder="Minimal 3 karakter" /></label>
+      <label style={S.formLabel}>Konfirmasi PIN Baru<input style={S.input} type="password" value={pinConfirm} onChange={e => setPinConfirm(e.target.value)} placeholder="Ulangi PIN baru" /></label>
+      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+        <button style={{ ...S.filterBtn, flex: 1 }} onClick={() => { setShow(false); setPinOld(''); setPinNew(''); setPinConfirm(''); setError('') }}>Batal</button>
+        <button style={{ ...S.primaryBtn, flex: 1 }} onClick={handleSave}>Simpan PIN Baru</button>
+      </div>
+    </div>
+  )
+}
+
+// Komponen Ubah Password User
+function UbahPasswordUser({ targetUser, saveUser, showToast, onClose }) {
+  const [oldPw, setOldPw] = useState('')
+  const [newPw, setNewPw] = useState('')
+  const [confirmPw, setConfirmPw] = useState('')
+  const [error, setError] = useState('')
+
+  async function handleSave() {
+    if (oldPw !== targetUser.password) { setError('Password lama salah!'); return }
+    if (!newPw || newPw.length < 4) { setError('Password baru minimal 4 karakter'); return }
+    if (newPw !== confirmPw) { setError('Konfirmasi password tidak cocok!'); return }
+    await saveUser({ ...targetUser, password: newPw })
+    showToast('Password ' + targetUser.username + ' berhasil diubah')
+    onClose()
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <div style={{ fontSize: 13, fontWeight: 700 }}>\ud83d\udd11 Ubah Password: <span style={{ color: 'var(--b)' }}>{targetUser.username}</span></div>
+        <button style={S.smallBtn} onClick={onClose}>{I.x}</button>
+      </div>
+      {error && <div style={{ padding: '6px 10px', background: '#ffebee', color: '#c62828', borderRadius: 6, marginBottom: 8, fontSize: 12 }}>{error}</div>}
+      <label style={S.formLabel}>Password Lama<input style={S.input} type="password" value={oldPw} onChange={e => { setOldPw(e.target.value); setError('') }} placeholder="Masukkan password saat ini" /></label>
+      <label style={S.formLabel}>Password Baru<input style={S.input} value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Minimal 4 karakter" /></label>
+      <label style={S.formLabel}>Konfirmasi Password Baru<input style={S.input} type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} placeholder="Ulangi password baru" /></label>
+      <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={handleSave}>Simpan Password Baru</button>
     </div>
   )
 }
