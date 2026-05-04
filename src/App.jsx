@@ -843,6 +843,25 @@ function Members({ members, saveMember, deleteMember, memberSavings, memberLoans
             Cetak Semua (4/hal)
           </button>
           <button style={S.primaryBtn} onClick={() => openForm(null)}>{I.plus} Tambah Anggota</button>
+          <button style={{ ...S.primaryBtn, background: '#ef6c00' }} onClick={() => {
+            const active = members.filter(m => m.status === 'active')
+            const codes = active.map(m => ({ name: m.name, no: m.no, id: m.id, barcode: 'AGT-' + (m.id || '000') }))
+            const seen = {}
+            const dups = []
+            codes.forEach(c => {
+              if (seen[c.barcode]) dups.push(c.name + ' & ' + seen[c.barcode] + ' → SAMA: ' + c.barcode)
+              seen[c.barcode] = c.name
+            })
+            const noId = codes.filter(c => !c.id || c.id === '000')
+            let msg = '=== CEK BARCODE ANGGOTA ===\n\nTotal anggota aktif: ' + active.length + '\n\n'
+            if (dups.length > 0) msg += '❌ DUPLIKAT DITEMUKAN:\n' + dups.join('\n') + '\n\n'
+            else msg += '✅ Tidak ada barcode duplikat\n\n'
+            if (noId.length > 0) msg += '⚠️ Anggota tanpa ID:\n' + noId.map(c => c.name).join(', ') + '\n\n'
+            msg += 'Daftar barcode:\n' + codes.map(c => c.no + ' | ' + c.name + ' → ' + c.barcode).join('\n')
+            alert(msg)
+          }}>
+            🔍 Cek Barcode
+          </button>
         </div>
       </div>
       <div style={S.toolbar}>

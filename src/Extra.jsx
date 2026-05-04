@@ -232,6 +232,20 @@ export function cetakSemuaKartu(members, settings, logoSrc, perPage = 6) {
   const activeMembers = members.filter(m => m.status === 'active')
   if (activeMembers.length === 0) { alert('Tidak ada anggota aktif'); return }
 
+  // CEK DUPLIKAT BARCODE
+  const barcodeMap = {}
+  const duplicates = []
+  activeMembers.forEach(m => {
+    const code = 'AGT-' + (m.id || '000')
+    if (barcodeMap[code]) {
+      duplicates.push(m.name + ' & ' + barcodeMap[code] + ' = ' + code)
+    }
+    barcodeMap[code] = m.name
+  })
+  if (duplicates.length > 0) {
+    alert('⚠️ PERINGATAN: Ada barcode DUPLIKAT!\n\n' + duplicates.join('\n') + '\n\nHubungi admin untuk perbaiki data anggota.')
+  }
+
   const cols = 2
   const rows = perPage === 4 ? 2 : 3
   const cardW = '85.6mm'
@@ -258,10 +272,9 @@ export function cetakSemuaKartu(members, settings, logoSrc, perPage = 6) {
         <div class="name">${m.pangkat ? m.pangkat + ' ' : ''}${m.name}</div>
         <div class="info">
           <div>${m.nrp ? 'NRP: ' + m.nrp : ''} ${m.kompi ? '| ' + m.kompi : ''}</div>
-          <div>Telp: ${m.phone || '-'}</div>
         </div>
         <div class="barcode-area"><canvas id="${barcodeId}" data-value="${barcodeValue}"></canvas></div>
-        <div class="footer">Valid s/d 31 Des ${new Date().getFullYear() + 1}</div>
+        <div class="footer">${barcodeValue}</div>
       </div>`
   })
 
