@@ -832,9 +832,18 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   function handleBarcodeScan(code) {
     console.log('[SCAN] Kode terbaca:', code)
 
-    // Cek dulu apakah ini barcode kartu anggota (prefix AGT-)
-    if (code.toUpperCase().startsWith('AGT-')) {
-      const memberKey = code.substring(4) // ambil ID setelah "AGT-"
+    // Normalisasi: ganti separator AGT (/, \, -, spasi) jadi AGT-
+    let normalizedCode = code.trim()
+    if (/^AGT[\/\\.\-\s]/i.test(normalizedCode)) {
+      normalizedCode = 'AGT-' + normalizedCode.substring(4)
+    } else if (/^AGT[a-z0-9]/i.test(normalizedCode) && !normalizedCode.toUpperCase().startsWith('AGT-')) {
+      normalizedCode = 'AGT-' + normalizedCode.substring(3)
+    }
+    console.log('[SCAN] Normalized:', normalizedCode)
+
+    // Cek apakah ini barcode kartu anggota (prefix AGT-)
+    if (normalizedCode.toUpperCase().startsWith('AGT-')) {
+      const memberKey = normalizedCode.substring(4) // ambil ID setelah "AGT-"
       console.log('[SCAN] Kartu anggota, cari ID:', memberKey)
       // Cari by ID dulu (kartu baru), lalu by No Anggota (kartu lama)
       const found = members.find(m => String(m.id||'') === memberKey) ||
@@ -1200,16 +1209,15 @@ function MemberSearch({ members, memberId, onSelect, onBarcodeScan }) {
       })
     : activeMembers
 
-  // Deteksi barcode: cek apakah input = barcode AGT-xxx
+  // Deteksi barcode: cek apakah input = barcode AGT (format: AGT-xxx, AGT/xxx, AGTxxx)
   function handleInputChange(val) {
-    // Kalau terdeteksi barcode AGT (dari scanner fisik)
-    if (val.toUpperCase().startsWith('AGT') && onBarcodeScan) {
-      // Tunggu scanner selesai ketik (50ms) lalu proses
+    if (/^AGT[\/\\.\-\s]?/i.test(val) && val.length > 4 && onBarcodeScan) {
+      // Tunggu scanner selesai ketik lalu proses
       setTimeout(() => {
         const input = document.querySelector('[data-member-search]')
-        const finalVal = input?.value || val
-        if (finalVal.toUpperCase().startsWith('AGT')) {
-          onBarcodeScan(finalVal.trim())
+        const finalVal = (input?.value || val).trim()
+        if (/^AGT/i.test(finalVal) && finalVal.length > 4) {
+          onBarcodeScan(finalVal)
           setQuery('')
           if (input) input.value = ''
         }
@@ -1253,8 +1261,7 @@ function MemberSearch({ members, memberId, onSelect, onBarcodeScan }) {
             onChange={e => handleInputChange(e.target.value)}
             onFocus={() => setShowList(true)}
             onKeyDown={e => {
-              // Enter di input → kalau AGT prefix, proses sebagai barcode
-              if (e.key === 'Enter' && query.toUpperCase().startsWith('AGT') && onBarcodeScan) {
+              if (e.key === 'Enter' && /^AGT/i.test(query) && query.length > 4 && onBarcodeScan) {
                 e.preventDefault()
                 onBarcodeScan(query.trim())
                 setQuery('')
