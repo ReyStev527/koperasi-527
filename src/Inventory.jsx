@@ -48,7 +48,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
     if (catFilter !== 'all' && p.category !== catFilter) return false
     if (tipeFilter !== 'all' && (p.tipeBarang||'MILIK') !== tipeFilter) return false
     if (dateFilter && (p.updatedAt||p.createdAt||'') !== dateFilter) return false
-    if (search && !String(p.name||'').toLowerCase().includes(search.toLowerCase()) && !String(p.sku||'').toLowerCase().includes(search.toLowerCase())) return false
+    if (search && !String(p.name||'').toLowerCase().includes(search.toLowerCase()) && !String(p.sku||'').toLowerCase().includes(search.toLowerCase()) && !String(p.barcode||'').toLowerCase().includes(search.toLowerCase())) return false
     return true
   })
 
@@ -80,7 +80,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   function openForm(product) {
     const isEdit = !!product
     const data = product ? { ...product } : {
-      sku: '', name: '', category: 'Sembako', buyPrice: '', sellPrice: '', sellPrice2: '',
+      sku: '', name: '', barcode: '', category: 'Sembako', buyPrice: '', sellPrice: '', sellPrice2: '',
       stock: 0, unit: 'pcs', minStock: 10, supplierId: suppliers[0]?.id || '',
       ppn: 0, qtyPerBox: 1, buyPriceBox: '', tipeBarang: 'MILIK'
     }
@@ -357,17 +357,21 @@ function ProductForm({ initial, suppliers, onSave, existingCategories }) {
 
   return (
     <div style={S.form}>
-      {/* Barcode / SKU */}
+      {/* SKU & Barcode Produk */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-        <label style={{ ...S.formLabel, flex: 1 }}>Barcode / SKU
-          <input style={S.input} value={d.sku} onChange={e => set('sku', e.target.value)} placeholder="Scan atau ketik barcode..." />
+        <label style={{ ...S.formLabel, flex: 1 }}>SKU (kode internal)
+          <input style={S.input} value={d.sku} onChange={e => set('sku', e.target.value)} placeholder="Kode SKU internal..." />
         </label>
-        <button type="button" style={{ ...S.primaryBtn, background: '#7b1fa2', height: 42 }} onClick={() => setShowScan(true)}>
-          <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"/><path d="M7 8v8M12 8v8M17 8v8"/></svg>
-          Scan
-        </button>
+        <label style={{ ...S.formLabel, flex: 1 }}>Barcode Produk (dari kemasan)
+          <div style={{ display: 'flex', gap: 4 }}>
+            <input style={S.input} value={d.barcode||''} onChange={e => set('barcode', e.target.value)} placeholder="Scan / ketik barcode kemasan..." />
+            <button type="button" style={{ ...S.primaryBtn, background: '#7b1fa2', height: 42, minWidth: 42, padding: '0 8px' }} onClick={() => setShowScan(true)}>
+              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"/><path d="M7 8v8M12 8v8M17 8v8"/></svg>
+            </button>
+          </div>
+        </label>
       </div>
-      {showScan && <BarcodeScanner onScan={(code) => { set('sku', String(code)); setShowScan(false) }} onClose={() => setShowScan(false)} />}
+      {showScan && <BarcodeScanner onScan={(code) => { set('barcode', String(code)); setShowScan(false) }} onClose={() => setShowScan(false)} />}
 
       <label style={S.formLabel}>Nama Produk<input style={S.input} value={d.name} onChange={e => set('name', e.target.value)} placeholder="Nama barang..." /></label>
 
@@ -822,7 +826,7 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   }, [])
 
   const filteredProducts = products.filter(p =>
-    p.stock > 0 && (search === '' || String(p.name||'').toLowerCase().includes(search.toLowerCase()) || String(p.sku||'').toLowerCase().includes(search.toLowerCase()))
+    p.stock > 0 && (search === '' || String(p.name||'').toLowerCase().includes(search.toLowerCase()) || String(p.sku||'').toLowerCase().includes(search.toLowerCase()) || String(p.barcode||'').toLowerCase().includes(search.toLowerCase()))
   )
 
   function handleBarcodeScan(code) {
@@ -852,10 +856,11 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
       return
     }
 
-    // Kalau bukan kartu anggota, cari produk berdasarkan SKU atau nama
+    // Kalau bukan kartu anggota, cari produk berdasarkan barcode, SKU, atau nama
     const found = products.find(p =>
+      String(p.barcode||'').toLowerCase() === code.toLowerCase() ||
       String(p.sku||'').toLowerCase() === code.toLowerCase() ||
-      String(p.name||'').toLowerCase() === code.toLowerCase() ||
+      String(p.barcode||'').toLowerCase().includes(code.toLowerCase()) ||
       String(p.sku||'').toLowerCase().includes(code.toLowerCase())
     )
     if (found) {
@@ -867,8 +872,10 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
       setLastScanned(found.name)
       showToast('+ ' + found.name + ' ditambahkan ke keranjang')
     } else {
-      showToast('Produk tidak ditemukan: ' + code, 'error')
-      setLastScanned('Tidak ditemukan: ' + code)
+      showToast('Barcode "' + code + '" belum terdaftar. Tambahkan di Edit Produk → field Barcode Produk.', 'error')
+      setLastScanned('Belum terdaftar: ' + code)
+      // Set search agar user bisa lihat produk terdekat
+      setSearch(code)
     }
   }
 
