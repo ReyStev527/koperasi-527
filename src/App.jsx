@@ -78,7 +78,7 @@ export default function App() {
   const [setorans, setSetorans] = useState([])
   const [hutangs, setHutangs] = useState([])
   const [settings, setSettings] = useState({
-    name: 'KOPERASI YONIF 527/BY', simpPokok: 500000, simpWajib: 100000, bungaPinjaman: 1.5, maxPinjaman: 10000000
+    name: 'KOPERASI YONIF 527/BY', simpPokok: 500000, simpWajib: 100000, bungaPinjaman: 1.5, maxPinjaman: 10000000, kasPin: '527'
   })
 
   const [modal, setModal] = useState(null)
@@ -618,7 +618,7 @@ export default function App() {
         {page === 'retur' && <ReturBarang {...{ returs, saveRetur, products, suppliers, updateProductStock, setModal, showToast }} />}
         {page === 'harga' && <HargaBertingkat {...{ products, saveProduct, setModal, showToast }} />}
         {page === 'mutasi' && <MutasiStok {...{ mutasis, saveMutasi, products, updateProductStock, setModal, showToast }} />}
-        {page === 'kas' && <KasMasukKeluar {...{ kasData, saveKas, deleteKas, setModal, showToast }} />}
+        {page === 'kas' && <KasMasukKeluar {...{ kasData, saveKas, deleteKas, setModal, showToast, settings, user }} />}
         {page === 'jurnal' && <JurnalUmum {...{ jurnalData, saveJurnal, deleteJurnal, setModal, showToast }} />}
         {page === 'piutang' && <PiutangPage {...{ piutangs, savePiutang, bayarPiutang, members, getMember, setModal, showToast }} />}
         {page === 'setoran' && <SetoranHarian {...{ setorans, saveSetoran, transactions, kasData, loans, setModal, showToast }} />}
@@ -1188,6 +1188,10 @@ function SettingsPage({ settings, saveSettings, showToast, users, saveUser, dele
             <label style={S.formLabel}>Simpanan Wajib (Rp)<input style={S.input} type="number" value={d.simpWajib} onChange={e => set('simpWajib', Number(e.target.value))} /></label>
             <label style={S.formLabel}>Bunga Pinjaman (% / bulan)<input style={S.input} type="number" step="0.1" value={d.bungaPinjaman} onChange={e => set('bungaPinjaman', Number(e.target.value))} /></label>
             <label style={S.formLabel}>Maks. Pinjaman (Rp)<input style={S.input} type="number" value={d.maxPinjaman} onChange={e => set('maxPinjaman', Number(e.target.value))} /></label>
+            <label style={S.formLabel}>PIN Akses Kas (untuk buka Kas Masuk/Keluar)
+              <input style={S.input} value={d.kasPin||''} onChange={e => set('kasPin', e.target.value)} placeholder="Masukkan PIN, contoh: 527" />
+              <span style={{ fontSize: 11, color: '#6b7280' }}>PIN ini diminta saat akan menambah/menghapus data kas</span>
+            </label>
             <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={async () => { await saveSettings(d); showToast('Pengaturan disimpan') }}>Simpan Pengaturan</button>
           </div>
         </div>

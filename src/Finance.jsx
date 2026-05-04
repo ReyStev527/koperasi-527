@@ -44,9 +44,34 @@ const AKUN = [
 // =============================================
 // KAS MASUK / KELUAR
 // =============================================
-export function KasMasukKeluar({ kasData, saveKas, deleteKas, setModal, showToast }) {
+export function KasMasukKeluar({ kasData, saveKas, deleteKas, setModal, showToast, settings, user }) {
   const [filter, setFilter] = useState('all')
   const [monthFilter, setMonthFilter] = useState('')
+  const [unlocked, setUnlocked] = useState(false)
+  const [pinInput, setPinInput] = useState('')
+  const [pinError, setPinError] = useState('')
+
+  const kasPin = settings?.kasPin || '527'
+
+  function verifyPin() {
+    if (pinInput === kasPin) {
+      setUnlocked(true)
+      setPinError('')
+      setPinInput('')
+    } else {
+      setPinError('PIN salah! Coba lagi.')
+      setPinInput('')
+    }
+  }
+
+  // Fungsi yang memerlukan PIN
+  function requirePin(action) {
+    if (unlocked) { action(); return }
+    setModal({
+      title: '🔒 Masukkan PIN Kas',
+      content: <PinPrompt kasPin={kasPin} onSuccess={() => { setUnlocked(true); setModal(null); action() }} onCancel={() => setModal(null)} />,
+    })
+  }
 
   let filtered = kasData
   if (filter !== 'all') filtered = filtered.filter(k => k.type === filter)
@@ -58,13 +83,24 @@ export function KasMasukKeluar({ kasData, saveKas, deleteKas, setModal, showToas
   const saldo = totalMasuk - totalKeluar
 
   function openForm(type) {
-    setModal({
-      title: type === 'masuk' ? 'Catat Kas Masuk' : 'Catat Kas Keluar',
-      content: <KasForm type={type} onSave={async d => {
-        await saveKas(d)
-        setModal(null)
-        showToast(type === 'masuk' ? 'Kas masuk dicatat' : 'Kas keluar dicatat')
-      }} />,
+    requirePin(() => {
+      setModal({
+        title: type === 'masuk' ? 'Catat Kas Masuk' : 'Catat Kas Keluar',
+        content: <KasForm type={type} onSave={async d => {
+          await saveKas(d)
+          setModal(null)
+          showToast(type === 'masuk' ? 'Kas masuk dicatat' : 'Kas keluar dicatat')
+        }} />,
+      })
+    })
+  }
+
+  function handleDelete(k) {
+    requirePin(async () => {
+      if (confirm('Hapus data kas ini?')) {
+        await deleteKas(k.id)
+        showToast('Dihapus', 'error')
+      }
     })
   }
 
@@ -72,7 +108,19 @@ export function KasMasukKeluar({ kasData, saveKas, deleteKas, setModal, showToas
     <div>
       <div style={S.pageHead}>
         <h2 style={S.title}>Kas Masuk & Keluar</h2>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {unlocked ? (
+            <span style={{ fontSize: 12, color: '#2e7d32', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+              Akses Terbuka
+              <button style={{ ...S.smallBtn, fontSize: 11, color: '#c62828', marginLeft: 4 }} onClick={() => setUnlocked(false)}>Kunci</button>
+            </span>
+          ) : (
+            <span style={{ fontSize: 12, color: '#c62828', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+              Terkunci
+            </span>
+          )}
           <button style={{ ...S.primaryBtn, background: '#e65100' }} onClick={() => openForm('keluar')}>{IC.down} Kas Keluar</button>
           <button style={S.primaryBtn} onClick={() => openForm('masuk')}>{IC.up} Kas Masuk</button>
         </div>
@@ -111,7 +159,7 @@ export function KasMasukKeluar({ kasData, saveKas, deleteKas, setModal, showToas
                   {k.type === 'masuk' ? '+ ' : '- '}{formatRp(k.amount)}
                 </td>
                 <td style={S.td}>
-                  <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus?')) { await deleteKas(k.id); showToast('Dihapus', 'error') } }}>{IC.trash}</button>
+                  <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={() => handleDelete(k)}>{IC.trash}</button>
                 </td>
               </tr>
             ))}
@@ -140,6 +188,54 @@ function KasForm({ type, onSave }) {
       <label style={S.formLabel}>Jumlah (Rp)<input style={S.input} type="number" value={d.amount} onChange={e => set('amount', e.target.value)} /></label>
       <label style={S.formLabel}>Keterangan<input style={S.input} value={d.note} onChange={e => set('note', e.target.value)} /></label>
       <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={() => onSave({ ...d, amount: Number(d.amount) })}>Simpan</button>
+    </div>
+  )
+}
+
+// =============================================
+// PIN PROMPT UNTUK AKSES KAS
+// =============================================
+function PinPrompt({ kasPin, onSuccess, onCancel }) {
+  const [pin, setPin] = useState('')
+  const [error, setError] = useState('')
+  const [attempts, setAttempts] = useState(0)
+
+  function handleSubmit() {
+    if (pin === kasPin) {
+      onSuccess()
+    } else {
+      setAttempts(a => a + 1)
+      setError('PIN salah! (' + (attempts + 1) + '/5 percobaan)')
+      setPin('')
+      if (attempts + 1 >= 5) {
+        setError('Terlalu banyak percobaan. Hubungi admin.')
+      }
+    }
+  }
+
+  return (
+    <div style={{ textAlign: 'center', padding: '10px 0' }}>
+      <div style={{ fontSize: 48, marginBottom: 12 }}>🔒</div>
+      <p style={{ fontSize: 14, color: '#374151', marginBottom: 16 }}>
+        Masukkan PIN untuk mengakses Kas Masuk/Keluar.<br/>
+        <span style={{ fontSize: 12, color: '#6b7280' }}>Hanya Admin & Bendahara yang memiliki PIN</span>
+      </p>
+      {error && <div style={{ padding: '8px 12px', background: '#ffebee', color: '#c62828', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>{error}</div>}
+      <input
+        style={{ ...S.input, textAlign: 'center', fontSize: 24, letterSpacing: 8, maxWidth: 200, margin: '0 auto', fontWeight: 700 }}
+        type="password"
+        value={pin}
+        onChange={e => setPin(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter' && pin && attempts < 5) handleSubmit() }}
+        placeholder="• • •"
+        autoFocus
+        disabled={attempts >= 5}
+        maxLength={20}
+      />
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 16 }}>
+        <button style={{ ...S.filterBtn, padding: '8px 20px' }} onClick={onCancel}>Batal</button>
+        <button style={{ ...S.primaryBtn, padding: '8px 24px' }} onClick={handleSubmit} disabled={!pin || attempts >= 5}>Buka Kunci</button>
+      </div>
     </div>
   )
 }
