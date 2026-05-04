@@ -776,8 +776,8 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
 
   // ============================================
   // SUPPORT SCANNER FISIK (USB/Bluetooth)
-  // Scanner fisik bekerja seperti keyboard: ketik cepat + Enter
-  // Deteksi: karakter masuk < 100ms antar huruf = dari scanner
+  // Scanner fisik = keyboard HID: ketik cepat + Enter
+  // Jika scanner-input ada, fokuskan ke situ
   // ============================================
   const scanHandlerRef = useRef(null)
   scanHandlerRef.current = handleBarcodeScan
@@ -788,33 +788,38 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
 
     function handleKeyDown(e) {
       const now = Date.now()
-      // Abaikan jika fokus di input (kecuali search kasir) / textarea / select
       const tag = e.target?.tagName?.toLowerCase()
-      const placeholder = e.target?.placeholder || ''
-      const isSearchInput = placeholder.includes('Cari') || placeholder.includes('Scan') || placeholder.includes('SKU')
-      if (tag === 'input' && !isSearchInput) return
-      if (tag === 'textarea' || tag === 'select') return
+      const scanInput = document.getElementById('scanner-input')
 
-      if (e.key === 'Enter') {
-        if (buffer.length >= 3) {
+      // Jika scanner-input ada dan bukan target saat ini, fokuskan ke situ
+      if (scanInput && e.target !== scanInput && tag !== 'input' && tag !== 'textarea' && tag !== 'select') {
+        if (e.key.length === 1) {
+          scanInput.focus()
+          return // biarkan input handle sendiri
+        }
+      }
+
+      // Fallback: global detection untuk halaman tanpa scanner-input
+      if (!scanInput) {
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') return
+
+        if (e.key === 'Enter' && buffer.length >= 3) {
           e.preventDefault()
           if (scanHandlerRef.current) scanHandlerRef.current(buffer.trim())
           buffer = ''
+          return
         }
-        return
-      }
-
-      // Hanya karakter printable (1 char)
-      if (e.key.length === 1) {
-        if (now - lastKeyTime > 100) buffer = ''
-        buffer += e.key
-        lastKeyTime = now
+        if (e.key.length === 1) {
+          if (now - lastKeyTime > 100) buffer = ''
+          buffer += e.key
+          lastKeyTime = now
+        }
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, []) // Empty dependency — handler via ref
+  }, [])
 
   const filteredProducts = products.filter(p =>
     p.stock > 0 && (search === '' || String(p.name||'').toLowerCase().includes(search.toLowerCase()) || String(p.sku||'').toLowerCase().includes(search.toLowerCase()))
@@ -983,6 +988,26 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 16, alignItems: 'start' }}>
           {/* Product picker */}
           <div>
+            {/* Input untuk Scanner Fisik USB/Bluetooth */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, background: '#f0fdf4', border: '2px solid #86efac', borderRadius: 10, padding: '8px 14px' }}>
+                <svg width="20" height="20" fill="none" stroke="#16a34a" strokeWidth="2" viewBox="0 0 24 24"><path d="M2 8V6a2 2 0 012-2h3M22 8V6a2 2 0 00-2-2h-3M2 16v2a2 2 0 002 2h3M22 16v2a2 2 0 01-2 2h-3M7 12h10"/></svg>
+                <input
+                  id="scanner-input"
+                  style={{ ...S.searchInput, flex: 1, fontSize: 15, fontWeight: 600, background: 'transparent' }}
+                  placeholder="Scan barcode di sini / ketik SKU + Enter..."
+                  autoFocus
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && e.target.value.trim().length >= 1) {
+                      e.preventDefault()
+                      handleBarcodeScan(e.target.value.trim())
+                      e.target.value = ''
+                    }
+                  }}
+                  autoComplete="off"
+                />
+              </div>
+            </div>
             <div style={{ ...S.searchBox, marginBottom: 12 }}>{IC.search}<input style={S.searchInput} placeholder="Cari produk..." value={search} onChange={e => setSearch(e.target.value)} /></div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
               {filteredProducts.map(p => (
