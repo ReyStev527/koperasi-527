@@ -2,7 +2,7 @@
 // MODUL INVENTARIS KOPERASI
 // Barang, Supplier, Barang Masuk, Kasir/POS
 // =============================================
-import { useState } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { BarcodeScanner, ScanButton } from './BarcodeScanner'
 import { cetakStruk } from './Extra'
 
@@ -774,6 +774,48 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   const [caraBayar, setCaraBayar] = useState('LUNAS') // LUNAS | KREDIT
   const [dp, setDp] = useState('')
 
+  // ============================================
+  // SUPPORT SCANNER FISIK (USB/Bluetooth)
+  // Scanner fisik bekerja seperti keyboard: ketik cepat + Enter
+  // Deteksi: karakter masuk < 100ms antar huruf = dari scanner
+  // ============================================
+  const scanHandlerRef = useRef(null)
+  scanHandlerRef.current = handleBarcodeScan
+
+  useEffect(() => {
+    let buffer = ''
+    let lastKeyTime = 0
+
+    function handleKeyDown(e) {
+      const now = Date.now()
+      // Abaikan jika fokus di input (kecuali search kasir) / textarea / select
+      const tag = e.target?.tagName?.toLowerCase()
+      const placeholder = e.target?.placeholder || ''
+      const isSearchInput = placeholder.includes('Cari') || placeholder.includes('Scan') || placeholder.includes('SKU')
+      if (tag === 'input' && !isSearchInput) return
+      if (tag === 'textarea' || tag === 'select') return
+
+      if (e.key === 'Enter') {
+        if (buffer.length >= 3) {
+          e.preventDefault()
+          if (scanHandlerRef.current) scanHandlerRef.current(buffer.trim())
+          buffer = ''
+        }
+        return
+      }
+
+      // Hanya karakter printable (1 char)
+      if (e.key.length === 1) {
+        if (now - lastKeyTime > 100) buffer = ''
+        buffer += e.key
+        lastKeyTime = now
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, []) // Empty dependency — handler via ref
+
   const filteredProducts = products.filter(p =>
     p.stock > 0 && (search === '' || String(p.name||'').toLowerCase().includes(search.toLowerCase()) || String(p.sku||'').toLowerCase().includes(search.toLowerCase()))
   )
@@ -908,8 +950,12 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
     <div>
       <div style={S.pageHead}>
         <h2 style={S.title}>Kasir / POS</h2>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <ScanButton onClick={() => setShowScanner(true)} label="Scan Barcode" />
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: '#2e7d32', display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', background: '#e8f5e9', borderRadius: 6 }} title="Scanner fisik USB/Bluetooth siap digunakan. Langsung scan, otomatis masuk.">
+            <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M2 8V6a2 2 0 012-2h3M22 8V6a2 2 0 00-2-2h-3M2 16v2a2 2 0 002 2h3M22 16v2a2 2 0 01-2 2h-3M7 12h10"/></svg>
+            Scanner Ready
+          </span>
+          <ScanButton onClick={() => setShowScanner(true)} label="Scan Kamera" />
           <div style={S.filterGroup}>
             <button style={{ ...S.filterBtn, ...(tab === 'kasir' ? S.filterActive : {}) }} onClick={() => setTab('kasir')}>Kasir</button>
             <button style={{ ...S.filterBtn, ...(tab === 'riwayat' ? S.filterActive : {}) }} onClick={() => setTab('riwayat')}>Riwayat Penjualan</button>
