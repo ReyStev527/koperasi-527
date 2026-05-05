@@ -589,13 +589,20 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
       title: 'Catat Barang Masuk',
       content: <StockInForm products={products} suppliers={suppliers} onSave={async d => {
         await saveStockIn(d)
-        // Update stok produk
+        // Update stok + harga produk
         for (const item of (d.items||[])) {
           const prod = products.find(p => p.id === item.productId)
-          if (prod) await updateProductStock(prod.id, prod.stock + item.qty)
+          if (prod) {
+            const updates = { stock: (prod.stock||0) + (item.qty||0) }
+            // Update harga jika berubah
+            if (item.buyPrice && item.buyPrice !== prod.buyPrice) updates.buyPrice = item.buyPrice
+            if (item.sellPrice && item.sellPrice !== prod.sellPrice) updates.sellPrice = item.sellPrice
+            if (item.sellPrice2 && item.sellPrice2 !== prod.sellPrice2) updates.sellPrice2 = item.sellPrice2
+            await updateProductStock(prod.id, updates.stock)
+          }
         }
         setModal(null)
-        showToast('Barang masuk berhasil dicatat')
+        showToast('Barang masuk berhasil dicatat — stok diperbarui')
       }} />,
     })
   }
@@ -635,33 +642,39 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
 function StockInForm({ products, suppliers, onSave }) {
   const [date, setDate] = useState(today())
   const [supplierId, setSupplierId] = useState(suppliers[0]?.id || '')
-  const [invoice, setInvoice] = useState('INV-' + Date.now().toString().slice(-6))
+  const [invoice, setInvoice] = useState('T' + Date.now().toString().slice(-4))
   const [note, setNote] = useState('')
   const [ppnPct, setPpnPct] = useState(0)
   const [jenisBayar, setJenisBayar] = useState('TUNAI')
   const [jatuhTempo, setJatuhTempo] = useState('')
-  const [items, setItems] = useState([{ productId: products[0]?.id || '', qty: 1, buyPrice: products[0]?.buyPrice || 0 }])
+  const [items, setItems] = useState([])
   const [showScanIdx, setShowScanIdx] = useState(-1)
-  const [updateNotice, setUpdateNotice] = useState([])
-  const [totalNota, setTotalNota] = useState('') // Total dari nota fisik
-  const [scanInput, setScanInput] = useState('') // Input scan barcode
+  const [scanInput, setScanInput] = useState('')
+  const [totalNota, setTotalNota] = useState('')
 
-  function addItem() { setItems(prev => [...prev, { productId: products[0]?.id || '', qty: 1, buyPrice: products[0]?.buyPrice || 0 }]) }
+  const selectedSup = suppliers.find(s => s.id === supplierId)
+
+  function addItem(prodId) {
+    const p = products.find(pr => pr.id === (prodId || products[0]?.id))
+    if (!p) return
+    setItems(prev => [...prev, {
+      productId: p.id, qty: 1, buyPrice: p.buyPrice || 0,
+      sellPrice: p.sellPrice || 0, sellPrice2: p.sellPrice2 || 0
+    }])
+  }
+
   function removeItem(i) { setItems(prev => prev.filter((_, idx) => idx !== i)) }
+
   function updateItem(i, k, v) {
     setItems(prev => prev.map((item, idx) => {
       if (idx !== i) return item
       const updated = { ...item, [k]: v }
       if (k === 'productId') {
         const p = products.find(pr => pr.id === v)
-        if (p) updated.buyPrice = p.buyPrice
-      }
-      if (k === 'buyPrice') {
-        const p = products.find(pr => pr.id === item.productId)
-        if (p && v > (p.buyPrice||0)) {
-          setUpdateNotice(prev => { const n = [...prev]; n[i] = 'Harga naik! ' + formatRp(p.buyPrice) + ' → ' + formatRp(v); return n })
-        } else {
-          setUpdateNotice(prev => { const n = [...prev]; n[i] = ''; return n })
+        if (p) {
+          updated.buyPrice = p.buyPrice || 0
+          updated.sellPrice = p.sellPrice || 0
+          updated.sellPrice2 = p.sellPrice2 || 0
         }
       }
       return updated
@@ -677,15 +690,17 @@ function StockInForm({ products, suppliers, onSave }) {
       String(p.sku||'').toLowerCase().includes(code.toLowerCase())
     )
     if (found) {
-      // Cek apakah produk sudah ada di items
       const existIdx = items.findIndex(it => it.productId === found.id)
       if (existIdx >= 0) {
         updateItem(existIdx, 'qty', (items[existIdx].qty || 0) + 1)
       } else {
-        setItems(prev => [...prev, { productId: found.id, qty: 1, buyPrice: found.buyPrice || 0 }])
+        setItems(prev => [...prev, {
+          productId: found.id, qty: 1, buyPrice: found.buyPrice || 0,
+          sellPrice: found.sellPrice || 0, sellPrice2: found.sellPrice2 || 0
+        }])
       }
     } else {
-      alert('Produk dengan barcode "' + code + '" tidak ditemukan.\nTambah produk baru dulu di Stok Barang.')
+      alert('Barcode "' + code + '" tidak ditemukan. Tambah produk baru dulu di Stok Barang.')
     }
     setScanInput('')
   }
@@ -693,16 +708,13 @@ function StockInForm({ products, suppliers, onSave }) {
   function handleBarcodeScan(code, itemIdx) {
     const found = products.find(p =>
       String(p.barcode||'').toLowerCase() === code.toLowerCase() ||
-      String(p.sku||'').toLowerCase() === code.toLowerCase() ||
-      String(p.barcode||'').toLowerCase().includes(code.toLowerCase()) ||
-      String(p.sku||'').toLowerCase().includes(code.toLowerCase())
+      String(p.sku||'').toLowerCase() === code.toLowerCase()
     )
     setShowScanIdx(-1)
     if (found) {
       updateItem(itemIdx, 'productId', found.id)
-      updateItem(itemIdx, 'buyPrice', found.buyPrice||0)
     } else {
-      alert('Produk dengan barcode "' + code + '" tidak ditemukan.')
+      alert('Barcode "' + code + '" tidak ditemukan.')
     }
   }
 
@@ -712,12 +724,12 @@ function StockInForm({ products, suppliers, onSave }) {
   const totalNotaNum = Number(totalNota) || 0
   const selisih = totalNotaNum > 0 ? total - totalNotaNum : 0
   const isMatch = totalNotaNum === 0 || Math.abs(selisih) === 0
-  const hasItems = items.length > 0 && items.some(it => it.qty > 0 && it.productId)
+  const hasItems = items.length > 0 && items.some(it => it.qty > 0)
 
   function handleSave() {
     if (!hasItems) { alert('Tambahkan minimal 1 item barang!'); return }
     if (totalNotaNum > 0 && !isMatch) {
-      alert('⚠️ TOTAL TIDAK SESUAI NOTA!\n\nTotal Nota: Rp ' + totalNotaNum.toLocaleString('id-ID') + '\nTotal Sistem: Rp ' + total.toLocaleString('id-ID') + '\nSelisih: Rp ' + Math.abs(selisih).toLocaleString('id-ID') + '\n\nPerbaiki jumlah/harga barang agar sesuai nota sebelum menyimpan.')
+      alert('⚠️ TOTAL TIDAK SESUAI NOTA!\n\nTotal Nota: Rp ' + totalNotaNum.toLocaleString('id-ID') + '\nTotal Sistem: Rp ' + total.toLocaleString('id-ID') + '\nSelisih: Rp ' + Math.abs(selisih).toLocaleString('id-ID') + '\n\nPerbaiki jumlah/harga agar sesuai nota.')
       return
     }
     onSave({ date, supplierId, invoice, note, items, subtotal, ppnPct, ppnAmount, total, jenisBayar, jatuhTempo })
@@ -725,70 +737,93 @@ function StockInForm({ products, suppliers, onSave }) {
 
   return (
     <div style={S.form}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <label style={S.formLabel}>Tanggal<input style={S.input} type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
-        <label style={S.formLabel}>No. Invoice / Nota<input style={S.input} value={invoice} onChange={e => setInvoice(e.target.value)} /></label>
+      {/* HEADER — mirip VB app */}
+      <div style={{ background: '#1a237e', color: '#fff', padding: '10px 16px', borderRadius: '10px 10px 0 0', margin: '-16px -16px 12px -16px' }}>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>TRANSAKSI PEMBELIAN</div>
+        <div style={{ fontSize: 11, opacity: 0.8 }}>Form entri transaksi penambahan stock barang ke toko</div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8 }}>
-        <label style={S.formLabel}>Supplier
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>Nomor Urut<input style={{ ...S.input, fontWeight: 700 }} value={invoice} onChange={e => setInvoice(e.target.value)} /></label>
+        <label style={S.formLabel}>Tanggal<input style={S.input} type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
+        <label style={S.formLabel}>Total Nota (Rp)
+          <input style={{ ...S.input, fontWeight: 700, color: '#1565c0', textAlign: 'right' }} type="number" value={totalNota} onChange={e => setTotalNota(e.target.value)} placeholder="Isi total nota..." />
+        </label>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 8 }}>
+        <label style={S.formLabel}>Kode Supplier
           <select style={S.input} value={supplierId} onChange={e => setSupplierId(e.target.value)}>
-            {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {suppliers.map(s => <option key={s.id} value={s.id}>{s.id.slice(0,6).toUpperCase()}</option>)}
           </select>
         </label>
-        <label style={S.formLabel}>Total Nota (Rp)
-          <input style={{ ...S.input, fontSize: 15, fontWeight: 700, color: '#1565c0', textAlign: 'right' }} type="number" value={totalNota} onChange={e => setTotalNota(e.target.value)} placeholder="Isi total dari nota..." />
+        <label style={S.formLabel}>Nama Supplier
+          <input style={{ ...S.input, fontWeight: 600 }} value={selectedSup?.name || '-'} readOnly />
         </label>
       </div>
 
-      {/* Quick scan input */}
+      {/* SCAN INPUT */}
       <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, background: '#f0fdf4', border: '2px solid #86efac', borderRadius: 8, padding: '6px 10px' }}>
-          <svg width="16" height="16" fill="none" stroke="#16a34a" strokeWidth="2" viewBox="0 0 24 24"><path d="M2 8V6a2 2 0 012-2h3M22 8V6a2 2 0 00-2-2h-3M2 16v2a2 2 0 002 2h3M22 16v2a2 2 0 01-2 2h-3M7 12h10"/></svg>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, background: '#fffde7', border: '2px solid #fdd835', borderRadius: 8, padding: '6px 10px' }}>
+          <svg width="16" height="16" fill="none" stroke="#f57f17" strokeWidth="2" viewBox="0 0 24 24"><path d="M7 8v8M12 8v8M17 8v8"/></svg>
           <input
             style={{ ...S.searchInput, flex: 1, fontSize: 13, background: 'transparent' }}
-            placeholder="Scan barcode barang untuk tambah item..."
+            placeholder="Scan barcode / ketik kode barang + Enter untuk tambah..."
             value={scanInput}
             onChange={e => setScanInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && scanInput.trim()) { e.preventDefault(); handleScanBarcode(scanInput.trim()) } }}
+            autoFocus
           />
         </div>
+        <button style={{ ...S.filterBtn, padding: '8px 12px' }} onClick={() => addItem()}>+ Manual</button>
       </div>
 
-      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)', marginTop: 8 }}>Item Barang</div>
-
-      {/* Tabel item dengan Stok Awal & Stok Akhir */}
-      <div style={{ border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
-        <table style={{ ...S.table, fontSize: 12 }}>
-          <thead><tr>{['', 'Produk', 'Stok Awal', 'Qty Masuk', 'Stok Akhir', 'Harga Beli', 'Subtotal', ''].map(h => <th key={h} style={{ ...S.th, padding: '6px 8px', fontSize: 11 }}>{h}</th>)}</tr></thead>
+      {/* TABEL ITEM — layout mirip VB app */}
+      <div style={{ border: '1px solid #1a237e', borderRadius: 8, overflow: 'hidden', marginTop: 8 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: '#1a237e', color: '#fdd835' }}>
+              {['Kode', 'Nama Barang', 'Jumlah', 'Stok Awal', 'Stok Akhir', 'Hpp', 'Hrg Lunas', 'Hrg Kredit', 'Sub Total Rp', ''].map(h =>
+                <th key={h} style={{ padding: '6px 8px', textAlign: h === 'Nama Barang' ? 'left' : 'center', fontSize: 11, fontWeight: 700, borderRight: '1px solid #283593' }}>{h}</th>
+              )}
+            </tr>
+          </thead>
           <tbody>
+            {items.length === 0 && (
+              <tr><td colSpan={10} style={{ padding: 24, textAlign: 'center', color: '#999', fontStyle: 'italic' }}>Scan barcode atau klik "+ Manual" untuk tambah barang</td></tr>
+            )}
             {items.map((it, i) => {
               const prod = products.find(p => p.id === it.productId)
               const stokAwal = prod?.stock || 0
               const stokAkhir = stokAwal + (it.qty || 0)
               const itemSub = (it.qty || 0) * (it.buyPrice || 0)
               return (
-                <tr key={i} style={S.tr}>
-                  <td style={{ ...S.td, padding: '4px 4px' }}>
-                    <button type="button" style={{ ...S.smallBtn, padding: '2px', color: '#7b1fa2' }} onClick={() => setShowScanIdx(showScanIdx === i ? -1 : i)} title="Scan Barcode">
-                      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M7 8v8M12 8v8M17 8v8"/></svg>
-                    </button>
+                <tr key={i} style={{ borderBottom: '1px solid #e0e0e0', background: i % 2 === 0 ? '#fff' : '#f5f5f5' }}>
+                  <td style={{ padding: '4px 6px', fontFamily: 'monospace', fontSize: 11 }}>
+                    {prod?.barcode || prod?.sku || '-'}
+                    <button type="button" style={{ ...S.smallBtn, padding: '1px 4px', marginLeft: 4, color: '#7b1fa2', fontSize: 10 }} onClick={() => setShowScanIdx(showScanIdx === i ? -1 : i)} title="Scan">📷</button>
                   </td>
-                  <td style={{ ...S.td, padding: '4px 6px', minWidth: 180 }}>
-                    <select style={{ ...S.input, fontSize: 12, padding: '4px 6px' }} value={it.productId} onChange={e => updateItem(i, 'productId', e.target.value)}>
-                      {products.map(p => <option key={p.id} value={p.id}>{String(p.sku ? p.sku + ' - ' : '')}{p.name}</option>)}
+                  <td style={{ padding: '4px 6px' }}>
+                    <select style={{ ...S.input, fontSize: 12, padding: '3px 6px', border: 'none', background: 'transparent' }} value={it.productId} onChange={e => updateItem(i, 'productId', e.target.value)}>
+                      {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                   </td>
-                  <td style={{ ...S.td, padding: '4px 6px', textAlign: 'center', fontWeight: 600, color: '#6b7280' }}>{stokAwal} {prod?.unit||'pcs'}</td>
-                  <td style={{ ...S.td, padding: '4px 6px' }}>
-                    <input style={{ ...S.input, fontSize: 13, padding: '4px 6px', textAlign: 'center', fontWeight: 700, width: 65 }} type="number" min="1" value={it.qty} onChange={e => updateItem(i, 'qty', Number(e.target.value))} />
+                  <td style={{ padding: '4px 4px', textAlign: 'center' }}>
+                    <input style={{ ...S.input, width: 55, fontSize: 13, fontWeight: 700, textAlign: 'center', padding: '3px', background: '#fffde7', border: '1px solid #fdd835' }} type="number" min="1" value={it.qty} onChange={e => updateItem(i, 'qty', Number(e.target.value))} />
                   </td>
-                  <td style={{ ...S.td, padding: '4px 6px', textAlign: 'center', fontWeight: 700, color: '#2e7d32' }}>{stokAkhir} {prod?.unit||'pcs'}</td>
-                  <td style={{ ...S.td, padding: '4px 6px' }}>
-                    <input style={{ ...S.input, fontSize: 12, padding: '4px 6px', textAlign: 'right', width: 100 }} type="number" value={it.buyPrice} onChange={e => updateItem(i, 'buyPrice', Number(e.target.value))} />
+                  <td style={{ padding: '4px 6px', textAlign: 'center', color: '#6b7280' }}>{stokAwal}</td>
+                  <td style={{ padding: '4px 6px', textAlign: 'center', fontWeight: 700, color: '#2e7d32' }}>{stokAkhir}</td>
+                  <td style={{ padding: '4px 4px', textAlign: 'right' }}>
+                    <input style={{ ...S.input, width: 80, fontSize: 12, textAlign: 'right', padding: '3px 6px' }} type="number" value={it.buyPrice} onChange={e => updateItem(i, 'buyPrice', Number(e.target.value))} />
                   </td>
-                  <td style={{ ...S.td, padding: '4px 6px', textAlign: 'right', fontWeight: 600 }}>{formatRp(itemSub)}</td>
-                  <td style={{ ...S.td, padding: '4px 4px' }}>
-                    {items.length > 1 && <button style={{ ...S.smallBtn, color: 'var(--r)', padding: '2px' }} onClick={() => removeItem(i)}>{IC.x}</button>}
+                  <td style={{ padding: '4px 4px', textAlign: 'right' }}>
+                    <input style={{ ...S.input, width: 80, fontSize: 12, textAlign: 'right', padding: '3px 6px' }} type="number" value={it.sellPrice||''} onChange={e => updateItem(i, 'sellPrice', Number(e.target.value))} />
+                  </td>
+                  <td style={{ padding: '4px 4px', textAlign: 'right' }}>
+                    <input style={{ ...S.input, width: 80, fontSize: 12, textAlign: 'right', padding: '3px 6px' }} type="number" value={it.sellPrice2||''} onChange={e => updateItem(i, 'sellPrice2', Number(e.target.value))} />
+                  </td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{Number(itemSub).toLocaleString('id-ID')}</td>
+                  <td style={{ padding: '4px 4px', textAlign: 'center' }}>
+                    <button style={{ ...S.smallBtn, color: 'var(--r)', padding: '1px 4px', fontSize: 12 }} onClick={() => removeItem(i)} title="Hapus baris">×</button>
                   </td>
                 </tr>
               )
@@ -797,71 +832,66 @@ function StockInForm({ products, suppliers, onSave }) {
         </table>
       </div>
 
-      {/* Notices */}
-      {updateNotice.map((n, i) => n ? <div key={i} style={{ fontSize: 11, color: '#e65100', padding: '2px 8px', background: '#fff3e0', borderRadius: 4, marginTop: 2 }}>{n}</div> : null)}
-
-      {/* Scan popup per item */}
       {showScanIdx >= 0 && <BarcodeScanner onScan={(code) => handleBarcodeScan(code, showScanIdx)} onClose={() => setShowScanIdx(-1)} />}
 
-      <button style={{ ...S.filterBtn, width: '100%' }} onClick={addItem}>{IC.plus} Tambah Item</button>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-        <label style={S.formLabel}>PPN (%)<input style={S.input} type="number" min="0" max="100" value={ppnPct} onChange={e => setPpnPct(Number(e.target.value))} /></label>
+      {/* FOOTER — PPN, Jenis Bayar, TOTAL */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 8 }}>
+        <label style={S.formLabel}>PPN (%)
+          <input style={S.input} type="number" min="0" max="100" value={ppnPct} onChange={e => setPpnPct(Number(e.target.value))} />
+        </label>
         <label style={S.formLabel}>Jenis Bayar
           <select style={S.input} value={jenisBayar} onChange={e => setJenisBayar(e.target.value)}>
-            <option value="TUNAI">TUNAI (kas keluar)</option>
+            <option value="TUNAI">TUNAI</option>
             <option value="KREDIT">KREDIT (hutang)</option>
           </select>
         </label>
         {jenisBayar === 'KREDIT' ? (
           <label style={S.formLabel}>Jatuh Tempo<input style={S.input} type="date" value={jatuhTempo} onChange={e => setJatuhTempo(e.target.value)} /></label>
         ) : (
-          <label style={S.formLabel}>Catatan<input style={S.input} value={note} onChange={e => setNote(e.target.value)} /></label>
+          <label style={S.formLabel}>Catatan<input style={S.input} value={note} onChange={e => setNote(e.target.value)} placeholder="Catatan opsional..." /></label>
         )}
       </div>
-      {jenisBayar === 'KREDIT' && (
-        <div style={{ fontSize: 11, color: '#e65100', padding: '6px 10px', background: '#fff3e0', borderRadius: 4 }}>
-          ⚠️ Pembelian KREDIT akan masuk ke menu <strong>Hutang Supplier</strong>, bukan langsung Kas Keluar.
-        </div>
-      )}
 
-      {/* SUMMARY + VALIDASI NOTA */}
-      <div style={{ padding: '12px 16px', background: isMatch ? '#f0f7ff' : '#ffebee', borderRadius: 10, fontSize: 13, border: isMatch ? '1px solid #90caf9' : '2px solid #ef5350' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-          <span>Subtotal ({items.length} item, {items.reduce((a, it) => a + (it.qty||0), 0)} pcs)</span><strong>{formatRp(subtotal)}</strong>
-        </div>
-        {ppnPct > 0 && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, color: '#c62828' }}>
-            <span>PPN {ppnPct}%</span><strong>+ {formatRp(ppnAmount)}</strong>
-          </div>
-        )}
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700, color: 'var(--b)', borderTop: '1px solid #ddd', paddingTop: 6, marginTop: 4 }}>
-          <span>TOTAL SISTEM</span><span>{formatRp(total)}</span>
-        </div>
-        {totalNotaNum > 0 && (
-          <>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700, color: '#374151', marginTop: 6, paddingTop: 6, borderTop: '1px dashed #ccc' }}>
-              <span>TOTAL NOTA</span><span>{formatRp(totalNotaNum)}</span>
+      {/* TOTAL BOX */}
+      <div style={{ display: 'flex', gap: 12, marginTop: 8, alignItems: 'stretch' }}>
+        <div style={{ flex: 1, padding: '10px 14px', background: isMatch ? '#e8f5e9' : '#ffebee', borderRadius: 10, border: isMatch ? '2px solid #4caf50' : '2px solid #ef5350' }}>
+          {ppnPct > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+              <span>Subtotal ({items.length} item)</span><span>{formatRp(subtotal)}</span>
             </div>
-            {isMatch ? (
-              <div style={{ marginTop: 6, padding: '6px 10px', background: '#e8f5e9', borderRadius: 6, color: '#2e7d32', fontWeight: 700, textAlign: 'center' }}>
-                ✅ SESUAI — Total sistem sama dengan nota
+          )}
+          {ppnPct > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4, color: '#c62828' }}>
+              <span>PPN {ppnPct}%</span><span>+ {formatRp(ppnAmount)}</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 18, fontWeight: 700, color: '#1a237e' }}>
+            <span>TOTAL</span><span>{formatRp(total)}</span>
+          </div>
+          {totalNotaNum > 0 && (
+            <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px dashed #999' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 600 }}>
+                <span>Total Nota</span><span>{formatRp(totalNotaNum)}</span>
               </div>
-            ) : (
-              <div style={{ marginTop: 6, padding: '6px 10px', background: '#ffcdd2', borderRadius: 6, color: '#b71c1c', fontWeight: 700, textAlign: 'center' }}>
-                ❌ SELISIH Rp {Math.abs(selisih).toLocaleString('id-ID')} — {selisih > 0 ? 'Sistem lebih besar' : 'Nota lebih besar'}. Perbaiki qty/harga!
-              </div>
-            )}
-          </>
-        )}
+              {isMatch ? (
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#2e7d32', marginTop: 4, textAlign: 'center' }}>✅ SESUAI</div>
+              ) : (
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#b71c1c', marginTop: 4, textAlign: 'center' }}>❌ SELISIH {formatRp(Math.abs(selisih))}</div>
+              )}
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 160 }}>
+          <button style={{ ...S.filterBtn, flex: 1, justifyContent: 'center' }} onClick={() => { setItems([]); setScanInput('') }}>Batal</button>
+          <button
+            style={{ ...S.primaryBtn, flex: 2, justifyContent: 'center', fontSize: 14, opacity: (!hasItems || (totalNotaNum > 0 && !isMatch)) ? 0.5 : 1 }}
+            disabled={!hasItems || (totalNotaNum > 0 && !isMatch)}
+            onClick={handleSave}
+          >
+            💾 Simpan Transaksi
+          </button>
+        </div>
       </div>
-      <button
-        style={{ ...S.primaryBtn, width: '100%', opacity: (!hasItems || (totalNotaNum > 0 && !isMatch)) ? 0.5 : 1 }}
-        disabled={!hasItems || (totalNotaNum > 0 && !isMatch)}
-        onClick={handleSave}
-      >
-        {totalNotaNum > 0 && !isMatch ? '❌ Tidak Bisa Simpan — Total Belum Sesuai Nota' : 'Simpan Barang Masuk'}
-      </button>
     </div>
   )
 }
