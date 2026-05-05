@@ -195,6 +195,26 @@ export async function seedInventoryIfEmpty() {
 }
 
 // =============================================
+// BATCH DELETE (hapus semua data dalam collection)
+// =============================================
+export async function batchDelete(col, onProgress) {
+  const snap = await getDocs(collection(db, col))
+  if (snap.size === 0) return 0
+  const BATCH_SIZE = 450
+  const docs = snap.docs
+  let done = 0
+  for (let i = 0; i < docs.length; i += BATCH_SIZE) {
+    const batch = writeBatch(db)
+    const chunk = docs.slice(i, i + BATCH_SIZE)
+    chunk.forEach(d => batch.delete(d.ref))
+    await batch.commit()
+    done += chunk.length
+    if (onProgress) onProgress(done, docs.length)
+  }
+  return done
+}
+
+// =============================================
 // HELPERS
 // =============================================
 function genId() {

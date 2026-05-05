@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { db } from './firebase'
 import {
-  getAll, getOne, setOne, addOne, removeOne, listenCollection, seedIfEmpty, seedInventoryIfEmpty, batchSet
+  getAll, getOne, setOne, addOne, removeOne, listenCollection, seedIfEmpty, seedInventoryIfEmpty, batchSet, batchDelete
 } from './db'
 import { Products, Suppliers, StockIn, POS } from './Inventory'
 import { KasMasukKeluar, JurnalUmum, LabaRugi, HitungSHU, CetakKwitansi } from './Finance'
@@ -524,6 +524,7 @@ export default function App() {
     { id: 'notif', label: 'Notifikasi', icon: I.home, roles: ['admin','bendahara','ketua'] },
     { id: '_sep4', label: 'SISTEM', sep: true, roles: ['admin'] },
     { id: 'backup', label: 'Backup & Restore', icon: I.gear, roles: ['admin'] },
+    { id: 'resetdata', label: 'Reset Data', icon: I.gear, roles: ['admin'] },
     { id: 'settings', label: 'Pengaturan', icon: I.gear, roles: ['admin'] },
   ]
   // Filter nav berdasarkan role user
@@ -639,6 +640,7 @@ export default function App() {
           saveImportedProducts: async (items, onProgress) => { return await batchSet('products', items, onProgress) },
           saveImportedMembers: async (items, onProgress) => { return await batchSet('members', items, onProgress) }
         }} />}
+        {page === 'resetdata' && <ResetDataPage showToast={showToast} />}
         {page === 'settings' && <SettingsPage {...{ settings, saveSettings, showToast, users, saveUser, deleteUser, user }} />}
       </main>
 
@@ -1157,6 +1159,143 @@ function Reports({ members, savings, loans, getMember }) {
 // =============================================
 // SETTINGS
 // =============================================
+// =============================================
+// RESET DATA (Hapus Data Uji Coba)
+// =============================================
+function ResetDataPage({ showToast }) {
+  const RESET_PASSWORD = '527reset'
+  const [password, setPassword] = useState('')
+  const [unlocked, setUnlocked] = useState(false)
+  const [selected, setSelected] = useState({
+    transactions: true, kas: true, piutang: true, hutang: true, stockIn: true,
+    savings: false, loans: false, auditLogs: false
+  })
+  const [progress, setProgress] = useState('')
+  const [deleting, setDeleting] = useState(false)
+
+  const collections = [
+    { key: 'transactions', label: 'Riwayat Penjualan (POS)', desc: 'Semua nota penjualan kasir', danger: true },
+    { key: 'kas', label: 'Kas Masuk / Keluar', desc: 'Semua catatan kas', danger: true },
+    { key: 'piutang', label: 'Piutang Pelanggan', desc: 'Semua piutang belum lunas', danger: true },
+    { key: 'hutang', label: 'Hutang Supplier', desc: 'Semua hutang ke supplier', danger: true },
+    { key: 'stockIn', label: 'Riwayat Barang Masuk', desc: 'Nota pembelian barang', danger: true },
+    { key: 'savings', label: 'Simpanan Anggota', desc: 'Data simpanan pokok/wajib/sukarela', danger: false },
+    { key: 'loans', label: 'Pinjaman Anggota', desc: 'Data pinjaman & angsuran', danger: false },
+    { key: 'auditLogs', label: 'Audit Trail / Log', desc: 'Catatan aktivitas sistem', danger: false },
+  ]
+
+  const safeCollections = ['products', 'suppliers', 'members', 'settings', 'users']
+
+  function handleUnlock() {
+    if (password === RESET_PASSWORD) { setUnlocked(true); setPassword('') }
+    else { showToast('Password salah!', 'error'); setPassword('') }
+  }
+
+  async function handleReset() {
+    const toDelete = Object.entries(selected).filter(([_, v]) => v).map(([k]) => k)
+    if (toDelete.length === 0) { showToast('Pilih minimal 1 collection', 'error'); return }
+    const names = toDelete.join(', ')
+    if (!confirm('⚠️ PERINGATAN!\n\nAnda akan MENGHAPUS PERMANEN data:\n' + names + '\n\nData yang dihapus TIDAK BISA dikembalikan!\n\nYakin lanjutkan?')) return
+    if (!confirm('KONFIRMASI TERAKHIR:\nKetik OK untuk menghapus ' + toDelete.length + ' collection')) return
+
+    setDeleting(true)
+    let totalDeleted = 0
+    for (const col of toDelete) {
+      setProgress('Menghapus ' + col + '...')
+      try {
+        const count = await batchDelete(col, (done, total) => {
+          setProgress('Menghapus ' + col + ': ' + done + '/' + total)
+        })
+        totalDeleted += count
+        setProgress(col + ' ✅ (' + count + ' data dihapus)')
+      } catch (err) {
+        setProgress(col + ' ❌ Error: ' + err.message)
+        showToast('Gagal hapus ' + col + ': ' + err.message, 'error')
+      }
+    }
+    setDeleting(false)
+    setProgress('Selesai! Total ' + totalDeleted + ' data dihapus dari ' + toDelete.length + ' collection.')
+    showToast('Reset selesai! ' + totalDeleted + ' data dihapus.')
+  }
+
+  return (
+    <div>
+      <div style={S.pageHead}><h2 style={S.title}>Reset Data Uji Coba</h2></div>
+
+      {/* Warning banner */}
+      <div style={{ ...S.card, background: '#fff3e0', border: '2px solid #e65100', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 28 }}>⚠️</span>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 15, color: '#e65100' }}>PERHATIAN — FITUR BERBAHAYA</div>
+            <div style={{ fontSize: 13, color: '#bf360c', marginTop: 4 }}>Fitur ini akan menghapus data secara PERMANEN. Pastikan Anda sudah backup data penting sebelum melanjutkan. Data yang dihapus tidak bisa dikembalikan.</div>
+          </div>
+        </div>
+      </div>
+
+      {!unlocked ? (
+        <div style={{ ...S.card, maxWidth: 400 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: '#c62828' }}>🔒 Masukkan Password Reset</h3>
+          <div style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>Password diperlukan untuk mengakses fitur reset data.</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input style={{ ...S.input, flex: 1 }} type="password" value={password} onChange={e => setPassword(e.target.value)}
+              placeholder="Ketik password..."
+              onKeyDown={e => e.key === 'Enter' && handleUnlock()} />
+            <button style={S.primaryBtn} onClick={handleUnlock}>Buka</button>
+          </div>
+          <div style={{ fontSize: 11, color: '#999', marginTop: 8 }}>Hubungi administrator untuk password reset.</div>
+        </div>
+      ) : (
+        <>
+          {/* Data yang AMAN (tidak dihapus) */}
+          <div style={{ ...S.card, marginBottom: 16 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 700, color: '#2e7d32', marginBottom: 12 }}>✅ Data yang TIDAK akan dihapus (aman):</h3>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              {safeCollections.map(c => (
+                <span key={c} style={{ padding: '4px 12px', background: '#e8f5e9', borderRadius: 20, fontSize: 12, fontWeight: 600, color: '#2e7d32', border: '1px solid #c8e6c9' }}>{c}</span>
+              ))}
+            </div>
+          </div>
+
+          {/* Data yang bisa dihapus */}
+          <div style={{ ...S.card, marginBottom: 16 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 700, color: '#c62828', marginBottom: 12 }}>🗑 Pilih data yang mau dihapus:</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {collections.map(col => (
+                <label key={col.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: selected[col.key] ? '#ffebee' : '#f9f9f9', borderRadius: 8, cursor: 'pointer', border: selected[col.key] ? '2px solid #c62828' : '2px solid transparent', transition: 'all 0.15s' }}>
+                  <input type="checkbox" checked={selected[col.key] || false} onChange={e => setSelected(prev => ({ ...prev, [col.key]: e.target.checked }))}
+                    style={{ width: 18, height: 18, accentColor: '#c62828' }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{col.label}</div>
+                    <div style={{ fontSize: 11, color: '#888' }}>{col.desc}</div>
+                  </div>
+                  <span style={{ fontSize: 11, fontFamily: 'monospace', color: '#999', background: '#eee', padding: '2px 8px', borderRadius: 4 }}>{col.key}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Tombol aksi */}
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <button style={{ ...S.primaryBtn, background: '#c62828', padding: '12px 32px', fontSize: 15 }}
+              onClick={handleReset} disabled={deleting}>
+              {deleting ? '⏳ Menghapus...' : '🗑 HAPUS DATA TERPILIH'}
+            </button>
+            <button style={{ ...S.filterBtn, padding: '12px 24px' }} onClick={() => setUnlocked(false)}>🔒 Kunci Kembali</button>
+          </div>
+
+          {/* Progress */}
+          {progress && (
+            <div style={{ ...S.card, marginTop: 16, background: deleting ? '#fff8e1' : '#e8f5e9', border: deleting ? '1px solid #ffc107' : '1px solid #4caf50' }}>
+              <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'pre-wrap' }}>{progress}</div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 function SettingsPage({ settings, saveSettings, showToast, users, saveUser, deleteUser, user }) {
   const [d, setD] = useState({ ...settings })
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
