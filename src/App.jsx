@@ -609,7 +609,7 @@ export default function App() {
         {page === 'juyar' && <TagihanJuyar {...{ transactions, piutangs, members, settings, savePiutang, showToast, setModal }} />}
         {page === 'labaanggota' && <LabaPerAnggota {...{ transactions, members, products, settings }} />}
         {page === 'reports' && <Reports {...{ members, savings, loans, getMember }} />}
-        {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, transactions, stockInData }} />}
+        {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, transactions, stockInData, setPage }} />}
         {page === 'stokhistori' && <StokHistori products={products} stockIn={stockInData} transactions={transactions} mutasis={mutasis} />}
         {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, products, suppliers, updateProductStock, setModal, showToast }} />}
         {page === 'pos' && <POS {...{ products, transactions, saveTransaction, updateProductStock, members, showToast, savePiutang, settings }} />}

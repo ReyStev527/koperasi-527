@@ -2,7 +2,7 @@
 // MODUL INVENTARIS KOPERASI
 // Barang, Supplier, Barang Masuk, Kasir/POS
 // =============================================
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import { BarcodeScanner, ScanButton } from './BarcodeScanner'
 import { cetakStruk } from './Extra'
 
@@ -296,11 +296,7 @@ function ProductForm({ initial, suppliers, onSave }) {
             {['Sembako', 'Makanan', 'Minuman', 'Toiletries', 'ATK', 'Obat', 'Elektronik', 'Pakaian', 'Lainnya'].map(c => <option key={c}>{c}</option>)}
           </select>
         </label>
-        <label style={S.formLabel}>Satuan
-          <select style={S.input} value={d.unit} onChange={e => set('unit', e.target.value)}>
-            {['pcs', 'buah', 'lbr', 'bks', 'btl', 'box', 'dus', 'kg', 'gram', 'ltr', 'ml', 'sct', 'pak', 'roll', 'set', 'lusin', 'rim', 'pasang', 'unit', 'kaleng', 'botol', 'karung'].map(u => <option key={u} value={u}>{u}</option>)}
-          </select>
-        </label>
+        <label style={S.formLabel}>Satuan<input style={S.input} value={d.unit} onChange={e => set('unit', e.target.value)} placeholder="pcs, botol, box..." /></label>
         <label style={S.formLabel}>Tipe Barang
           <select style={S.input} value={d.tipeBarang||'MILIK'} onChange={e => set('tipeBarang', e.target.value)}>
             <option value="MILIK">Milik Koperasi</option>
@@ -483,7 +479,6 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
   function openForm() {
     setModal({
       title: 'Catat Barang Masuk',
-      wide: true,
       content: <StockInForm products={products} suppliers={suppliers} onSave={async d => {
         await saveStockIn(d)
         // Update stok produk
@@ -531,246 +526,132 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
 
 function StockInForm({ products, suppliers, onSave }) {
   const [date, setDate] = useState(today())
-  const [supplierId, setSupplierId] = useState('') // Default kosong, bukan auto-select supplier pertama
-  const [supplierName, setSupplierName] = useState('---') // Default "---" seperti MS Access
-  const [invoice, setInvoice] = useState('T' + Date.now().toString().slice(-4))
+  const [supplierId, setSupplierId] = useState(suppliers[0]?.id || '')
+  const [invoice, setInvoice] = useState('INV-' + Date.now().toString().slice(-6))
   const [note, setNote] = useState('')
   const [ppnPct, setPpnPct] = useState(0)
-  const [jenisBayar, setJenisBayar] = useState('TUNAI')
-  const [jatuhTempo, setJatuhTempo] = useState('')
-  const [items, setItems] = useState([])
-  const [scanInput, setScanInput] = useState('')
-  const scanRef = useRef(null)
+  const [jenisBayar, setJenisBayar] = useState('TUNAI') // BUG #9 FIX: TUNAI / KREDIT
+  const [jatuhTempo, setJatuhTempo] = useState('') // untuk KREDIT
+  const [items, setItems] = useState([{ productId: products[0]?.id || '', qty: 1, buyPrice: products[0]?.buyPrice || 0 }])
+  const [showScanIdx, setShowScanIdx] = useState(-1)
+  const [updateNotice, setUpdateNotice] = useState([])
 
-  // Saat pilih kode supplier → auto-isi nama
-  function handleSupplierChange(id) {
-    setSupplierId(id)
-    if (!id) { setSupplierName('---'); return }
-    const sup = suppliers.find(s => s.id === id)
-    setSupplierName(sup ? sup.name : '---')
-  }
-
-  // Tambah item dari scan barcode / ketik kode
-  function handleScanSubmit(e) {
-    if (e.key !== 'Enter' || !scanInput.trim()) return
-    const code = scanInput.trim()
-    const found = products.find(p =>
-      String(p.sku||'').toLowerCase() === code.toLowerCase() ||
-      String(p.sku||'').toLowerCase().includes(code.toLowerCase()) ||
-      String(p.id||'') === code
-    )
-    if (found) {
-      // Cek apakah sudah ada di tabel
-      const existIdx = items.findIndex(it => it.productId === found.id)
-      if (existIdx >= 0) {
-        updateItem(existIdx, 'qty', (items[existIdx].qty || 0) + 1)
-      } else {
-        setItems(prev => [...prev, {
-          productId: found.id, kode: found.sku || '', nama: found.name || '',
-          qty: 1, stokAwal: found.stock || 0,
-          hpp: found.buyPrice || 0,
-          hrgLunas: found.sellPrice || found.price1 || 0,
-          hrgKredit: found.sellPrice2 || found.price2 || 0,
-          isManual: false
-        }])
-      }
-    } else {
-      alert('Produk dengan kode "' + code + '" tidak ditemukan.\nGunakan tombol "+ Manual" untuk input manual.')
-    }
-    setScanInput('')
-  }
-
-  // Tambah baris manual kosong
-  function addManualItem() {
-    setItems(prev => [...prev, {
-      productId: '', kode: '', nama: '',
-      qty: 1, stokAwal: 0,
-      hpp: 0, hrgLunas: 0, hrgKredit: 0,
-      isManual: true
-    }])
-  }
-
+  function addItem() { setItems(prev => [...prev, { productId: products[0]?.id || '', qty: 1, buyPrice: products[0]?.buyPrice || 0 }]) }
   function removeItem(i) { setItems(prev => prev.filter((_, idx) => idx !== i)) }
-
   function updateItem(i, k, v) {
     setItems(prev => prev.map((item, idx) => {
       if (idx !== i) return item
       const updated = { ...item, [k]: v }
-      // Kalau manual dan ubah kode → cek apakah match produk
-      if (item.isManual && k === 'kode' && v) {
-        const found = products.find(p => String(p.sku||'').toLowerCase() === String(v).toLowerCase())
-        if (found) {
-          updated.productId = found.id
-          updated.nama = found.name
-          updated.stokAwal = found.stock || 0
-          updated.hpp = found.buyPrice || 0
-          updated.hrgLunas = found.sellPrice || found.price1 || 0
-          updated.hrgKredit = found.sellPrice2 || found.price2 || 0
+      if (k === 'productId') {
+        const p = products.find(pr => pr.id === v)
+        if (p) updated.buyPrice = p.buyPrice
+      }
+      // Feature 9: Warn if new price > old price
+      if (k === 'buyPrice') {
+        const p = products.find(pr => pr.id === item.productId)
+        if (p && v > (p.buyPrice||0)) {
+          setUpdateNotice(prev => { const n = [...prev]; n[i] = 'Harga naik! ' + formatRp(p.buyPrice) + ' → ' + formatRp(v) + ' (harga jual akan otomatis diupdate)'; return n })
+        } else {
+          setUpdateNotice(prev => { const n = [...prev]; n[i] = ''; return n })
         }
       }
       return updated
     }))
   }
 
-  const subtotal = items.reduce((a, it) => a + ((it.qty||0) * (it.hpp||0)), 0)
+  // Feature 10: Scan barcode → cari produk yang sama → auto-select
+  function handleBarcodeScan(code, itemIdx) {
+    const found = products.find(p =>
+      String(p.sku||'').toLowerCase() === code.toLowerCase() ||
+      String(p.sku||'').toLowerCase().includes(code.toLowerCase())
+    )
+    setShowScanIdx(-1)
+    if (found) {
+      updateItem(itemIdx, 'productId', found.id)
+      updateItem(itemIdx, 'buyPrice', found.buyPrice||0)
+    } else {
+      alert('Produk dengan barcode "' + code + '" tidak ditemukan.\nTambah produk baru dulu di Stok Barang.')
+    }
+  }
+
+  const subtotal = items.reduce((a, it) => a + ((it.qty||0) * (it.buyPrice||0)), 0)
   const ppnAmount = Math.round(subtotal * (ppnPct||0) / 100)
   const total = subtotal + ppnAmount
 
-  // Style tabel input mirip MS Access
-  const cellSt = { padding: '4px 6px', border: '1px solid #bbb', fontSize: 12, verticalAlign: 'middle' }
-  const inputSt = { width: '100%', border: 'none', outline: 'none', fontSize: 12, padding: '3px 4px', background: 'transparent', boxSizing: 'border-box' }
-  const numSt = { ...inputSt, textAlign: 'right' }
-  const thSt = { ...cellSt, background: '#1a3a8a', color: '#ffd600', fontWeight: 700, fontSize: 11, textAlign: 'center', padding: '6px 4px', whiteSpace: 'nowrap' }
-
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {/* Header: TRANSAKSI PEMBELIAN */}
-      <div style={{ background: '#1a2744', color: '#fff', padding: '10px 16px', borderRadius: 8 }}>
-        <div style={{ fontWeight: 700, fontSize: 15 }}>TRANSAKSI PEMBELIAN</div>
-        <div style={{ fontSize: 11, color: '#ccc' }}>Form entri transaksi penambahan stock barang ke toko</div>
-      </div>
-
-      {/* Nomor Urut, Tanggal, Total Nota */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-        <label style={S.formLabel}>Nomor Urut<input style={S.input} value={invoice} onChange={e => setInvoice(e.target.value)} /></label>
+    <div style={S.form}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <label style={S.formLabel}>Tanggal<input style={S.input} type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
-        <label style={S.formLabel}>Total Nota<input style={{ ...S.input, fontWeight: 700, color: '#1565c0' }} value={formatRp(total)} readOnly /></label>
+        <label style={S.formLabel}>No. Invoice / Nota<input style={S.input} value={invoice} onChange={e => setInvoice(e.target.value)} /></label>
       </div>
+      <label style={S.formLabel}>Supplier
+        <select style={S.input} value={supplierId} onChange={e => setSupplierId(e.target.value)}>
+          {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      </label>
 
-      {/* Kode Supplier + Nama Supplier (lebar penuh) */}
-      <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr', gap: 8 }}>
-        <label style={S.formLabel}>Kode Supplier
-          <select style={S.input} value={supplierId} onChange={e => handleSupplierChange(e.target.value)}>
-            <option value="">-- Pilih --</option>
-            {suppliers.map(s => <option key={s.id} value={s.id}>{s.id.slice(0,5).toUpperCase()}</option>)}
-          </select>
-        </label>
-        <label style={S.formLabel}>Nama Supplier
-          <input style={{ ...S.input, fontWeight: 600, minWidth: 0 }} value={supplierName} readOnly />
-        </label>
-      </div>
-
-      {/* Scan barcode / ketik kode + tombol Manual */}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <div style={{ flex: 1, position: 'relative' }}>
-          <input ref={scanRef} style={{ ...S.input, paddingLeft: 32, borderColor: '#ffd600', borderWidth: 2 }}
-            placeholder="Scan barcode / ketik kode barang + Enter ↵"
-            value={scanInput} onChange={e => setScanInput(e.target.value)}
-            onKeyDown={handleScanSubmit} />
-          <svg style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', opacity: 0.4 }} width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-            <path d="M7 8v8M12 8v8M17 8v8"/>
-          </svg>
+      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)', marginTop: 8 }}>Item Barang</div>
+      {items.map((it, i) => (
+        <div key={i}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'auto 2fr 1fr 1fr auto', gap: 6, alignItems: 'end' }}>
+            <button type="button" style={{ ...S.filterBtn, padding: '8px', marginBottom: 2, color: '#7b1fa2' }} onClick={() => setShowScanIdx(i)} title="Scan Barcode">
+              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"/><path d="M7 8v8M12 8v8M17 8v8"/></svg>
+            </button>
+            <label style={S.formLabel}>Produk
+              <select style={S.input} value={it.productId} onChange={e => updateItem(i, 'productId', e.target.value)}>
+                {products.map(p => <option key={p.id} value={p.id}>{String(p.sku||'')} - {p.name} (stok: {p.stock||0})</option>)}
+              </select>
+            </label>
+            <label style={S.formLabel}>Qty<input style={S.input} type="number" min="1" value={it.qty} onChange={e => updateItem(i, 'qty', Number(e.target.value))} /></label>
+            <label style={S.formLabel}>Harga Beli<input style={S.input} type="number" value={it.buyPrice} onChange={e => updateItem(i, 'buyPrice', Number(e.target.value))} /></label>
+            {items.length > 1 && <button style={{ ...S.smallBtn, color: 'var(--r)', marginBottom: 4 }} onClick={() => removeItem(i)}>{IC.x}</button>}
+          </div>
+          {updateNotice[i] && <div style={{ fontSize: 11, color: '#e65100', padding: '2px 8px', background: '#fff3e0', borderRadius: 4, marginTop: 2 }}>{updateNotice[i]}</div>}
+          {showScanIdx === i && <BarcodeScanner onScan={(code) => handleBarcodeScan(code, i)} onClose={() => setShowScanIdx(-1)} />}
         </div>
-        <button type="button" style={{ ...S.filterBtn, whiteSpace: 'nowrap', fontWeight: 600 }} onClick={addManualItem}>+ Manual</button>
-      </div>
+      ))}
+      <button style={{ ...S.filterBtn, width: '100%' }} onClick={addItem}>{IC.plus} Tambah Item</button>
 
-      {/* TABEL INPUT — format seperti MS Access */}
-      <div style={{ overflowX: 'auto', border: '2px solid #1a3a8a', borderRadius: 4 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 780 }}>
-          <thead>
-            <tr>
-              <th style={thSt}>Kode</th>
-              <th style={{ ...thSt, minWidth: 180 }}>Nama Barang</th>
-              <th style={thSt}>Jumlah</th>
-              <th style={thSt}>Stok Awal</th>
-              <th style={thSt}>Stok Akhir</th>
-              <th style={thSt}>Hpp</th>
-              <th style={thSt}>Hrg Lunas</th>
-              <th style={thSt}>Hrg Kredit</th>
-              <th style={thSt}>Sub Total Rp</th>
-              <th style={{ ...thSt, width: 30 }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.length === 0 && (
-              <tr><td colSpan={10} style={{ ...cellSt, textAlign: 'center', color: '#999', padding: 20, fontStyle: 'italic' }}>
-                Scan barcode atau klik "+ Manual" untuk tambah barang
-              </td></tr>
-            )}
-            {items.map((it, i) => {
-              const stokAkhir = (it.stokAwal||0) + (it.qty||0)
-              const subTotal = (it.qty||0) * (it.hpp||0)
-              return (
-                <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9f9f9' }}>
-                  <td style={cellSt}>
-                    {it.isManual
-                      ? <input style={inputSt} value={it.kode} placeholder="Kode..."
-                          onChange={e => updateItem(i, 'kode', e.target.value)} />
-                      : <span style={{ fontSize: 12, fontFamily: 'monospace' }}>{it.kode || '-'}</span>}
-                  </td>
-                  <td style={cellSt}>
-                    {it.isManual
-                      ? <input style={inputSt} value={it.nama} placeholder="Nama barang..."
-                          onChange={e => updateItem(i, 'nama', e.target.value)} />
-                      : <span style={{ fontSize: 12 }}>{it.nama || '-'}</span>}
-                  </td>
-                  <td style={cellSt}><input style={{ ...numSt, fontWeight: 700, color: '#1a3a8a' }}
-                    type="number" min="1" value={it.qty}
-                    onChange={e => updateItem(i, 'qty', Number(e.target.value))} /></td>
-                  <td style={{ ...cellSt, textAlign: 'right', fontSize: 12, color: '#666' }}>{(it.stokAwal||0).toLocaleString('id-ID')}</td>
-                  <td style={{ ...cellSt, textAlign: 'right', fontSize: 12, fontWeight: 600 }}>{stokAkhir.toLocaleString('id-ID')}</td>
-                  <td style={cellSt}><input style={numSt} type="number" value={it.hpp}
-                    onChange={e => updateItem(i, 'hpp', Number(e.target.value))} /></td>
-                  <td style={cellSt}><input style={numSt} type="number" value={it.hrgLunas}
-                    onChange={e => updateItem(i, 'hrgLunas', Number(e.target.value))} /></td>
-                  <td style={cellSt}><input style={numSt} type="number" value={it.hrgKredit}
-                    onChange={e => updateItem(i, 'hrgKredit', Number(e.target.value))} /></td>
-                  <td style={{ ...cellSt, textAlign: 'right', fontSize: 12, fontWeight: 600 }}>{subTotal.toLocaleString('id-ID')}</td>
-                  <td style={{ ...cellSt, textAlign: 'center' }}>
-                    <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--r)', fontSize: 14, padding: 2 }}
-                      onClick={() => removeItem(i)} title="Hapus baris">✕</button>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* PPN, Jenis Bayar, Catatan */}
-      <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr 1fr', gap: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <label style={S.formLabel}>PPN (%)<input style={S.input} type="number" min="0" max="100" value={ppnPct} onChange={e => setPpnPct(Number(e.target.value))} /></label>
+        <label style={S.formLabel}>Catatan<input style={S.input} value={note} onChange={e => setNote(e.target.value)} /></label>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: jenisBayar === 'KREDIT' ? '1fr 1fr' : '1fr', gap: 8 }}>
         <label style={S.formLabel}>Jenis Bayar
           <select style={S.input} value={jenisBayar} onChange={e => setJenisBayar(e.target.value)}>
-            <option value="TUNAI">TUNAI</option>
-            <option value="KREDIT">KREDIT</option>
+            <option value="TUNAI">TUNAI (langsung kas keluar)</option>
+            <option value="KREDIT">KREDIT (jadi hutang supplier)</option>
           </select>
         </label>
-        <label style={S.formLabel}>Catatan<input style={S.input} value={note} onChange={e => setNote(e.target.value)} placeholder="Catatan opsional..." /></label>
+        {jenisBayar === 'KREDIT' && (
+          <label style={S.formLabel}>Jatuh Tempo
+            <input style={S.input} type="date" value={jatuhTempo} onChange={e => setJatuhTempo(e.target.value)} />
+          </label>
+        )}
       </div>
-
       {jenisBayar === 'KREDIT' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <label style={S.formLabel}>Jatuh Tempo<input style={S.input} type="date" value={jatuhTempo} onChange={e => setJatuhTempo(e.target.value)} /></label>
-          <div style={{ fontSize: 11, color: '#e65100', padding: '8px 10px', background: '#fff3e0', borderRadius: 4, alignSelf: 'center' }}>
-            ⚠️ Pembelian KREDIT masuk ke <strong>Hutang Supplier</strong>
-          </div>
+        <div style={{ fontSize: 11, color: '#e65100', padding: '6px 10px', background: '#fff3e0', borderRadius: 4 }}>
+          ⚠️ Pembelian KREDIT akan masuk ke menu <strong>Hutang Supplier</strong>, bukan langsung Kas Keluar.
         </div>
       )}
 
-      {/* TOTAL + tombol aksi */}
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 4 }}>
-        <div style={{ flex: 1, padding: '12px 20px', background: '#1a3a8a', borderRadius: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ color: '#ffd600', fontWeight: 700, fontSize: 16 }}>TOTAL</span>
-          <span style={{ color: '#fff', fontWeight: 700, fontSize: 20 }}>{formatRp(total)}</span>
+      <div style={{ padding: '12px 16px', background: '#f0f7ff', borderRadius: 10, fontSize: 13 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+          <span>Subtotal ({items.length} item)</span><strong>{formatRp(subtotal)}</strong>
         </div>
-        <button style={{ ...S.filterBtn, padding: '12px 24px' }}
-          onClick={() => { if (confirm('Batal input? Data yang sudah diisi akan hilang.')) { setItems([]); setScanInput('') } }}>Batal</button>
-        <button style={{ ...S.primaryBtn, padding: '12px 24px' }}
-          onClick={() => {
-            if (!supplierId) { alert('Pilih supplier dulu!'); return }
-            if (items.length === 0) { alert('Tambahkan minimal 1 item!'); return }
-            // Konversi items ke format yang kompatibel dengan saveStockIn
-            const saveItems = items.map(it => ({
-              productId: it.productId || it.kode, qty: it.qty || 0,
-              buyPrice: it.hpp || 0, sellPrice: it.hrgLunas || 0, sellPrice2: it.hrgKredit || 0,
-              nama: it.nama, kode: it.kode
-            }))
-            onSave({ date, supplierId, invoice, note, items: saveItems, subtotal, ppnPct, ppnAmount, total, jenisBayar, jatuhTempo })
-          }}>
-          💾 Simpan Transaksi
-        </button>
+        {ppnPct > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, color: '#c62828' }}>
+            <span>PPN {ppnPct}%</span><strong>+ {formatRp(ppnAmount)}</strong>
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700, color: 'var(--b)', borderTop: '1px solid #ddd', paddingTop: 6, marginTop: 4 }}>
+          <span>TOTAL</span><span>{formatRp(total)}</span>
+        </div>
       </div>
+      <button style={{ ...S.primaryBtn, width: '100%' }} onClick={() => onSave({ date, supplierId, invoice, note, items, subtotal, ppnPct, ppnAmount, total, jenisBayar, jatuhTempo })}>
+        Simpan Barang Masuk
+      </button>
     </div>
   )
 }
