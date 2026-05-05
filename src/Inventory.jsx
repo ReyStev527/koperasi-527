@@ -983,7 +983,7 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
       if (found) {
         console.log('[SCAN] Ketemu:', found.name, found.no, found.id)
         setMemberId(found.id)
-        const useH2 = found.tingkatHrg === '2'
+        const useH2 = caraBayar === 'KREDIT' || found.tingkatHrg === '2'
         setCart(prev => prev.map(c => {
           const prod = products.find(p => p.id === c.productId)
           if (!prod) return c
@@ -991,7 +991,7 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
           return { ...c, price: newPrice }
         }))
         setLastScanned('✅ Scan: "' + code + '" → ' + found.name + ' (No.' + found.no + ')')
-        showToast('Anggota dipilih: ' + found.name + (useH2 ? ' (Harga Kredit)' : ''))
+        showToast('Anggota dipilih: ' + found.name + (useH2 ? ' (Harga Kredit)' : ' (Harga Lunas)'))
       } else {
         console.log('[SCAN] Tidak ketemu ID:', memberKey, '| Daftar ID:', members.map(m => m.id).join(', '))
         setLastScanned('❌ Scan: "' + code + '" → Tidak cocok dengan anggota manapun')
@@ -1024,9 +1024,9 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   }
 
   function addToCart(product) {
-    // Pilih harga berdasarkan tipe pelanggan
+    // Pilih harga berdasarkan cara bayar DAN tipe anggota
     const member = members.find(m => m.id === memberId)
-    const useHarga2 = member?.tingkatHrg === '2'
+    const useHarga2 = caraBayar === 'KREDIT' || member?.tingkatHrg === '2'
     const price = useHarga2 && product.sellPrice2 ? product.sellPrice2 : product.sellPrice
 
     setCart(prev => {
@@ -1037,6 +1037,19 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
       }
       return [...prev, { productId: product.id, name: product.name, price, qty: 1, maxStock: product.stock, diskon: 0 }]
     })
+  }
+
+  // Update harga keranjang saat cara bayar berubah
+  function switchCaraBayar(newCara) {
+    setCaraBayar(newCara)
+    const member = members.find(m => m.id === memberId)
+    const useH2 = newCara === 'KREDIT' || member?.tingkatHrg === '2'
+    setCart(prev => prev.map(c => {
+      const prod = products.find(p => p.id === c.productId)
+      if (!prod) return c
+      const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
+      return { ...c, price: newPrice }
+    }))
   }
 
   function updateQty(productId, qty) {
@@ -1134,14 +1147,14 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
             <MemberSearch members={members} memberId={memberId} onBarcodeScan={handleBarcodeScan} onSelect={(newMid) => {
               setMemberId(newMid)
               const m = members.find(x => x.id === newMid)
-              const useH2 = m?.tingkatHrg === '2'
+              const useH2 = caraBayar === 'KREDIT' || m?.tingkatHrg === '2'
               setCart(prev => prev.map(c => {
                 const prod = products.find(p => p.id === c.productId)
                 if (!prod) return c
                 const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
                 return { ...c, price: newPrice }
               }))
-              if (m) showToast('Anggota: ' + m.name + (useH2 ? ' (Harga Kredit)' : ''))
+              if (m) showToast('Anggota: ' + m.name + (useH2 ? ' (Harga Kredit)' : ' (Harga Lunas)'))
             }} />
           </div>
 
@@ -1215,7 +1228,10 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</div>
-                        <div style={{ fontSize: 12, color: 'var(--muted)' }}>{formatRp(c.price)} × {c.qty} = {formatRp(sub)}</div>
+                        <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                          {formatRp(c.price)} × {c.qty} = {formatRp(sub)}
+                          <span style={{ marginLeft: 6, fontSize: 10, padding: '1px 5px', borderRadius: 3, fontWeight: 600, background: caraBayar === 'KREDIT' ? '#fff3e0' : '#e8f5e9', color: caraBayar === 'KREDIT' ? '#e65100' : '#2e7d32' }}>{caraBayar === 'KREDIT' ? 'Hrg Kredit' : 'Hrg Lunas'}</span>
+                        </div>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <button style={{ ...S.smallBtn, border: '1px solid var(--border)', borderRadius: 4, padding: 2 }} onClick={() => updateQty(c.productId, c.qty - 1)}>{IC.minus}</button>
@@ -1251,9 +1267,9 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
               {/* Cara Bayar: LUNAS / KREDIT */}
               <div style={{ display: 'flex', gap: 4, marginTop: 8, marginBottom: 8 }}>
                 <button style={{ flex: 1, padding: '8px', border: '2px solid', borderColor: caraBayar === 'LUNAS' ? '#2e7d32' : '#e5e7eb', background: caraBayar === 'LUNAS' ? '#e8f5e9' : '#fff', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13, color: caraBayar === 'LUNAS' ? '#2e7d32' : '#6b7280' }}
-                  onClick={() => setCaraBayar('LUNAS')}>LUNAS</button>
+                  onClick={() => switchCaraBayar('LUNAS')}>LUNAS</button>
                 <button style={{ flex: 1, padding: '8px', border: '2px solid', borderColor: caraBayar === 'KREDIT' ? '#e65100' : '#e5e7eb', background: caraBayar === 'KREDIT' ? '#fff3e0' : '#fff', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13, color: caraBayar === 'KREDIT' ? '#e65100' : '#6b7280' }}
-                  onClick={() => setCaraBayar('KREDIT')}>KREDIT</button>
+                  onClick={() => switchCaraBayar('KREDIT')}>KREDIT</button>
               </div>
 
               {caraBayar === 'LUNAS' ? (
