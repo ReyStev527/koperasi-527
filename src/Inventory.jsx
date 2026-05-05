@@ -848,13 +848,69 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   const [lastScanned, setLastScanned] = useState('')
   const [caraBayar, setCaraBayar] = useState('LUNAS') // LUNAS | KREDIT
   const [dp, setDp] = useState('')
+  const [memberSearch, setMemberSearch] = useState('')
+  const [showMemberList, setShowMemberList] = useState(false)
+  const [scanMode, setScanMode] = useState('product') // product | member
 
   const filteredProducts = products.filter(p =>
     p.stock > 0 && (search === '' || String(p.name||'').toLowerCase().includes(search.toLowerCase()) || String(p.sku||'').toLowerCase().includes(search.toLowerCase()))
   )
 
+  // Filter anggota berdasarkan pencarian
+  const filteredMembers = members.filter(m => m.status === 'active' && (
+    memberSearch === '' ||
+    String(m.name||'').toLowerCase().includes(memberSearch.toLowerCase()) ||
+    String(m.no||'').toLowerCase().includes(memberSearch.toLowerCase()) ||
+    String(m.nrp||'').toLowerCase().includes(memberSearch.toLowerCase()) ||
+    String(m.phone||'').toLowerCase().includes(memberSearch.toLowerCase())
+  ))
+
+  function selectMember(mid) {
+    setMemberId(mid)
+    const m = members.find(x => x.id === mid)
+    setMemberSearch(m ? (m.no ? m.no + ' - ' : '') + m.name : '')
+    setShowMemberList(false)
+    // Update harga di keranjang
+    const useH2 = caraBayar === 'KREDIT' || m?.tingkatHrg === '2'
+    setCart(prev => prev.map(c => {
+      const prod = products.find(p => p.id === c.productId)
+      if (!prod) return c
+      const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
+      return { ...c, price: newPrice }
+    }))
+  }
+
+  function clearMember() {
+    setMemberId('')
+    setMemberSearch('')
+    setShowMemberList(false)
+    // Reset harga ke lunas
+    setCart(prev => prev.map(c => {
+      const prod = products.find(p => p.id === c.productId)
+      if (!prod) return c
+      return { ...c, price: caraBayar === 'KREDIT' && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice }
+    }))
+  }
+
   function handleBarcodeScan(code) {
-    // Cari produk berdasarkan SKU atau nama
+    // 1. Cek apakah scan anggota (NRP, no anggota, phone)
+    const foundMember = members.find(m =>
+      (m.status === 'active') && (
+        String(m.nrp||'') === code ||
+        String(m.no||'') === code ||
+        String(m.phone||'') === code ||
+        String(m.nrp||'').includes(code) ||
+        String(m.id||'') === code
+      )
+    )
+    if (foundMember) {
+      selectMember(foundMember.id)
+      setLastScanned('👤 Anggota: ' + foundMember.name)
+      showToast('Anggota: ' + foundMember.name + ' terpilih')
+      return
+    }
+
+    // 2. Cari produk
     const found = products.find(p =>
       String(p.sku||'').toLowerCase() === code.toLowerCase() ||
       String(p.name||'').toLowerCase() === code.toLowerCase() ||
@@ -956,7 +1012,7 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
     // Cetak struk otomatis
     try { cetakStruk(tx, settings, members) } catch(e) { console.log('Struk print skipped:', e) }
 
-    setCart([]); setPayment(''); setDp(''); setMemberId(''); setCaraBayar('LUNAS')
+    setCart([]); setPayment(''); setDp(''); setMemberId(''); setMemberSearch(''); setCaraBayar('LUNAS')
     showToast(caraBayar === 'LUNAS'
       ? 'Transaksi LUNAS! Kembalian: ' + formatRp(Number(payment) - total)
       : 'Transaksi KREDIT dicatat. Sisa piutang: ' + formatRp(total - (Number(dp) || 0)))
@@ -1069,24 +1125,39 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
                 <span style={{ color: 'var(--b)' }}>{formatRp(total)}</span>
               </div>
 
-              <label style={S.formLabel}>Pelanggan / Anggota
-                <select style={S.input} value={memberId} onChange={e => {
-                  const newMid = e.target.value
-                  setMemberId(newMid)
-                  // Update harga di keranjang sesuai tipe pelanggan
-                  const m = members.find(x => x.id === newMid)
-                  const useH2 = m?.tingkatHrg === '2'
-                  setCart(prev => prev.map(c => {
-                    const prod = products.find(p => p.id === c.productId)
-                    if (!prod) return c
-                    const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
-                    return { ...c, price: newPrice }
-                  }))
-                }}>
-                  <option value="">-- Umum (Harga Eceran) --</option>
-                  {members.filter(m => m.status === 'active').map(m => <option key={m.id} value={m.id}>{m.no} - {m.name} {m.tingkatHrg === '2' ? '(Grosir)' : ''}</option>)}
-                </select>
-              </label>
+              <label style={S.formLabel}>Pelanggan / Anggota</label>
+              <div style={{ position: 'relative', marginBottom: 8 }}>
+                {memberId ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#e3f2fd', borderRadius: 8, border: '2px solid #1565c0' }}>
+                    <span style={{ fontSize: 16 }}>👤</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#1565c0' }}>{members.find(m => m.id === memberId)?.name || 'Anggota'}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>NRP: {members.find(m => m.id === memberId)?.nrp || '-'} | No: {members.find(m => m.id === memberId)?.no || '-'}</div>
+                    </div>
+                    <button style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c62828', fontSize: 16, padding: 2 }} onClick={clearMember} title="Hapus anggota">✕</button>
+                  </div>
+                ) : (
+                  <>
+                    <input style={S.input} placeholder="Cari nama / NRP / no anggota..."
+                      value={memberSearch} onChange={e => { setMemberSearch(e.target.value); setShowMemberList(true) }}
+                      onFocus={() => setShowMemberList(true)}
+                      onBlur={() => setTimeout(() => setShowMemberList(false), 200)} />
+                    {showMemberList && memberSearch.length >= 1 && filteredMembers.length > 0 && (
+                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '2px solid #1565c0', borderTop: 'none', borderRadius: '0 0 8px 8px', maxHeight: 200, overflowY: 'auto', zIndex: 999, boxShadow: '0 8px 20px rgba(0,0,0,0.15)' }}>
+                        {filteredMembers.slice(0, 8).map(m => (
+                          <div key={m.id} style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #eee', fontSize: 12 }}
+                            onMouseDown={() => selectMember(m.id)}
+                            onMouseOver={e => e.currentTarget.style.background = '#e3f2fd'}
+                            onMouseOut={e => e.currentTarget.style.background = '#fff'}>
+                            <div style={{ fontWeight: 600 }}>{m.no ? m.no + ' - ' : ''}{m.name} {m.tingkatHrg === '2' ? '(Grosir)' : ''}</div>
+                            <div style={{ color: '#888', fontSize: 11 }}>NRP: {m.nrp || '-'} | {m.phone || '-'}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
 
               {/* Cara Bayar: LUNAS / KREDIT */}
               <div style={{ display: 'flex', gap: 4, marginTop: 8, marginBottom: 8 }}>
