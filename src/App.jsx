@@ -1167,7 +1167,7 @@ function ResetDataPage({ showToast }) {
   const [password, setPassword] = useState('')
   const [unlocked, setUnlocked] = useState(false)
   const [selected, setSelected] = useState({
-    transactions: true, kas: true, piutang: true, hutang: true, stockIn: true,
+    transactions: true, kas: true, piutangs: true, hutangs: true, stockIn: true,
     savings: false, loans: false, auditLogs: false
   })
   const [progress, setProgress] = useState('')
@@ -1176,8 +1176,8 @@ function ResetDataPage({ showToast }) {
   const collections = [
     { key: 'transactions', label: 'Riwayat Penjualan (POS)', desc: 'Semua nota penjualan kasir', danger: true },
     { key: 'kas', label: 'Kas Masuk / Keluar', desc: 'Semua catatan kas', danger: true },
-    { key: 'piutang', label: 'Piutang Pelanggan', desc: 'Semua piutang belum lunas', danger: true },
-    { key: 'hutang', label: 'Hutang Supplier', desc: 'Semua hutang ke supplier', danger: true },
+    { key: 'piutangs', label: 'Piutang Pelanggan', desc: 'Semua piutang & Tagihan Juyar', danger: true },
+    { key: 'hutangs', label: 'Hutang Supplier', desc: 'Semua hutang ke supplier', danger: true },
     { key: 'stockIn', label: 'Riwayat Barang Masuk', desc: 'Nota pembelian barang', danger: true },
     { key: 'savings', label: 'Simpanan Anggota', desc: 'Data simpanan pokok/wajib/sukarela', danger: false },
     { key: 'loans', label: 'Pinjaman Anggota', desc: 'Data pinjaman & angsuran', danger: false },
