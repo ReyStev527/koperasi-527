@@ -638,11 +638,13 @@ function StockInForm({ products, suppliers, onSave }) {
   const [invoice, setInvoice] = useState('INV-' + Date.now().toString().slice(-6))
   const [note, setNote] = useState('')
   const [ppnPct, setPpnPct] = useState(0)
-  const [jenisBayar, setJenisBayar] = useState('TUNAI') // BUG #9 FIX: TUNAI / KREDIT
-  const [jatuhTempo, setJatuhTempo] = useState('') // untuk KREDIT
+  const [jenisBayar, setJenisBayar] = useState('TUNAI')
+  const [jatuhTempo, setJatuhTempo] = useState('')
   const [items, setItems] = useState([{ productId: products[0]?.id || '', qty: 1, buyPrice: products[0]?.buyPrice || 0 }])
   const [showScanIdx, setShowScanIdx] = useState(-1)
   const [updateNotice, setUpdateNotice] = useState([])
+  const [totalNota, setTotalNota] = useState('') // Total dari nota fisik
+  const [scanInput, setScanInput] = useState('') // Input scan barcode
 
   function addItem() { setItems(prev => [...prev, { productId: products[0]?.id || '', qty: 1, buyPrice: products[0]?.buyPrice || 0 }]) }
   function removeItem(i) { setItems(prev => prev.filter((_, idx) => idx !== i)) }
@@ -654,11 +656,10 @@ function StockInForm({ products, suppliers, onSave }) {
         const p = products.find(pr => pr.id === v)
         if (p) updated.buyPrice = p.buyPrice
       }
-      // Feature 9: Warn if new price > old price
       if (k === 'buyPrice') {
         const p = products.find(pr => pr.id === item.productId)
         if (p && v > (p.buyPrice||0)) {
-          setUpdateNotice(prev => { const n = [...prev]; n[i] = 'Harga naik! ' + formatRp(p.buyPrice) + ' → ' + formatRp(v) + ' (harga jual akan otomatis diupdate)'; return n })
+          setUpdateNotice(prev => { const n = [...prev]; n[i] = 'Harga naik! ' + formatRp(p.buyPrice) + ' → ' + formatRp(v); return n })
         } else {
           setUpdateNotice(prev => { const n = [...prev]; n[i] = ''; return n })
         }
@@ -667,10 +668,33 @@ function StockInForm({ products, suppliers, onSave }) {
     }))
   }
 
-  // Feature 10: Scan barcode → cari produk yang sama → auto-select
+  // Scan barcode → cari produk → tambah item atau naikkan qty
+  function handleScanBarcode(code) {
+    const found = products.find(p =>
+      String(p.barcode||'').toLowerCase() === code.toLowerCase() ||
+      String(p.sku||'').toLowerCase() === code.toLowerCase() ||
+      String(p.barcode||'').toLowerCase().includes(code.toLowerCase()) ||
+      String(p.sku||'').toLowerCase().includes(code.toLowerCase())
+    )
+    if (found) {
+      // Cek apakah produk sudah ada di items
+      const existIdx = items.findIndex(it => it.productId === found.id)
+      if (existIdx >= 0) {
+        updateItem(existIdx, 'qty', (items[existIdx].qty || 0) + 1)
+      } else {
+        setItems(prev => [...prev, { productId: found.id, qty: 1, buyPrice: found.buyPrice || 0 }])
+      }
+    } else {
+      alert('Produk dengan barcode "' + code + '" tidak ditemukan.\nTambah produk baru dulu di Stok Barang.')
+    }
+    setScanInput('')
+  }
+
   function handleBarcodeScan(code, itemIdx) {
     const found = products.find(p =>
+      String(p.barcode||'').toLowerCase() === code.toLowerCase() ||
       String(p.sku||'').toLowerCase() === code.toLowerCase() ||
+      String(p.barcode||'').toLowerCase().includes(code.toLowerCase()) ||
       String(p.sku||'').toLowerCase().includes(code.toLowerCase())
     )
     setShowScanIdx(-1)
@@ -678,13 +702,26 @@ function StockInForm({ products, suppliers, onSave }) {
       updateItem(itemIdx, 'productId', found.id)
       updateItem(itemIdx, 'buyPrice', found.buyPrice||0)
     } else {
-      alert('Produk dengan barcode "' + code + '" tidak ditemukan.\nTambah produk baru dulu di Stok Barang.')
+      alert('Produk dengan barcode "' + code + '" tidak ditemukan.')
     }
   }
 
   const subtotal = items.reduce((a, it) => a + ((it.qty||0) * (it.buyPrice||0)), 0)
   const ppnAmount = Math.round(subtotal * (ppnPct||0) / 100)
   const total = subtotal + ppnAmount
+  const totalNotaNum = Number(totalNota) || 0
+  const selisih = totalNotaNum > 0 ? total - totalNotaNum : 0
+  const isMatch = totalNotaNum === 0 || Math.abs(selisih) === 0
+  const hasItems = items.length > 0 && items.some(it => it.qty > 0 && it.productId)
+
+  function handleSave() {
+    if (!hasItems) { alert('Tambahkan minimal 1 item barang!'); return }
+    if (totalNotaNum > 0 && !isMatch) {
+      alert('⚠️ TOTAL TIDAK SESUAI NOTA!\n\nTotal Nota: Rp ' + totalNotaNum.toLocaleString('id-ID') + '\nTotal Sistem: Rp ' + total.toLocaleString('id-ID') + '\nSelisih: Rp ' + Math.abs(selisih).toLocaleString('id-ID') + '\n\nPerbaiki jumlah/harga barang agar sesuai nota sebelum menyimpan.')
+      return
+    }
+    onSave({ date, supplierId, invoice, note, items, subtotal, ppnPct, ppnAmount, total, jenisBayar, jatuhTempo })
+  }
 
   return (
     <div style={S.form}>
@@ -692,50 +729,94 @@ function StockInForm({ products, suppliers, onSave }) {
         <label style={S.formLabel}>Tanggal<input style={S.input} type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
         <label style={S.formLabel}>No. Invoice / Nota<input style={S.input} value={invoice} onChange={e => setInvoice(e.target.value)} /></label>
       </div>
-      <label style={S.formLabel}>Supplier
-        <select style={S.input} value={supplierId} onChange={e => setSupplierId(e.target.value)}>
-          {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-      </label>
-
-      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)', marginTop: 8 }}>Item Barang</div>
-      {items.map((it, i) => (
-        <div key={i}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'auto 2fr 1fr 1fr auto', gap: 6, alignItems: 'end' }}>
-            <button type="button" style={{ ...S.filterBtn, padding: '8px', marginBottom: 2, color: '#7b1fa2' }} onClick={() => setShowScanIdx(i)} title="Scan Barcode">
-              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"/><path d="M7 8v8M12 8v8M17 8v8"/></svg>
-            </button>
-            <label style={S.formLabel}>Produk
-              <select style={S.input} value={it.productId} onChange={e => updateItem(i, 'productId', e.target.value)}>
-                {products.map(p => <option key={p.id} value={p.id}>{String(p.sku||'')} - {p.name} (stok: {p.stock||0})</option>)}
-              </select>
-            </label>
-            <label style={S.formLabel}>Qty<input style={S.input} type="number" min="1" value={it.qty} onChange={e => updateItem(i, 'qty', Number(e.target.value))} /></label>
-            <label style={S.formLabel}>Harga Beli<input style={S.input} type="number" value={it.buyPrice} onChange={e => updateItem(i, 'buyPrice', Number(e.target.value))} /></label>
-            {items.length > 1 && <button style={{ ...S.smallBtn, color: 'var(--r)', marginBottom: 4 }} onClick={() => removeItem(i)}>{IC.x}</button>}
-          </div>
-          {updateNotice[i] && <div style={{ fontSize: 11, color: '#e65100', padding: '2px 8px', background: '#fff3e0', borderRadius: 4, marginTop: 2 }}>{updateNotice[i]}</div>}
-          {showScanIdx === i && <BarcodeScanner onScan={(code) => handleBarcodeScan(code, i)} onClose={() => setShowScanIdx(-1)} />}
-        </div>
-      ))}
-      <button style={{ ...S.filterBtn, width: '100%' }} onClick={addItem}>{IC.plus} Tambah Item</button>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <label style={S.formLabel}>PPN (%)<input style={S.input} type="number" min="0" max="100" value={ppnPct} onChange={e => setPpnPct(Number(e.target.value))} /></label>
-        <label style={S.formLabel}>Catatan<input style={S.input} value={note} onChange={e => setNote(e.target.value)} /></label>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: jenisBayar === 'KREDIT' ? '1fr 1fr' : '1fr', gap: 8 }}>
-        <label style={S.formLabel}>Jenis Bayar
-          <select style={S.input} value={jenisBayar} onChange={e => setJenisBayar(e.target.value)}>
-            <option value="TUNAI">TUNAI (langsung kas keluar)</option>
-            <option value="KREDIT">KREDIT (jadi hutang supplier)</option>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>Supplier
+          <select style={S.input} value={supplierId} onChange={e => setSupplierId(e.target.value)}>
+            {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </label>
-        {jenisBayar === 'KREDIT' && (
-          <label style={S.formLabel}>Jatuh Tempo
-            <input style={S.input} type="date" value={jatuhTempo} onChange={e => setJatuhTempo(e.target.value)} />
-          </label>
+        <label style={S.formLabel}>Total Nota (Rp)
+          <input style={{ ...S.input, fontSize: 15, fontWeight: 700, color: '#1565c0', textAlign: 'right' }} type="number" value={totalNota} onChange={e => setTotalNota(e.target.value)} placeholder="Isi total dari nota..." />
+        </label>
+      </div>
+
+      {/* Quick scan input */}
+      <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, background: '#f0fdf4', border: '2px solid #86efac', borderRadius: 8, padding: '6px 10px' }}>
+          <svg width="16" height="16" fill="none" stroke="#16a34a" strokeWidth="2" viewBox="0 0 24 24"><path d="M2 8V6a2 2 0 012-2h3M22 8V6a2 2 0 00-2-2h-3M2 16v2a2 2 0 002 2h3M22 16v2a2 2 0 01-2 2h-3M7 12h10"/></svg>
+          <input
+            style={{ ...S.searchInput, flex: 1, fontSize: 13, background: 'transparent' }}
+            placeholder="Scan barcode barang untuk tambah item..."
+            value={scanInput}
+            onChange={e => setScanInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && scanInput.trim()) { e.preventDefault(); handleScanBarcode(scanInput.trim()) } }}
+          />
+        </div>
+      </div>
+
+      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)', marginTop: 8 }}>Item Barang</div>
+
+      {/* Tabel item dengan Stok Awal & Stok Akhir */}
+      <div style={{ border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
+        <table style={{ ...S.table, fontSize: 12 }}>
+          <thead><tr>{['', 'Produk', 'Stok Awal', 'Qty Masuk', 'Stok Akhir', 'Harga Beli', 'Subtotal', ''].map(h => <th key={h} style={{ ...S.th, padding: '6px 8px', fontSize: 11 }}>{h}</th>)}</tr></thead>
+          <tbody>
+            {items.map((it, i) => {
+              const prod = products.find(p => p.id === it.productId)
+              const stokAwal = prod?.stock || 0
+              const stokAkhir = stokAwal + (it.qty || 0)
+              const itemSub = (it.qty || 0) * (it.buyPrice || 0)
+              return (
+                <tr key={i} style={S.tr}>
+                  <td style={{ ...S.td, padding: '4px 4px' }}>
+                    <button type="button" style={{ ...S.smallBtn, padding: '2px', color: '#7b1fa2' }} onClick={() => setShowScanIdx(showScanIdx === i ? -1 : i)} title="Scan Barcode">
+                      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M7 8v8M12 8v8M17 8v8"/></svg>
+                    </button>
+                  </td>
+                  <td style={{ ...S.td, padding: '4px 6px', minWidth: 180 }}>
+                    <select style={{ ...S.input, fontSize: 12, padding: '4px 6px' }} value={it.productId} onChange={e => updateItem(i, 'productId', e.target.value)}>
+                      {products.map(p => <option key={p.id} value={p.id}>{String(p.sku ? p.sku + ' - ' : '')}{p.name}</option>)}
+                    </select>
+                  </td>
+                  <td style={{ ...S.td, padding: '4px 6px', textAlign: 'center', fontWeight: 600, color: '#6b7280' }}>{stokAwal} {prod?.unit||'pcs'}</td>
+                  <td style={{ ...S.td, padding: '4px 6px' }}>
+                    <input style={{ ...S.input, fontSize: 13, padding: '4px 6px', textAlign: 'center', fontWeight: 700, width: 65 }} type="number" min="1" value={it.qty} onChange={e => updateItem(i, 'qty', Number(e.target.value))} />
+                  </td>
+                  <td style={{ ...S.td, padding: '4px 6px', textAlign: 'center', fontWeight: 700, color: '#2e7d32' }}>{stokAkhir} {prod?.unit||'pcs'}</td>
+                  <td style={{ ...S.td, padding: '4px 6px' }}>
+                    <input style={{ ...S.input, fontSize: 12, padding: '4px 6px', textAlign: 'right', width: 100 }} type="number" value={it.buyPrice} onChange={e => updateItem(i, 'buyPrice', Number(e.target.value))} />
+                  </td>
+                  <td style={{ ...S.td, padding: '4px 6px', textAlign: 'right', fontWeight: 600 }}>{formatRp(itemSub)}</td>
+                  <td style={{ ...S.td, padding: '4px 4px' }}>
+                    {items.length > 1 && <button style={{ ...S.smallBtn, color: 'var(--r)', padding: '2px' }} onClick={() => removeItem(i)}>{IC.x}</button>}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Notices */}
+      {updateNotice.map((n, i) => n ? <div key={i} style={{ fontSize: 11, color: '#e65100', padding: '2px 8px', background: '#fff3e0', borderRadius: 4, marginTop: 2 }}>{n}</div> : null)}
+
+      {/* Scan popup per item */}
+      {showScanIdx >= 0 && <BarcodeScanner onScan={(code) => handleBarcodeScan(code, showScanIdx)} onClose={() => setShowScanIdx(-1)} />}
+
+      <button style={{ ...S.filterBtn, width: '100%' }} onClick={addItem}>{IC.plus} Tambah Item</button>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>PPN (%)<input style={S.input} type="number" min="0" max="100" value={ppnPct} onChange={e => setPpnPct(Number(e.target.value))} /></label>
+        <label style={S.formLabel}>Jenis Bayar
+          <select style={S.input} value={jenisBayar} onChange={e => setJenisBayar(e.target.value)}>
+            <option value="TUNAI">TUNAI (kas keluar)</option>
+            <option value="KREDIT">KREDIT (hutang)</option>
+          </select>
+        </label>
+        {jenisBayar === 'KREDIT' ? (
+          <label style={S.formLabel}>Jatuh Tempo<input style={S.input} type="date" value={jatuhTempo} onChange={e => setJatuhTempo(e.target.value)} /></label>
+        ) : (
+          <label style={S.formLabel}>Catatan<input style={S.input} value={note} onChange={e => setNote(e.target.value)} /></label>
         )}
       </div>
       {jenisBayar === 'KREDIT' && (
@@ -744,9 +825,10 @@ function StockInForm({ products, suppliers, onSave }) {
         </div>
       )}
 
-      <div style={{ padding: '12px 16px', background: '#f0f7ff', borderRadius: 10, fontSize: 13 }}>
+      {/* SUMMARY + VALIDASI NOTA */}
+      <div style={{ padding: '12px 16px', background: isMatch ? '#f0f7ff' : '#ffebee', borderRadius: 10, fontSize: 13, border: isMatch ? '1px solid #90caf9' : '2px solid #ef5350' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-          <span>Subtotal ({items.length} item)</span><strong>{formatRp(subtotal)}</strong>
+          <span>Subtotal ({items.length} item, {items.reduce((a, it) => a + (it.qty||0), 0)} pcs)</span><strong>{formatRp(subtotal)}</strong>
         </div>
         {ppnPct > 0 && (
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, color: '#c62828' }}>
@@ -754,11 +836,31 @@ function StockInForm({ products, suppliers, onSave }) {
           </div>
         )}
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700, color: 'var(--b)', borderTop: '1px solid #ddd', paddingTop: 6, marginTop: 4 }}>
-          <span>TOTAL</span><span>{formatRp(total)}</span>
+          <span>TOTAL SISTEM</span><span>{formatRp(total)}</span>
         </div>
+        {totalNotaNum > 0 && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700, color: '#374151', marginTop: 6, paddingTop: 6, borderTop: '1px dashed #ccc' }}>
+              <span>TOTAL NOTA</span><span>{formatRp(totalNotaNum)}</span>
+            </div>
+            {isMatch ? (
+              <div style={{ marginTop: 6, padding: '6px 10px', background: '#e8f5e9', borderRadius: 6, color: '#2e7d32', fontWeight: 700, textAlign: 'center' }}>
+                ✅ SESUAI — Total sistem sama dengan nota
+              </div>
+            ) : (
+              <div style={{ marginTop: 6, padding: '6px 10px', background: '#ffcdd2', borderRadius: 6, color: '#b71c1c', fontWeight: 700, textAlign: 'center' }}>
+                ❌ SELISIH Rp {Math.abs(selisih).toLocaleString('id-ID')} — {selisih > 0 ? 'Sistem lebih besar' : 'Nota lebih besar'}. Perbaiki qty/harga!
+              </div>
+            )}
+          </>
+        )}
       </div>
-      <button style={{ ...S.primaryBtn, width: '100%' }} onClick={() => onSave({ date, supplierId, invoice, note, items, subtotal, ppnPct, ppnAmount, total, jenisBayar, jatuhTempo })}>
-        Simpan Barang Masuk
+      <button
+        style={{ ...S.primaryBtn, width: '100%', opacity: (!hasItems || (totalNotaNum > 0 && !isMatch)) ? 0.5 : 1 }}
+        disabled={!hasItems || (totalNotaNum > 0 && !isMatch)}
+        onClick={handleSave}
+      >
+        {totalNotaNum > 0 && !isMatch ? '❌ Tidak Bisa Simpan — Total Belum Sesuai Nota' : 'Simpan Barang Masuk'}
       </button>
     </div>
   )
