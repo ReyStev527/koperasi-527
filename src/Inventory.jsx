@@ -661,7 +661,18 @@ function StockInForm({ products, suppliers, onSave }) {
   const [jatuhTempo, setJatuhTempo] = useState('')
   const [items, setItems] = useState([])
   const [scanInput, setScanInput] = useState('')
+  const [showSuggestions, setShowSuggestions] = useState(false)
   const scanRef = useRef(null)
+
+  // Filter produk berdasarkan input (cari nama ATAU kode/SKU)
+  const suggestions = scanInput.trim().length >= 2
+    ? products.filter(p => {
+        const q = scanInput.trim().toLowerCase()
+        return String(p.name||'').toLowerCase().includes(q) ||
+               String(p.sku||'').toLowerCase().includes(q) ||
+               String(p.id||'').toLowerCase().includes(q)
+      }).slice(0, 8)
+    : []
 
   function handleSupplierChange(id) {
     setSupplierId(id)
@@ -670,16 +681,27 @@ function StockInForm({ products, suppliers, onSave }) {
     setSupplierName(sup ? sup.name : '---')
   }
 
+  // Tambah produk ke tabel (dari scan/search/klik suggestion)
+  function addProduct(found) {
+    const existIdx = items.findIndex(it => it.productId === found.id)
+    if (existIdx >= 0) { updateItem(existIdx, 'qty', (items[existIdx].qty || 0) + 1) }
+    else { setItems(prev => [...prev, { productId: found.id, kode: found.sku || '', nama: found.name || '', qty: 1, stokAwal: found.stock || 0, hpp: found.buyPrice || 0, hrgLunas: found.sellPrice || 0, hrgKredit: found.sellPrice2 || 0, isManual: false }]) }
+    setScanInput('')
+    setShowSuggestions(false)
+    if (scanRef.current) scanRef.current.focus()
+  }
+
   function handleScanSubmit(e) {
     if (e.key !== 'Enter' || !scanInput.trim()) return
+    // Kalau ada suggestion, pilih yang pertama
+    if (suggestions.length > 0) { addProduct(suggestions[0]); return }
+    // Fallback: cari exact match
     const code = scanInput.trim()
     const found = products.find(p => String(p.sku||'').toLowerCase() === code.toLowerCase() || String(p.sku||'').toLowerCase().includes(code.toLowerCase()) || String(p.id||'') === code)
-    if (found) {
-      const existIdx = items.findIndex(it => it.productId === found.id)
-      if (existIdx >= 0) { updateItem(existIdx, 'qty', (items[existIdx].qty || 0) + 1) }
-      else { setItems(prev => [...prev, { productId: found.id, kode: found.sku || '', nama: found.name || '', qty: 1, stokAwal: found.stock || 0, hpp: found.buyPrice || 0, hrgLunas: found.sellPrice || 0, hrgKredit: found.sellPrice2 || 0, isManual: false }]) }
-    } else { alert('Produk "' + code + '" tidak ditemukan.\nGunakan "+ Manual" untuk input manual.') }
+    if (found) { addProduct(found) }
+    else { alert('Produk "' + code + '" tidak ditemukan.\nGunakan "+ Manual" untuk input manual.') }
     setScanInput('')
+    setShowSuggestions(false)
   }
 
   function addManualItem() { setItems(prev => [...prev, { productId: '', kode: '', nama: '', qty: 1, stokAwal: 0, hpp: 0, hrgLunas: 0, hrgKredit: 0, isManual: true }]) }
@@ -726,8 +748,38 @@ function StockInForm({ products, suppliers, onSave }) {
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <div style={{ flex: 1, position: 'relative' }}>
-          <input ref={scanRef} style={{ ...S.input, paddingLeft: 32, borderColor: '#ffd600', borderWidth: 2 }} placeholder="Scan barcode / ketik kode barang + Enter ↵" value={scanInput} onChange={e => setScanInput(e.target.value)} onKeyDown={handleScanSubmit} />
-          <svg style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', opacity: 0.4 }} width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M7 8v8M12 8v8M17 8v8"/></svg>
+          <input ref={scanRef} style={{ ...S.input, paddingLeft: 32, borderColor: '#ffd600', borderWidth: 2 }}
+            placeholder="Scan barcode / ketik nama barang + Enter ↵"
+            value={scanInput}
+            onChange={e => { setScanInput(e.target.value); setShowSuggestions(true) }}
+            onKeyDown={handleScanSubmit}
+            onFocus={() => setShowSuggestions(true)}
+            onBlur={() => setTimeout(() => setShowSuggestions(false), 200)} />
+          <svg style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', opacity: 0.4 }} width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          {/* Autocomplete dropdown */}
+          {showSuggestions && suggestions.length > 0 && (
+            <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '2px solid #1a3a8a', borderTop: 'none', borderRadius: '0 0 8px 8px', maxHeight: 240, overflowY: 'auto', zIndex: 999, boxShadow: '0 8px 24px rgba(0,0,0,0.15)' }}>
+              {suggestions.map((p, i) => (
+                <div key={p.id}
+                  style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: i === 0 ? '#f0f7ff' : '#fff', fontSize: 12 }}
+                  onMouseDown={() => addProduct(p)}
+                  onMouseOver={e => e.currentTarget.style.background = '#e3f2fd'}
+                  onMouseOut={e => e.currentTarget.style.background = i === 0 ? '#f0f7ff' : '#fff'}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</div>
+                    <div style={{ color: '#888', fontSize: 11 }}>SKU: {p.sku || '-'} | Stok: {p.stock || 0} {p.unit || 'pcs'}</div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontWeight: 700, color: '#1565c0' }}>{formatRp(p.buyPrice || 0)}</div>
+                    <div style={{ fontSize: 10, color: '#999' }}>Hpp</div>
+                  </div>
+                </div>
+              ))}
+              <div style={{ padding: '4px 12px', fontSize: 10, color: '#999', background: '#f9f9f9' }}>
+                {suggestions.length} produk ditemukan — Enter untuk pilih yang pertama
+              </div>
+            </div>
+          )}
         </div>
         <button type="button" style={{ ...S.filterBtn, whiteSpace: 'nowrap', fontWeight: 600 }} onClick={addManualItem}>+ Manual</button>
       </div>
