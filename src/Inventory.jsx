@@ -2,7 +2,7 @@
 // MODUL INVENTARIS KOPERASI
 // Barang, Supplier, Barang Masuk, Kasir/POS
 // =============================================
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useRef } from 'react'
 import { BarcodeScanner, ScanButton } from './BarcodeScanner'
 import { cetakStruk } from './Extra'
 
@@ -37,9 +37,6 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   const [showStokTgl, setShowStokTgl] = useState(false)
   const [stokTglDate, setStokTglDate] = useState(today())
   const [tipeFilter, setTipeFilter] = useState('all') // all | MILIK | TITIPAN
-  const [showBulkDelete, setShowBulkDelete] = useState(false)
-  const [bulkThreshold, setBulkThreshold] = useState(0)
-  const [dateFilter, setDateFilter] = useState('') // filter by updatedAt date
   const pageSize = 50
 
   const categories = [...new Set(products.map(p => p.category || 'Lainnya'))].filter(Boolean).sort()
@@ -47,8 +44,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
     if (catFilter === '_low') return (p.stock||0) <= (p.minStock || 10)
     if (catFilter !== 'all' && p.category !== catFilter) return false
     if (tipeFilter !== 'all' && (p.tipeBarang||'MILIK') !== tipeFilter) return false
-    if (dateFilter && (p.updatedAt||p.createdAt||'') !== dateFilter) return false
-    if (search && !String(p.name||'').toLowerCase().includes(search.toLowerCase()) && !String(p.sku||'').toLowerCase().includes(search.toLowerCase()) && !String(p.barcode||'').toLowerCase().includes(search.toLowerCase())) return false
+    if (search && !String(p.name||'').toLowerCase().includes(search.toLowerCase()) && !String(p.sku||'').toLowerCase().includes(search.toLowerCase())) return false
     return true
   })
 
@@ -80,13 +76,13 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   function openForm(product) {
     const isEdit = !!product
     const data = product ? { ...product } : {
-      sku: '', name: '', barcode: '', category: 'Sembako', buyPrice: '', sellPrice: '', sellPrice2: '',
+      sku: '', name: '', category: 'Sembako', buyPrice: '', sellPrice: '', sellPrice2: '',
       stock: 0, unit: 'pcs', minStock: 10, supplierId: suppliers[0]?.id || '',
       ppn: 0, qtyPerBox: 1, buyPriceBox: '', tipeBarang: 'MILIK'
     }
     setModal({
       title: isEdit ? 'Edit Produk' : 'Tambah Produk',
-      content: <ProductForm initial={data} suppliers={suppliers} existingCategories={categories} onSave={async d => {
+      content: <ProductForm initial={data} suppliers={suppliers} onSave={async d => {
         await saveProduct(isEdit ? { ...product, ...d } : d, isEdit)
         setModal(null)
         showToast(isEdit ? 'Produk diperbarui' : 'Produk ditambahkan')
@@ -95,10 +91,10 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   }
 
   function exportCSV() {
-    const header = 'SKU,Nama Produk,Kategori,Harga Beli,Harga Jual Lunas,Harga Jual Kredit,Stok,Satuan,Min Stok,Status,Terakhir Update\n'
+    const header = 'SKU,Nama Produk,Kategori,Harga Beli,Harga Jual 1,Harga Jual 2,Stok,Satuan,Min Stok,Status\n'
     const rows = products.map(p => {
       const status = p.stock <= 0 ? 'Habis' : p.stock <= p.minStock ? 'Menipis' : 'Aman'
-      return [p.sku, '"'+p.name+'"', p.category, p.buyPrice, p.sellPrice, p.sellPrice2||'', p.stock, p.unit, p.minStock, status, p.updatedAt||''].join(',')
+      return [p.sku, '"'+p.name+'"', p.category, p.buyPrice, p.sellPrice, p.sellPrice2||'', p.stock, p.unit, p.minStock, status].join(',')
     }).join('\n')
     const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' })
     const a = document.createElement('a')
@@ -106,20 +102,6 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
     a.download = 'stok_barang_' + today() + '.csv'
     a.click()
     showToast('Export ' + products.length + ' produk berhasil')
-  }
-
-  // Hapus massal barang berdasarkan threshold stok
-  const bulkProducts = products.filter(p => (p.stock||0) <= bulkThreshold)
-  async function bulkDeleteProducts() {
-    if (bulkProducts.length === 0) { showToast('Tidak ada produk dengan stok ≤ ' + bulkThreshold, 'error'); return }
-    const confirm1 = confirm('Hapus ' + bulkProducts.length + ' produk dengan stok ≤ ' + bulkThreshold + '?\n\nDaftar:\n' + bulkProducts.slice(0, 15).map(p => '- ' + p.name + ' (stok: ' + (p.stock||0) + ')').join('\n') + (bulkProducts.length > 15 ? '\n... dan ' + (bulkProducts.length - 15) + ' lainnya' : '') + '\n\nAKSI INI TIDAK BISA DIBATALKAN!')
-    if (!confirm1) return
-    let deleted = 0
-    for (const p of bulkProducts) {
-      try { await deleteProduct(p.id); deleted++ } catch(e) { console.error('Gagal hapus:', p.name, e) }
-    }
-    showToast(deleted + ' produk berhasil dihapus', 'error')
-    setShowBulkDelete(false)
   }
 
   return (
@@ -131,10 +113,6 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
             Stok per Tanggal
           </button>
           <button style={{ ...S.primaryBtn, background: '#2e7d32' }} onClick={exportCSV}><svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg> Export</button>
-          <button style={{ ...S.primaryBtn, background: '#c62828' }} onClick={() => setShowBulkDelete(!showBulkDelete)}>
-            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-            Hapus Massal
-          </button>
           <ScanButton onClick={() => setShowScanner(true)} label="Scan" />
           <button style={S.primaryBtn} onClick={() => openForm(null)}>{IC.plus} Tambah Produk</button>
         </div>
@@ -173,53 +151,6 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
 
       {showScanner && <BarcodeScanner onScan={(code) => { setSearch(code); setShowScanner(false); showToast('Mencari: ' + code) }} onClose={() => setShowScanner(false)} />}
 
-      {/* Panel Hapus Massal */}
-      {showBulkDelete && (
-        <div style={{ ...S.card, marginBottom: 16, border: '2px solid #c62828', background: '#fff8f8' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <h3 style={{ fontSize: 16, fontWeight: 700, color: '#c62828' }}>Hapus Massal Barang</h3>
-            <button style={S.smallBtn} onClick={() => setShowBulkDelete(false)}>{IC.x}</button>
-          </div>
-          <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>Pilih batas stok, semua produk dengan stok ≤ angka yang dipilih akan dihapus.</p>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap' }}>
-            <label style={S.formLabel}>Hapus produk dengan stok ≤
-              <select style={{ ...S.input, minWidth: 120 }} value={bulkThreshold} onChange={e => setBulkThreshold(Number(e.target.value))}>
-                <option value={0}>0 (Habis)</option>
-                <option value={1}>≤ 1</option>
-                <option value={2}>≤ 2</option>
-                <option value={3}>≤ 3</option>
-                <option value={5}>≤ 5</option>
-                <option value={10}>≤ 10</option>
-                <option value={20}>≤ 20</option>
-                <option value={50}>≤ 50</option>
-              </select>
-            </label>
-            <div style={{ padding: '8px 14px', background: bulkProducts.length > 0 ? '#ffebee' : '#e8f5e9', borderRadius: 8, fontSize: 14, fontWeight: 700, color: bulkProducts.length > 0 ? '#c62828' : '#2e7d32' }}>
-              {bulkProducts.length} produk ditemukan
-            </div>
-            <button style={{ ...S.primaryBtn, background: '#c62828' }} disabled={bulkProducts.length === 0} onClick={bulkDeleteProducts}>
-              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg>
-              Hapus {bulkProducts.length} Produk
-            </button>
-          </div>
-          {bulkProducts.length > 0 && (
-            <div style={{ marginTop: 12, maxHeight: 200, overflow: 'auto', fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 8 }}>
-              <table style={{ ...S.table, fontSize: 12 }}>
-                <thead><tr>{['Nama', 'SKU', 'Stok', 'Kategori'].map(h => <th key={h} style={{ ...S.th, padding: '6px 10px', fontSize: 11 }}>{h}</th>)}</tr></thead>
-                <tbody>{bulkProducts.map(p => (
-                  <tr key={p.id} style={S.tr}>
-                    <td style={{ ...S.td, padding: '4px 10px', fontWeight: 600 }}>{p.name}</td>
-                    <td style={{ ...S.td, padding: '4px 10px', fontFamily: 'monospace' }}>{p.sku||'-'}</td>
-                    <td style={{ ...S.td, padding: '4px 10px', color: '#c62828', fontWeight: 700 }}>{p.stock||0} {p.unit||'pcs'}</td>
-                    <td style={{ ...S.td, padding: '4px 10px' }}>{p.category}</td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
       <div style={S.grid4}>
         <div style={S.statCard}><div style={S.statLabel}>Total Produk</div><div style={S.statVal}>{products.length}</div></div>
         <div style={S.statCard}><div style={S.statLabel}>Nilai Inventaris</div><div style={{ ...S.statVal, color: 'var(--b)' }}>{formatRp(totalValue)}</div></div>
@@ -241,14 +172,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
       )}
 
       <div style={S.toolbar}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <div style={S.searchBox}>{IC.search}<input style={S.searchInput} placeholder="Cari produk / SKU..." value={search} onChange={e => { setSearch(e.target.value); setPage_(1) }} /></div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <input style={{ ...S.input, padding: '7px 10px', fontSize: 12, width: 145 }} type="date" value={dateFilter} onChange={e => { setDateFilter(e.target.value); setPage_(1) }} title="Filter tanggal update" />
-            {dateFilter && <button style={{ ...S.smallBtn, color: '#c62828', fontSize: 16, padding: '2px 6px' }} onClick={() => { setDateFilter(''); setPage_(1) }} title="Hapus filter tanggal">×</button>}
-          </div>
-          {dateFilter && <span style={{ fontSize: 12, color: '#1565c0', fontWeight: 600 }}>Update: {fmtDate(dateFilter)} ({filtered.length} produk)</span>}
-        </div>
+        <div style={S.searchBox}>{IC.search}<input style={S.searchInput} placeholder="Cari produk / SKU..." value={search} onChange={e => { setSearch(e.target.value); setPage_(1) }} /></div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <button style={{ ...S.filterBtn, ...(catFilter === 'all' ? S.filterActive : {}) }} onClick={() => { setCatFilter('all'); setPage_(1) }}>Semua</button>
           <button style={{ ...S.filterBtn, ...(catFilter === '_low' ? { background: '#c62828', color: '#fff', borderColor: '#c62828' } : { color: '#c62828' }) }} onClick={() => { setCatFilter('_low'); setPage_(1) }}>Stok Menipis ({lowStock.length})</button>
@@ -281,7 +205,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
           )}
         </div>
         <table style={S.table}>
-          <thead><tr>{['SKU', 'Nama Produk', 'Tipe', 'Kategori', 'Harga Beli', 'Harga Jual', 'Stok', 'Update', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>{['SKU', 'Nama Produk', 'Tipe', 'Kategori', 'Harga Beli', 'Harga Jual', 'Stok', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
           <tbody>{paginated.map(p => {
             const isLow = (p.stock||0) <= (p.minStock||10)
             const isTitipan = (p.tipeBarang||'MILIK') === 'TITIPAN'
@@ -291,13 +215,9 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
                 <td style={{ ...S.td, fontWeight: 600 }}>{p.name}</td>
                 <td style={S.td}><span style={{ ...S.badge, background: isTitipan ? '#fff3e0' : '#e3f2fd', color: isTitipan ? '#e65100' : '#1565c0', fontSize: 10 }}>{isTitipan ? 'TITIPAN' : 'MILIK'}</span></td>
                 <td style={S.td}><span style={{ ...S.badge, background: catColor(p.category).bg, color: catColor(p.category).fg }}>{p.category}</span></td>
-                <td style={S.td}>
-                  <div>{formatRp(p.buyPrice)}</div>
-                  {(p.ppn||0) > 0 && <div style={{ fontSize: 10, color: '#c62828', marginTop: 2 }}>+PPN {p.ppn}% ({formatRp(Math.round((p.buyPriceBox||p.buyPrice||0) * p.ppn / 100))})</div>}
-                </td>
+                <td style={S.td}>{formatRp(p.buyPrice)}</td>
                 <td style={S.td}>{formatRp(p.sellPrice)}</td>
                 <td style={{ ...S.td, fontWeight: 600, color: isLow ? 'var(--r)' : 'var(--g)' }}>{p.stock||0} {p.unit||'pcs'}</td>
-                <td style={{ ...S.td, fontSize: 11, color: '#6b7280' }}>{p.updatedAt ? fmtDate(p.updatedAt) : '-'}</td>
                 <td style={S.td}>
                   {isLow ? <span style={{ ...S.badge, background: '#ffebee', color: '#c62828' }}>Menipis</span> :
                     <span style={{ ...S.badge, background: '#e8f5e9', color: '#2e7d32' }}>Aman</span>}
@@ -308,7 +228,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
                 </td>
               </tr>
             )
-          })}{filtered.length === 0 && <tr><td colSpan={10} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Tidak ada data</td></tr>}</tbody>
+          })}{filtered.length === 0 && <tr><td colSpan={9} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Tidak ada data</td></tr>}</tbody>
         </table>
         {totalPages > 1 && (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 4, marginTop: 16 }}>
@@ -326,10 +246,9 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   )
 }
 
-function ProductForm({ initial, suppliers, onSave, existingCategories }) {
+function ProductForm({ initial, suppliers, onSave }) {
   const [d, setD] = useState(initial)
   const [showScan, setShowScan] = useState(false)
-  const [customCat, setCustomCat] = useState('')
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
 
   // Hitung harga per unit dari harga box + PPN
@@ -357,41 +276,25 @@ function ProductForm({ initial, suppliers, onSave, existingCategories }) {
 
   return (
     <div style={S.form}>
-      {/* SKU & Barcode Produk */}
+      {/* Barcode / SKU */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-        <label style={{ ...S.formLabel, flex: 1 }}>SKU (kode internal)
-          <input style={S.input} value={d.sku} onChange={e => set('sku', e.target.value)} placeholder="Kode SKU internal..." />
+        <label style={{ ...S.formLabel, flex: 1 }}>Barcode / SKU
+          <input style={S.input} value={d.sku} onChange={e => set('sku', e.target.value)} placeholder="Scan atau ketik barcode..." />
         </label>
-        <label style={{ ...S.formLabel, flex: 1 }}>Barcode Produk (dari kemasan)
-          <div style={{ display: 'flex', gap: 4 }}>
-            <input style={S.input} value={d.barcode||''} onChange={e => set('barcode', e.target.value)} placeholder="Scan / ketik barcode kemasan..." />
-            <button type="button" style={{ ...S.primaryBtn, background: '#7b1fa2', height: 42, minWidth: 42, padding: '0 8px' }} onClick={() => setShowScan(true)}>
-              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"/><path d="M7 8v8M12 8v8M17 8v8"/></svg>
-            </button>
-          </div>
-        </label>
+        <button type="button" style={{ ...S.primaryBtn, background: '#7b1fa2', height: 42 }} onClick={() => setShowScan(true)}>
+          <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"/><path d="M7 8v8M12 8v8M17 8v8"/></svg>
+          Scan
+        </button>
       </div>
-      {showScan && <BarcodeScanner onScan={(code) => { set('barcode', String(code)); setShowScan(false) }} onClose={() => setShowScan(false)} />}
+      {showScan && <BarcodeScanner onScan={(code) => { set('sku', String(code)); setShowScan(false) }} onClose={() => setShowScan(false)} />}
 
       <label style={S.formLabel}>Nama Produk<input style={S.input} value={d.name} onChange={e => set('name', e.target.value)} placeholder="Nama barang..." /></label>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
         <label style={S.formLabel}>Kategori
-          <select style={S.input} value={d.category === '__custom__' ? '__custom__' : d.category} onChange={e => {
-            const val = e.target.value
-            if (val === '__custom__') { set('category', '__custom__'); setCustomCat('') }
-            else { set('category', val); setCustomCat('') }
-          }}>
-            {(() => {
-              const defaults = ['Sembako', 'Makanan', 'Minuman', 'Rokok', 'Sabun', 'Alat Mandi', 'Toiletries', 'ATK', 'Obat', 'Elektronik', 'Pakaian', 'Pakaian KAP TNI', 'Pangkat', 'Barcil', 'Perabotan Rumah', 'Lainnya']
-              const extra = (existingCategories||[]).filter(c => c && !defaults.includes(c) && c !== '__custom__')
-              return [...defaults, ...extra].map(c => <option key={c} value={c}>{c}</option>)
-            })()}
-            <option value="__custom__">+ Tambah Kategori Baru...</option>
+          <select style={S.input} value={d.category} onChange={e => set('category', e.target.value)}>
+            {['Sembako', 'Makanan', 'Minuman', 'Toiletries', 'ATK', 'Obat', 'Elektronik', 'Pakaian', 'Lainnya'].map(c => <option key={c}>{c}</option>)}
           </select>
-          {d.category === '__custom__' && (
-            <input style={{ ...S.input, marginTop: 4, borderColor: '#1565c0' }} value={customCat} onChange={e => setCustomCat(e.target.value)} placeholder="Ketik nama kategori baru..." autoFocus />
-          )}
         </label>
         <label style={S.formLabel}>Satuan
           <select style={S.input} value={d.unit} onChange={e => set('unit', e.target.value)}>
@@ -437,10 +340,10 @@ function ProductForm({ initial, suppliers, onSave, existingCategories }) {
         <label style={S.formLabel}>Harga Beli / Unit (Rp)
           <input style={S.input} type="number" value={d.buyPrice} onChange={e => set('buyPrice', Number(e.target.value))} />
         </label>
-        <label style={S.formLabel}>Harga Jual Lunas (Rp)
+        <label style={S.formLabel}>Harga Jual 1 (Rp)
           <input style={S.input} type="number" value={d.sellPrice} onChange={e => set('sellPrice', Number(e.target.value))} />
         </label>
-        <label style={S.formLabel}>Harga Jual Kredit (Rp)
+        <label style={S.formLabel}>Harga Jual 2 / Grosir (Rp)
           <input style={S.input} type="number" value={d.sellPrice2||''} onChange={e => set('sellPrice2', Number(e.target.value))} placeholder="Opsional" />
         </label>
       </div>
@@ -456,14 +359,7 @@ function ProductForm({ initial, suppliers, onSave, existingCategories }) {
           </select>
         </label>
       </div>
-      <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={() => {
-        const saveData = { ...d }
-        if (saveData.category === '__custom__') {
-          if (!customCat.trim()) { alert('Nama kategori baru tidak boleh kosong'); return }
-          saveData.category = customCat.trim()
-        }
-        onSave(saveData)
-      }}>Simpan Produk</button>
+      <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={() => onSave(d)}>Simpan Produk</button>
     </div>
   )
 }
@@ -587,22 +483,16 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
   function openForm() {
     setModal({
       title: 'Catat Barang Masuk',
+      wide: true,
       content: <StockInForm products={products} suppliers={suppliers} onSave={async d => {
         await saveStockIn(d)
-        // Update stok + harga produk
+        // Update stok produk
         for (const item of (d.items||[])) {
           const prod = products.find(p => p.id === item.productId)
-          if (prod) {
-            const updates = { stock: (prod.stock||0) + (item.qty||0) }
-            // Update harga jika berubah
-            if (item.buyPrice && item.buyPrice !== prod.buyPrice) updates.buyPrice = item.buyPrice
-            if (item.sellPrice && item.sellPrice !== prod.sellPrice) updates.sellPrice = item.sellPrice
-            if (item.sellPrice2 && item.sellPrice2 !== prod.sellPrice2) updates.sellPrice2 = item.sellPrice2
-            await updateProductStock(prod.id, updates.stock)
-          }
+          if (prod) await updateProductStock(prod.id, prod.stock + item.qty)
         }
         setModal(null)
-        showToast('Barang masuk berhasil dicatat — stok diperbarui')
+        showToast('Barang masuk berhasil dicatat')
       }} />,
     })
   }
@@ -641,25 +531,62 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
 
 function StockInForm({ products, suppliers, onSave }) {
   const [date, setDate] = useState(today())
-  const [supplierId, setSupplierId] = useState(suppliers[0]?.id || '')
+  const [supplierId, setSupplierId] = useState('') // Default kosong, bukan auto-select supplier pertama
+  const [supplierName, setSupplierName] = useState('---') // Default "---" seperti MS Access
   const [invoice, setInvoice] = useState('T' + Date.now().toString().slice(-4))
   const [note, setNote] = useState('')
   const [ppnPct, setPpnPct] = useState(0)
   const [jenisBayar, setJenisBayar] = useState('TUNAI')
   const [jatuhTempo, setJatuhTempo] = useState('')
   const [items, setItems] = useState([])
-  const [showScanIdx, setShowScanIdx] = useState(-1)
   const [scanInput, setScanInput] = useState('')
-  const [totalNota, setTotalNota] = useState('')
+  const scanRef = useRef(null)
 
-  const selectedSup = suppliers.find(s => s.id === supplierId)
+  // Saat pilih kode supplier → auto-isi nama
+  function handleSupplierChange(id) {
+    setSupplierId(id)
+    if (!id) { setSupplierName('---'); return }
+    const sup = suppliers.find(s => s.id === id)
+    setSupplierName(sup ? sup.name : '---')
+  }
 
-  function addItem(prodId) {
-    const p = products.find(pr => pr.id === (prodId || products[0]?.id))
-    if (!p) return
+  // Tambah item dari scan barcode / ketik kode
+  function handleScanSubmit(e) {
+    if (e.key !== 'Enter' || !scanInput.trim()) return
+    const code = scanInput.trim()
+    const found = products.find(p =>
+      String(p.sku||'').toLowerCase() === code.toLowerCase() ||
+      String(p.sku||'').toLowerCase().includes(code.toLowerCase()) ||
+      String(p.id||'') === code
+    )
+    if (found) {
+      // Cek apakah sudah ada di tabel
+      const existIdx = items.findIndex(it => it.productId === found.id)
+      if (existIdx >= 0) {
+        updateItem(existIdx, 'qty', (items[existIdx].qty || 0) + 1)
+      } else {
+        setItems(prev => [...prev, {
+          productId: found.id, kode: found.sku || '', nama: found.name || '',
+          qty: 1, stokAwal: found.stock || 0,
+          hpp: found.buyPrice || 0,
+          hrgLunas: found.sellPrice || found.price1 || 0,
+          hrgKredit: found.sellPrice2 || found.price2 || 0,
+          isManual: false
+        }])
+      }
+    } else {
+      alert('Produk dengan kode "' + code + '" tidak ditemukan.\nGunakan tombol "+ Manual" untuk input manual.')
+    }
+    setScanInput('')
+  }
+
+  // Tambah baris manual kosong
+  function addManualItem() {
     setItems(prev => [...prev, {
-      productId: p.id, qty: 1, buyPrice: p.buyPrice || 0,
-      sellPrice: p.sellPrice || 0, sellPrice2: p.sellPrice2 || 0
+      productId: '', kode: '', nama: '',
+      qty: 1, stokAwal: 0,
+      hpp: 0, hrgLunas: 0, hrgKredit: 0,
+      isManual: true
     }])
   }
 
@@ -669,161 +596,129 @@ function StockInForm({ products, suppliers, onSave }) {
     setItems(prev => prev.map((item, idx) => {
       if (idx !== i) return item
       const updated = { ...item, [k]: v }
-      if (k === 'productId') {
-        const p = products.find(pr => pr.id === v)
-        if (p) {
-          updated.buyPrice = p.buyPrice || 0
-          updated.sellPrice = p.sellPrice || 0
-          updated.sellPrice2 = p.sellPrice2 || 0
+      // Kalau manual dan ubah kode → cek apakah match produk
+      if (item.isManual && k === 'kode' && v) {
+        const found = products.find(p => String(p.sku||'').toLowerCase() === String(v).toLowerCase())
+        if (found) {
+          updated.productId = found.id
+          updated.nama = found.name
+          updated.stokAwal = found.stock || 0
+          updated.hpp = found.buyPrice || 0
+          updated.hrgLunas = found.sellPrice || found.price1 || 0
+          updated.hrgKredit = found.sellPrice2 || found.price2 || 0
         }
       }
       return updated
     }))
   }
 
-  // Scan barcode → cari produk → tambah item atau naikkan qty
-  function handleScanBarcode(code) {
-    const found = products.find(p =>
-      String(p.barcode||'').toLowerCase() === code.toLowerCase() ||
-      String(p.sku||'').toLowerCase() === code.toLowerCase() ||
-      String(p.barcode||'').toLowerCase().includes(code.toLowerCase()) ||
-      String(p.sku||'').toLowerCase().includes(code.toLowerCase())
-    )
-    if (found) {
-      const existIdx = items.findIndex(it => it.productId === found.id)
-      if (existIdx >= 0) {
-        updateItem(existIdx, 'qty', (items[existIdx].qty || 0) + 1)
-      } else {
-        setItems(prev => [...prev, {
-          productId: found.id, qty: 1, buyPrice: found.buyPrice || 0,
-          sellPrice: found.sellPrice || 0, sellPrice2: found.sellPrice2 || 0
-        }])
-      }
-    } else {
-      alert('Barcode "' + code + '" tidak ditemukan. Tambah produk baru dulu di Stok Barang.')
-    }
-    setScanInput('')
-  }
-
-  function handleBarcodeScan(code, itemIdx) {
-    const found = products.find(p =>
-      String(p.barcode||'').toLowerCase() === code.toLowerCase() ||
-      String(p.sku||'').toLowerCase() === code.toLowerCase()
-    )
-    setShowScanIdx(-1)
-    if (found) {
-      updateItem(itemIdx, 'productId', found.id)
-    } else {
-      alert('Barcode "' + code + '" tidak ditemukan.')
-    }
-  }
-
-  const subtotal = items.reduce((a, it) => a + ((it.qty||0) * (it.buyPrice||0)), 0)
+  const subtotal = items.reduce((a, it) => a + ((it.qty||0) * (it.hpp||0)), 0)
   const ppnAmount = Math.round(subtotal * (ppnPct||0) / 100)
   const total = subtotal + ppnAmount
-  const totalNotaNum = Number(totalNota) || 0
-  const selisih = totalNotaNum > 0 ? total - totalNotaNum : 0
-  const isMatch = totalNotaNum === 0 || Math.abs(selisih) === 0
-  const hasItems = items.length > 0 && items.some(it => it.qty > 0)
 
-  function handleSave() {
-    if (!hasItems) { alert('Tambahkan minimal 1 item barang!'); return }
-    if (totalNotaNum > 0 && !isMatch) {
-      alert('⚠️ TOTAL TIDAK SESUAI NOTA!\n\nTotal Nota: Rp ' + totalNotaNum.toLocaleString('id-ID') + '\nTotal Sistem: Rp ' + total.toLocaleString('id-ID') + '\nSelisih: Rp ' + Math.abs(selisih).toLocaleString('id-ID') + '\n\nPerbaiki jumlah/harga agar sesuai nota.')
-      return
-    }
-    onSave({ date, supplierId, invoice, note, items, subtotal, ppnPct, ppnAmount, total, jenisBayar, jatuhTempo })
-  }
+  // Style tabel input mirip MS Access
+  const cellSt = { padding: '4px 6px', border: '1px solid #bbb', fontSize: 12, verticalAlign: 'middle' }
+  const inputSt = { width: '100%', border: 'none', outline: 'none', fontSize: 12, padding: '3px 4px', background: 'transparent', boxSizing: 'border-box' }
+  const numSt = { ...inputSt, textAlign: 'right' }
+  const thSt = { ...cellSt, background: '#1a3a8a', color: '#ffd600', fontWeight: 700, fontSize: 11, textAlign: 'center', padding: '6px 4px', whiteSpace: 'nowrap' }
 
   return (
-    <div style={S.form}>
-      {/* HEADER — mirip VB app */}
-      <div style={{ background: '#1a237e', color: '#fff', padding: '10px 16px', borderRadius: '10px 10px 0 0', margin: '-16px -16px 12px -16px' }}>
-        <div style={{ fontSize: 16, fontWeight: 700 }}>TRANSAKSI PEMBELIAN</div>
-        <div style={{ fontSize: 11, opacity: 0.8 }}>Form entri transaksi penambahan stock barang ke toko</div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {/* Header: TRANSAKSI PEMBELIAN */}
+      <div style={{ background: '#1a2744', color: '#fff', padding: '10px 16px', borderRadius: 8 }}>
+        <div style={{ fontWeight: 700, fontSize: 15 }}>TRANSAKSI PEMBELIAN</div>
+        <div style={{ fontSize: 11, color: '#ccc' }}>Form entri transaksi penambahan stock barang ke toko</div>
       </div>
 
+      {/* Nomor Urut, Tanggal, Total Nota */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-        <label style={S.formLabel}>Nomor Urut<input style={{ ...S.input, fontWeight: 700 }} value={invoice} onChange={e => setInvoice(e.target.value)} /></label>
+        <label style={S.formLabel}>Nomor Urut<input style={S.input} value={invoice} onChange={e => setInvoice(e.target.value)} /></label>
         <label style={S.formLabel}>Tanggal<input style={S.input} type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
-        <label style={S.formLabel}>Total Nota (Rp)
-          <input style={{ ...S.input, fontWeight: 700, color: '#1565c0', textAlign: 'right' }} type="number" value={totalNota} onChange={e => setTotalNota(e.target.value)} placeholder="Isi total nota..." />
-        </label>
+        <label style={S.formLabel}>Total Nota<input style={{ ...S.input, fontWeight: 700, color: '#1565c0' }} value={formatRp(total)} readOnly /></label>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 8 }}>
+
+      {/* Kode Supplier + Nama Supplier (lebar penuh) */}
+      <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr', gap: 8 }}>
         <label style={S.formLabel}>Kode Supplier
-          <select style={S.input} value={supplierId} onChange={e => setSupplierId(e.target.value)}>
-            {suppliers.map(s => <option key={s.id} value={s.id}>{s.id.slice(0,6).toUpperCase()}</option>)}
+          <select style={S.input} value={supplierId} onChange={e => handleSupplierChange(e.target.value)}>
+            <option value="">-- Pilih --</option>
+            {suppliers.map(s => <option key={s.id} value={s.id}>{s.id.slice(0,5).toUpperCase()}</option>)}
           </select>
         </label>
         <label style={S.formLabel}>Nama Supplier
-          <input style={{ ...S.input, fontWeight: 600 }} value={selectedSup?.name || '-'} readOnly />
+          <input style={{ ...S.input, fontWeight: 600, minWidth: 0 }} value={supplierName} readOnly />
         </label>
       </div>
 
-      {/* SCAN INPUT */}
-      <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, background: '#fffde7', border: '2px solid #fdd835', borderRadius: 8, padding: '6px 10px' }}>
-          <svg width="16" height="16" fill="none" stroke="#f57f17" strokeWidth="2" viewBox="0 0 24 24"><path d="M7 8v8M12 8v8M17 8v8"/></svg>
-          <input
-            style={{ ...S.searchInput, flex: 1, fontSize: 13, background: 'transparent' }}
-            placeholder="Scan barcode / ketik kode barang + Enter untuk tambah..."
-            value={scanInput}
-            onChange={e => setScanInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && scanInput.trim()) { e.preventDefault(); handleScanBarcode(scanInput.trim()) } }}
-            autoFocus
-          />
+      {/* Scan barcode / ketik kode + tombol Manual */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ flex: 1, position: 'relative' }}>
+          <input ref={scanRef} style={{ ...S.input, paddingLeft: 32, borderColor: '#ffd600', borderWidth: 2 }}
+            placeholder="Scan barcode / ketik kode barang + Enter ↵"
+            value={scanInput} onChange={e => setScanInput(e.target.value)}
+            onKeyDown={handleScanSubmit} />
+          <svg style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', opacity: 0.4 }} width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+            <path d="M7 8v8M12 8v8M17 8v8"/>
+          </svg>
         </div>
-        <button style={{ ...S.filterBtn, padding: '8px 12px' }} onClick={() => addItem()}>+ Manual</button>
+        <button type="button" style={{ ...S.filterBtn, whiteSpace: 'nowrap', fontWeight: 600 }} onClick={addManualItem}>+ Manual</button>
       </div>
 
-      {/* TABEL ITEM — layout mirip VB app */}
-      <div style={{ border: '1px solid #1a237e', borderRadius: 8, overflow: 'hidden', marginTop: 8 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+      {/* TABEL INPUT — format seperti MS Access */}
+      <div style={{ overflowX: 'auto', border: '2px solid #1a3a8a', borderRadius: 4 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 780 }}>
           <thead>
-            <tr style={{ background: '#1a237e', color: '#fdd835' }}>
-              {['Kode', 'Nama Barang', 'Jumlah', 'Stok Awal', 'Stok Akhir', 'Hpp', 'Hrg Lunas', 'Hrg Kredit', 'Sub Total Rp', ''].map(h =>
-                <th key={h} style={{ padding: '6px 8px', textAlign: h === 'Nama Barang' ? 'left' : 'center', fontSize: 11, fontWeight: 700, borderRight: '1px solid #283593' }}>{h}</th>
-              )}
+            <tr>
+              <th style={thSt}>Kode</th>
+              <th style={{ ...thSt, minWidth: 180 }}>Nama Barang</th>
+              <th style={thSt}>Jumlah</th>
+              <th style={thSt}>Stok Awal</th>
+              <th style={thSt}>Stok Akhir</th>
+              <th style={thSt}>Hpp</th>
+              <th style={thSt}>Hrg Lunas</th>
+              <th style={thSt}>Hrg Kredit</th>
+              <th style={thSt}>Sub Total Rp</th>
+              <th style={{ ...thSt, width: 30 }}></th>
             </tr>
           </thead>
           <tbody>
             {items.length === 0 && (
-              <tr><td colSpan={10} style={{ padding: 24, textAlign: 'center', color: '#999', fontStyle: 'italic' }}>Scan barcode atau klik "+ Manual" untuk tambah barang</td></tr>
+              <tr><td colSpan={10} style={{ ...cellSt, textAlign: 'center', color: '#999', padding: 20, fontStyle: 'italic' }}>
+                Scan barcode atau klik "+ Manual" untuk tambah barang
+              </td></tr>
             )}
             {items.map((it, i) => {
-              const prod = products.find(p => p.id === it.productId)
-              const stokAwal = prod?.stock || 0
-              const stokAkhir = stokAwal + (it.qty || 0)
-              const itemSub = (it.qty || 0) * (it.buyPrice || 0)
+              const stokAkhir = (it.stokAwal||0) + (it.qty||0)
+              const subTotal = (it.qty||0) * (it.hpp||0)
               return (
-                <tr key={i} style={{ borderBottom: '1px solid #e0e0e0', background: i % 2 === 0 ? '#fff' : '#f5f5f5' }}>
-                  <td style={{ padding: '4px 6px', fontFamily: 'monospace', fontSize: 11 }}>
-                    {prod?.barcode || prod?.sku || '-'}
-                    <button type="button" style={{ ...S.smallBtn, padding: '1px 4px', marginLeft: 4, color: '#7b1fa2', fontSize: 10 }} onClick={() => setShowScanIdx(showScanIdx === i ? -1 : i)} title="Scan">📷</button>
+                <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9f9f9' }}>
+                  <td style={cellSt}>
+                    {it.isManual
+                      ? <input style={inputSt} value={it.kode} placeholder="Kode..."
+                          onChange={e => updateItem(i, 'kode', e.target.value)} />
+                      : <span style={{ fontSize: 12, fontFamily: 'monospace' }}>{it.kode || '-'}</span>}
                   </td>
-                  <td style={{ padding: '4px 6px' }}>
-                    <select style={{ ...S.input, fontSize: 12, padding: '3px 6px', border: 'none', background: 'transparent' }} value={it.productId} onChange={e => updateItem(i, 'productId', e.target.value)}>
-                      {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
+                  <td style={cellSt}>
+                    {it.isManual
+                      ? <input style={inputSt} value={it.nama} placeholder="Nama barang..."
+                          onChange={e => updateItem(i, 'nama', e.target.value)} />
+                      : <span style={{ fontSize: 12 }}>{it.nama || '-'}</span>}
                   </td>
-                  <td style={{ padding: '4px 4px', textAlign: 'center' }}>
-                    <input style={{ ...S.input, width: 55, fontSize: 13, fontWeight: 700, textAlign: 'center', padding: '3px', background: '#fffde7', border: '1px solid #fdd835' }} type="number" min="1" value={it.qty} onChange={e => updateItem(i, 'qty', Number(e.target.value))} />
-                  </td>
-                  <td style={{ padding: '4px 6px', textAlign: 'center', color: '#6b7280' }}>{stokAwal}</td>
-                  <td style={{ padding: '4px 6px', textAlign: 'center', fontWeight: 700, color: '#2e7d32' }}>{stokAkhir}</td>
-                  <td style={{ padding: '4px 4px', textAlign: 'right' }}>
-                    <input style={{ ...S.input, width: 80, fontSize: 12, textAlign: 'right', padding: '3px 6px' }} type="number" value={it.buyPrice} onChange={e => updateItem(i, 'buyPrice', Number(e.target.value))} />
-                  </td>
-                  <td style={{ padding: '4px 4px', textAlign: 'right' }}>
-                    <input style={{ ...S.input, width: 80, fontSize: 12, textAlign: 'right', padding: '3px 6px' }} type="number" value={it.sellPrice||''} onChange={e => updateItem(i, 'sellPrice', Number(e.target.value))} />
-                  </td>
-                  <td style={{ padding: '4px 4px', textAlign: 'right' }}>
-                    <input style={{ ...S.input, width: 80, fontSize: 12, textAlign: 'right', padding: '3px 6px' }} type="number" value={it.sellPrice2||''} onChange={e => updateItem(i, 'sellPrice2', Number(e.target.value))} />
-                  </td>
-                  <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{Number(itemSub).toLocaleString('id-ID')}</td>
-                  <td style={{ padding: '4px 4px', textAlign: 'center' }}>
-                    <button style={{ ...S.smallBtn, color: 'var(--r)', padding: '1px 4px', fontSize: 12 }} onClick={() => removeItem(i)} title="Hapus baris">×</button>
+                  <td style={cellSt}><input style={{ ...numSt, fontWeight: 700, color: '#1a3a8a' }}
+                    type="number" min="1" value={it.qty}
+                    onChange={e => updateItem(i, 'qty', Number(e.target.value))} /></td>
+                  <td style={{ ...cellSt, textAlign: 'right', fontSize: 12, color: '#666' }}>{(it.stokAwal||0).toLocaleString('id-ID')}</td>
+                  <td style={{ ...cellSt, textAlign: 'right', fontSize: 12, fontWeight: 600 }}>{stokAkhir.toLocaleString('id-ID')}</td>
+                  <td style={cellSt}><input style={numSt} type="number" value={it.hpp}
+                    onChange={e => updateItem(i, 'hpp', Number(e.target.value))} /></td>
+                  <td style={cellSt}><input style={numSt} type="number" value={it.hrgLunas}
+                    onChange={e => updateItem(i, 'hrgLunas', Number(e.target.value))} /></td>
+                  <td style={cellSt}><input style={numSt} type="number" value={it.hrgKredit}
+                    onChange={e => updateItem(i, 'hrgKredit', Number(e.target.value))} /></td>
+                  <td style={{ ...cellSt, textAlign: 'right', fontSize: 12, fontWeight: 600 }}>{subTotal.toLocaleString('id-ID')}</td>
+                  <td style={{ ...cellSt, textAlign: 'center' }}>
+                    <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--r)', fontSize: 14, padding: 2 }}
+                      onClick={() => removeItem(i)} title="Hapus baris">✕</button>
                   </td>
                 </tr>
               )
@@ -832,65 +727,49 @@ function StockInForm({ products, suppliers, onSave }) {
         </table>
       </div>
 
-      {showScanIdx >= 0 && <BarcodeScanner onScan={(code) => handleBarcodeScan(code, showScanIdx)} onClose={() => setShowScanIdx(-1)} />}
-
-      {/* FOOTER — PPN, Jenis Bayar, TOTAL */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 8 }}>
-        <label style={S.formLabel}>PPN (%)
-          <input style={S.input} type="number" min="0" max="100" value={ppnPct} onChange={e => setPpnPct(Number(e.target.value))} />
-        </label>
+      {/* PPN, Jenis Bayar, Catatan */}
+      <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>PPN (%)<input style={S.input} type="number" min="0" max="100" value={ppnPct} onChange={e => setPpnPct(Number(e.target.value))} /></label>
         <label style={S.formLabel}>Jenis Bayar
           <select style={S.input} value={jenisBayar} onChange={e => setJenisBayar(e.target.value)}>
             <option value="TUNAI">TUNAI</option>
-            <option value="KREDIT">KREDIT (hutang)</option>
+            <option value="KREDIT">KREDIT</option>
           </select>
         </label>
-        {jenisBayar === 'KREDIT' ? (
-          <label style={S.formLabel}>Jatuh Tempo<input style={S.input} type="date" value={jatuhTempo} onChange={e => setJatuhTempo(e.target.value)} /></label>
-        ) : (
-          <label style={S.formLabel}>Catatan<input style={S.input} value={note} onChange={e => setNote(e.target.value)} placeholder="Catatan opsional..." /></label>
-        )}
+        <label style={S.formLabel}>Catatan<input style={S.input} value={note} onChange={e => setNote(e.target.value)} placeholder="Catatan opsional..." /></label>
       </div>
 
-      {/* TOTAL BOX */}
-      <div style={{ display: 'flex', gap: 12, marginTop: 8, alignItems: 'stretch' }}>
-        <div style={{ flex: 1, padding: '10px 14px', background: isMatch ? '#e8f5e9' : '#ffebee', borderRadius: 10, border: isMatch ? '2px solid #4caf50' : '2px solid #ef5350' }}>
-          {ppnPct > 0 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
-              <span>Subtotal ({items.length} item)</span><span>{formatRp(subtotal)}</span>
-            </div>
-          )}
-          {ppnPct > 0 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4, color: '#c62828' }}>
-              <span>PPN {ppnPct}%</span><span>+ {formatRp(ppnAmount)}</span>
-            </div>
-          )}
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 18, fontWeight: 700, color: '#1a237e' }}>
-            <span>TOTAL</span><span>{formatRp(total)}</span>
+      {jenisBayar === 'KREDIT' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <label style={S.formLabel}>Jatuh Tempo<input style={S.input} type="date" value={jatuhTempo} onChange={e => setJatuhTempo(e.target.value)} /></label>
+          <div style={{ fontSize: 11, color: '#e65100', padding: '8px 10px', background: '#fff3e0', borderRadius: 4, alignSelf: 'center' }}>
+            ⚠️ Pembelian KREDIT masuk ke <strong>Hutang Supplier</strong>
           </div>
-          {totalNotaNum > 0 && (
-            <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px dashed #999' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 600 }}>
-                <span>Total Nota</span><span>{formatRp(totalNotaNum)}</span>
-              </div>
-              {isMatch ? (
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#2e7d32', marginTop: 4, textAlign: 'center' }}>✅ SESUAI</div>
-              ) : (
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#b71c1c', marginTop: 4, textAlign: 'center' }}>❌ SELISIH {formatRp(Math.abs(selisih))}</div>
-              )}
-            </div>
-          )}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 160 }}>
-          <button style={{ ...S.filterBtn, flex: 1, justifyContent: 'center' }} onClick={() => { setItems([]); setScanInput('') }}>Batal</button>
-          <button
-            style={{ ...S.primaryBtn, flex: 2, justifyContent: 'center', fontSize: 14, opacity: (!hasItems || (totalNotaNum > 0 && !isMatch)) ? 0.5 : 1 }}
-            disabled={!hasItems || (totalNotaNum > 0 && !isMatch)}
-            onClick={handleSave}
-          >
-            💾 Simpan Transaksi
-          </button>
+      )}
+
+      {/* TOTAL + tombol aksi */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 4 }}>
+        <div style={{ flex: 1, padding: '12px 20px', background: '#1a3a8a', borderRadius: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ color: '#ffd600', fontWeight: 700, fontSize: 16 }}>TOTAL</span>
+          <span style={{ color: '#fff', fontWeight: 700, fontSize: 20 }}>{formatRp(total)}</span>
         </div>
+        <button style={{ ...S.filterBtn, padding: '12px 24px' }}
+          onClick={() => { if (confirm('Batal input? Data yang sudah diisi akan hilang.')) { setItems([]); setScanInput('') } }}>Batal</button>
+        <button style={{ ...S.primaryBtn, padding: '12px 24px' }}
+          onClick={() => {
+            if (!supplierId) { alert('Pilih supplier dulu!'); return }
+            if (items.length === 0) { alert('Tambahkan minimal 1 item!'); return }
+            // Konversi items ke format yang kompatibel dengan saveStockIn
+            const saveItems = items.map(it => ({
+              productId: it.productId || it.kode, qty: it.qty || 0,
+              buyPrice: it.hpp || 0, sellPrice: it.hrgLunas || 0, sellPrice2: it.hrgKredit || 0,
+              nama: it.nama, kode: it.kode
+            }))
+            onSave({ date, supplierId, invoice, note, items: saveItems, subtotal, ppnPct, ppnAmount, total, jenisBayar, jatuhTempo })
+          }}>
+          💾 Simpan Transaksi
+        </button>
       </div>
     </div>
   )
@@ -910,101 +789,15 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   const [caraBayar, setCaraBayar] = useState('LUNAS') // LUNAS | KREDIT
   const [dp, setDp] = useState('')
 
-  // ============================================
-  // SUPPORT SCANNER FISIK (USB/Bluetooth)
-  // Scanner fisik = keyboard HID: ketik cepat + Enter
-  // Jika scanner-input ada, fokuskan ke situ
-  // ============================================
-  const scanHandlerRef = useRef(null)
-  scanHandlerRef.current = handleBarcodeScan
-
-  useEffect(() => {
-    let buffer = ''
-    let lastKeyTime = 0
-
-    function handleKeyDown(e) {
-      const now = Date.now()
-      const tag = e.target?.tagName?.toLowerCase()
-      const scanInput = document.getElementById('scanner-input')
-
-      // Jika scanner-input ada dan bukan target saat ini, fokuskan ke situ
-      if (scanInput && e.target !== scanInput && tag !== 'input' && tag !== 'textarea' && tag !== 'select') {
-        if (e.key.length === 1) {
-          scanInput.focus()
-          return // biarkan input handle sendiri
-        }
-      }
-
-      // Fallback: global detection untuk halaman tanpa scanner-input
-      if (!scanInput) {
-        if (tag === 'input' || tag === 'textarea' || tag === 'select') return
-
-        if (e.key === 'Enter' && buffer.length >= 3) {
-          e.preventDefault()
-          if (scanHandlerRef.current) scanHandlerRef.current(buffer.trim())
-          buffer = ''
-          return
-        }
-        if (e.key.length === 1) {
-          if (now - lastKeyTime > 100) buffer = ''
-          buffer += e.key
-          lastKeyTime = now
-        }
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
-
   const filteredProducts = products.filter(p =>
-    p.stock > 0 && (search === '' || String(p.name||'').toLowerCase().includes(search.toLowerCase()) || String(p.sku||'').toLowerCase().includes(search.toLowerCase()) || String(p.barcode||'').toLowerCase().includes(search.toLowerCase()))
+    p.stock > 0 && (search === '' || String(p.name||'').toLowerCase().includes(search.toLowerCase()) || String(p.sku||'').toLowerCase().includes(search.toLowerCase()))
   )
 
   function handleBarcodeScan(code) {
-    console.log('[SCAN] Kode terbaca:', code)
-
-    // Normalisasi: ganti separator AGT (/, \, -, spasi) jadi AGT-
-    let normalizedCode = code.trim()
-    if (/^AGT[\/\\.\-\s]/i.test(normalizedCode)) {
-      normalizedCode = 'AGT-' + normalizedCode.substring(4)
-    } else if (/^AGT[a-z0-9]/i.test(normalizedCode) && !normalizedCode.toUpperCase().startsWith('AGT-')) {
-      normalizedCode = 'AGT-' + normalizedCode.substring(3)
-    }
-    console.log('[SCAN] Normalized:', normalizedCode)
-
-    // Cek apakah ini barcode kartu anggota (prefix AGT-)
-    if (normalizedCode.toUpperCase().startsWith('AGT-')) {
-      const memberKey = normalizedCode.substring(4) // ambil ID setelah "AGT-"
-      console.log('[SCAN] Kartu anggota, cari ID:', memberKey)
-      // Cari by ID dulu (kartu baru), lalu by No Anggota (kartu lama)
-      const found = members.find(m => String(m.id||'') === memberKey) ||
-                    members.find(m => String(m.no||'') === memberKey)
-      if (found) {
-        console.log('[SCAN] Ketemu:', found.name, found.no, found.id)
-        setMemberId(found.id)
-        const useH2 = caraBayar === 'KREDIT' || found.tingkatHrg === '2'
-        setCart(prev => prev.map(c => {
-          const prod = products.find(p => p.id === c.productId)
-          if (!prod) return c
-          const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
-          return { ...c, price: newPrice }
-        }))
-        setLastScanned('✅ Scan: "' + code + '" → ' + found.name + ' (No.' + found.no + ')')
-        showToast('Anggota dipilih: ' + found.name + (useH2 ? ' (Harga Kredit)' : ' (Harga Lunas)'))
-      } else {
-        console.log('[SCAN] Tidak ketemu ID:', memberKey, '| Daftar ID:', members.map(m => m.id).join(', '))
-        setLastScanned('❌ Scan: "' + code + '" → Tidak cocok dengan anggota manapun')
-        showToast('Kartu anggota tidak terdaftar. Cetak ulang kartu!', 'error')
-      }
-      return
-    }
-
-    // Kalau bukan kartu anggota, cari produk berdasarkan barcode, SKU, atau nama
+    // Cari produk berdasarkan SKU atau nama
     const found = products.find(p =>
-      String(p.barcode||'').toLowerCase() === code.toLowerCase() ||
       String(p.sku||'').toLowerCase() === code.toLowerCase() ||
-      String(p.barcode||'').toLowerCase().includes(code.toLowerCase()) ||
+      String(p.name||'').toLowerCase() === code.toLowerCase() ||
       String(p.sku||'').toLowerCase().includes(code.toLowerCase())
     )
     if (found) {
@@ -1016,17 +809,15 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
       setLastScanned(found.name)
       showToast('+ ' + found.name + ' ditambahkan ke keranjang')
     } else {
-      showToast('Barcode "' + code + '" belum terdaftar. Tambahkan di Edit Produk → field Barcode Produk.', 'error')
-      setLastScanned('Belum terdaftar: ' + code)
-      // Set search agar user bisa lihat produk terdekat
-      setSearch(code)
+      showToast('Produk tidak ditemukan: ' + code, 'error')
+      setLastScanned('Tidak ditemukan: ' + code)
     }
   }
 
   function addToCart(product) {
-    // Pilih harga berdasarkan cara bayar DAN tipe anggota
+    // Pilih harga berdasarkan tipe pelanggan
     const member = members.find(m => m.id === memberId)
-    const useHarga2 = caraBayar === 'KREDIT' || member?.tingkatHrg === '2'
+    const useHarga2 = member?.tingkatHrg === '2'
     const price = useHarga2 && product.sellPrice2 ? product.sellPrice2 : product.sellPrice
 
     setCart(prev => {
@@ -1037,19 +828,6 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
       }
       return [...prev, { productId: product.id, name: product.name, price, qty: 1, maxStock: product.stock, diskon: 0 }]
     })
-  }
-
-  // Update harga keranjang saat cara bayar berubah
-  function switchCaraBayar(newCara) {
-    setCaraBayar(newCara)
-    const member = members.find(m => m.id === memberId)
-    const useH2 = newCara === 'KREDIT' || member?.tingkatHrg === '2'
-    setCart(prev => prev.map(c => {
-      const prod = products.find(p => p.id === c.productId)
-      if (!prod) return c
-      const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
-      return { ...c, price: newPrice }
-    }))
   }
 
   function updateQty(productId, qty) {
@@ -1119,13 +897,22 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
     <div>
       <div style={S.pageHead}>
         <h2 style={S.title}>Kasir / POS</h2>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <ScanButton onClick={() => setShowScanner(true)} label="Scan Barcode" />
           <div style={S.filterGroup}>
             <button style={{ ...S.filterBtn, ...(tab === 'kasir' ? S.filterActive : {}) }} onClick={() => setTab('kasir')}>Kasir</button>
             <button style={{ ...S.filterBtn, ...(tab === 'riwayat' ? S.filterActive : {}) }} onClick={() => setTab('riwayat')}>Riwayat Penjualan</button>
           </div>
         </div>
       </div>
+
+      {/* Barcode Scanner Modal */}
+      {showScanner && (
+        <BarcodeScanner
+          onScan={(code) => handleBarcodeScan(code)}
+          onClose={() => setShowScanner(false)}
+        />
+      )}
 
       {/* Last scanned indicator */}
       {lastScanned && tab === 'kasir' && (
@@ -1136,66 +923,9 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
       )}
 
       {tab === 'kasir' ? (
-        <div>
-          {/* STEP 1: Pilih Anggota */}
-          <div style={{ background: '#fff', borderRadius: 12, padding: 16, marginBottom: 16, border: '2px solid #e3f2fd', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <span style={{ background: '#1565c0', color: '#fff', borderRadius: '50%', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700 }}>1</span>
-              <span style={{ fontSize: 14, fontWeight: 700, color: '#1565c0' }}>Pilih Anggota</span>
-              <span style={{ fontSize: 11, color: '#6b7280' }}>— scan kartu / cari nama / ketik AGT + Enter</span>
-            </div>
-            <MemberSearch members={members} memberId={memberId} onBarcodeScan={handleBarcodeScan} onSelect={(newMid) => {
-              setMemberId(newMid)
-              const m = members.find(x => x.id === newMid)
-              const useH2 = caraBayar === 'KREDIT' || m?.tingkatHrg === '2'
-              setCart(prev => prev.map(c => {
-                const prod = products.find(p => p.id === c.productId)
-                if (!prod) return c
-                const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
-                return { ...c, price: newPrice }
-              }))
-              if (m) showToast('Anggota: ' + m.name + (useH2 ? ' (Harga Kredit)' : ' (Harga Lunas)'))
-            }} />
-          </div>
-
-          {/* STEP 2: Scan/Pilih Barang + Keranjang */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-            <span style={{ background: '#2e7d32', color: '#fff', borderRadius: '50%', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700 }}>2</span>
-            <span style={{ fontSize: 14, fontWeight: 700, color: '#2e7d32' }}>Scan / Pilih Barang</span>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 16, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 16, alignItems: 'start' }}>
           {/* Product picker */}
           <div>
-            {/* Input untuk Scanner Fisik + Tombol Kamera */}
-            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, background: '#f0fdf4', border: '2px solid #86efac', borderRadius: 10, padding: '8px 14px' }}>
-                <svg width="20" height="20" fill="none" stroke="#16a34a" strokeWidth="2" viewBox="0 0 24 24"><path d="M2 8V6a2 2 0 012-2h3M22 8V6a2 2 0 00-2-2h-3M2 16v2a2 2 0 002 2h3M22 16v2a2 2 0 01-2 2h-3M7 12h10"/></svg>
-                <input
-                  id="scanner-input"
-                  style={{ ...S.searchInput, flex: 1, fontSize: 15, fontWeight: 600, background: 'transparent' }}
-                  placeholder="Scan barcode barang / ketik kode + Enter..."
-                  autoFocus
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && e.target.value.trim().length >= 1) {
-                      e.preventDefault()
-                      handleBarcodeScan(e.target.value.trim())
-                      e.target.value = ''
-                    }
-                  }}
-                  autoComplete="off"
-                />
-              </div>
-              <button style={{ ...S.primaryBtn, background: '#7b1fa2', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 6 }} onClick={() => setShowScanner(true)}>
-                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
-                Kamera
-              </button>
-            </div>
-            {/* Kamera Scanner inline */}
-            {showScanner && (
-              <div style={{ marginBottom: 12 }}>
-                <BarcodeScanner onScan={(code) => { handleBarcodeScan(code); setShowScanner(false) }} onClose={() => setShowScanner(false)} />
-              </div>
-            )}
             <div style={{ ...S.searchBox, marginBottom: 12 }}>{IC.search}<input style={S.searchInput} placeholder="Cari produk..." value={search} onChange={e => setSearch(e.target.value)} /></div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
               {filteredProducts.map(p => (
@@ -1228,10 +958,7 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</div>
-                        <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-                          {formatRp(c.price)} × {c.qty} = {formatRp(sub)}
-                          <span style={{ marginLeft: 6, fontSize: 10, padding: '1px 5px', borderRadius: 3, fontWeight: 600, background: caraBayar === 'KREDIT' ? '#fff3e0' : '#e8f5e9', color: caraBayar === 'KREDIT' ? '#e65100' : '#2e7d32' }}>{caraBayar === 'KREDIT' ? 'Hrg Kredit' : 'Hrg Lunas'}</span>
-                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--muted)' }}>{formatRp(c.price)} × {c.qty} = {formatRp(sub)}</div>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <button style={{ ...S.smallBtn, border: '1px solid var(--border)', borderRadius: 4, padding: 2 }} onClick={() => updateQty(c.productId, c.qty - 1)}>{IC.minus}</button>
@@ -1264,12 +991,31 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
                 <span style={{ color: 'var(--b)' }}>{formatRp(total)}</span>
               </div>
 
+              <label style={S.formLabel}>Pelanggan / Anggota
+                <select style={S.input} value={memberId} onChange={e => {
+                  const newMid = e.target.value
+                  setMemberId(newMid)
+                  // Update harga di keranjang sesuai tipe pelanggan
+                  const m = members.find(x => x.id === newMid)
+                  const useH2 = m?.tingkatHrg === '2'
+                  setCart(prev => prev.map(c => {
+                    const prod = products.find(p => p.id === c.productId)
+                    if (!prod) return c
+                    const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
+                    return { ...c, price: newPrice }
+                  }))
+                }}>
+                  <option value="">-- Umum (Harga Eceran) --</option>
+                  {members.filter(m => m.status === 'active').map(m => <option key={m.id} value={m.id}>{m.no} - {m.name} {m.tingkatHrg === '2' ? '(Grosir)' : ''}</option>)}
+                </select>
+              </label>
+
               {/* Cara Bayar: LUNAS / KREDIT */}
               <div style={{ display: 'flex', gap: 4, marginTop: 8, marginBottom: 8 }}>
                 <button style={{ flex: 1, padding: '8px', border: '2px solid', borderColor: caraBayar === 'LUNAS' ? '#2e7d32' : '#e5e7eb', background: caraBayar === 'LUNAS' ? '#e8f5e9' : '#fff', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13, color: caraBayar === 'LUNAS' ? '#2e7d32' : '#6b7280' }}
-                  onClick={() => switchCaraBayar('LUNAS')}>LUNAS</button>
+                  onClick={() => setCaraBayar('LUNAS')}>LUNAS</button>
                 <button style={{ flex: 1, padding: '8px', border: '2px solid', borderColor: caraBayar === 'KREDIT' ? '#e65100' : '#e5e7eb', background: caraBayar === 'KREDIT' ? '#fff3e0' : '#fff', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13, color: caraBayar === 'KREDIT' ? '#e65100' : '#6b7280' }}
-                  onClick={() => switchCaraBayar('KREDIT')}>KREDIT</button>
+                  onClick={() => setCaraBayar('KREDIT')}>KREDIT</button>
               </div>
 
               {caraBayar === 'LUNAS' ? (
@@ -1302,7 +1048,6 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
             </div>
           </div>
         </div>
-        </div>
       ) : (
         /* Riwayat Penjualan */
         <div style={S.card}>
@@ -1334,147 +1079,13 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
 // =============================================
 // HELPERS
 // =============================================
-// =============================================
-// PENCARIAN ANGGOTA OTOMATIS (Autocomplete)
-// =============================================
-function MemberSearch({ members, memberId, onSelect, onBarcodeScan }) {
-  const [query, setQuery] = useState('')
-  const [showList, setShowList] = useState(false)
-  const wrapRef = useRef(null)
-
-  const selectedMember = members.find(m => m.id === memberId)
-  const activeMembers = members.filter(m => m.status === 'active')
-
-  const filtered = query.trim()
-    ? activeMembers.filter(m => {
-        const q = query.toLowerCase()
-        return String(m.name||'').toLowerCase().includes(q) ||
-               String(m.no||'').toLowerCase().includes(q) ||
-               String(m.nrp||'').toLowerCase().includes(q) ||
-               String(m.pangkat||'').toLowerCase().includes(q) ||
-               String(m.phone||'').toLowerCase().includes(q) ||
-               String(m.kompi||'').toLowerCase().includes(q)
-      })
-    : activeMembers
-
-  // Deteksi barcode: cek apakah input = barcode AGT
-  const scanTimerRef = useRef(null)
-  function handleInputChange(val) {
-    if (/^AGT/i.test(val) && onBarcodeScan) {
-      // Barcode terdeteksi — JANGAN tampilkan dropdown
-      setShowList(false)
-      setQuery(val)
-      // Cancel timer sebelumnya
-      if (scanTimerRef.current) clearTimeout(scanTimerRef.current)
-      // Tunggu scanner selesai ketik (300ms) lalu proses
-      scanTimerRef.current = setTimeout(() => {
-        const input = document.querySelector('[data-member-search]')
-        const finalVal = (input?.value || val).trim()
-        if (/^AGT/i.test(finalVal) && finalVal.length > 4) {
-          onBarcodeScan(finalVal)
-          setQuery('')
-          setShowList(false)
-          if (input) input.value = ''
-        }
-      }, 300)
-      return
-    }
-    setQuery(val)
-    setShowList(true)
-  }
-
-  // Tutup dropdown saat klik di luar
-  useEffect(() => {
-    function handleClick(e) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setShowList(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [])
-
-  return (
-    <div ref={wrapRef} style={{ position: 'relative', marginBottom: 4 }}>
-      <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Pelanggan / Anggota</div>
-
-      {selectedMember ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#e3f2fd', borderRadius: 8, border: '1px solid #90caf9' }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: 14 }}>{selectedMember.pangkat ? selectedMember.pangkat + ' ' : ''}{selectedMember.name}</div>
-            <div style={{ fontSize: 11, color: '#1565c0' }}>No. {selectedMember.no} {selectedMember.tingkatHrg === '2' ? '• Harga Kredit' : '• Harga Lunas'}</div>
-          </div>
-          <button style={{ border: 'none', background: '#ef5350', color: '#fff', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
-            onClick={() => { onSelect(''); setQuery('') }}>× Ganti</button>
-        </div>
-      ) : (
-        <div>
-          <input
-            data-member-search="true"
-            style={{ ...S.input, fontSize: 14, padding: '10px 12px' }}
-            placeholder="Ketik nama / no / NRP / scan kartu..."
-            value={query}
-            onChange={e => handleInputChange(e.target.value)}
-            onFocus={() => setShowList(true)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && /^AGT/i.test(query) && query.length > 4 && onBarcodeScan) {
-                e.preventDefault()
-                onBarcodeScan(query.trim())
-                setQuery('')
-              }
-            }}
-          />
-        </div>
-      )}
-
-      {/* Dropdown hasil pencarian */}
-      {showList && !selectedMember && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,0.12)', maxHeight: 250, overflowY: 'auto', marginTop: 4 }}>
-          {/* Opsi Umum */}
-          <div
-            onClick={() => { onSelect(''); setQuery(''); setShowList(false) }}
-            style={{ padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: 13, color: '#6b7280', fontStyle: 'italic' }}
-            onMouseEnter={e => e.target.style.background = '#f9fafb'}
-            onMouseLeave={e => e.target.style.background = ''}
-          >
-            -- Umum (Tanpa Anggota) --
-          </div>
-          {filtered.length > 0 ? filtered.slice(0, 20).map(m => (
-            <div key={m.id}
-              onClick={() => { onSelect(m.id); setQuery(''); setShowList(false) }}
-              style={{ padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid #f9fafb', transition: 'background 0.1s' }}
-              onMouseEnter={e => e.target.style.background = '#e3f2fd'}
-              onMouseLeave={e => e.target.style.background = ''}
-            >
-              <div style={{ fontWeight: 600, fontSize: 13 }}>{m.pangkat ? m.pangkat + ' ' : ''}{m.name}</div>
-              <div style={{ fontSize: 11, color: '#6b7280' }}>
-                No. {m.no} {m.nrp ? '• NRP: ' + m.nrp : ''} {m.kompi ? '• ' + m.kompi : ''} {m.tingkatHrg === '2' ? ' • Kredit' : ''}
-              </div>
-            </div>
-          )) : (
-            <div style={{ padding: '14px', textAlign: 'center', color: '#999', fontSize: 13 }}>Tidak ada anggota yang cocok</div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
 function catColor(cat) {
   const map = {
     Sembako: { bg: '#e8f5e9', fg: '#2e7d32' },
     Makanan: { bg: '#fff3e0', fg: '#e65100' },
     Minuman: { bg: '#e3f2fd', fg: '#1565c0' },
-    Rokok: { bg: '#efebe9', fg: '#4e342e' },
-    Sabun: { bg: '#e0f7fa', fg: '#00695c' },
-    'Alat Mandi': { bg: '#e0f7fa', fg: '#00838f' },
     Toiletries: { bg: '#fce4ec', fg: '#c62828' },
     ATK: { bg: '#f3e5f5', fg: '#7b1fa2' },
-    Obat: { bg: '#ffebee', fg: '#b71c1c' },
-    Elektronik: { bg: '#e8eaf6', fg: '#283593' },
-    Pakaian: { bg: '#fce4ec', fg: '#880e4f' },
-    'Pakaian KAP TNI': { bg: '#e8eaf6', fg: '#1a237e' },
-    Pangkat: { bg: '#fff8e1', fg: '#f57f17' },
-    Barcil: { bg: '#f1f8e9', fg: '#33691e' },
-    'Perabotan Rumah': { bg: '#efebe9', fg: '#3e2723' },
     Lainnya: { bg: '#f5f5f5', fg: '#616161' },
   }
   return map[cat] || map.Lainnya
