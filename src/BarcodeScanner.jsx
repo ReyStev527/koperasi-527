@@ -19,10 +19,13 @@ async function loadScanner() {
 export function BarcodeScanner({ onScan, onClose }) {
   const [status, setStatus] = useState('loading')
   const [error, setError] = useState('')
+  const [zoomLevel, setZoomLevel] = useState(1)
+  const [maxZoom, setMaxZoom] = useState(1)
   const scannerRef = useRef(null)
   const onScanRef = useRef(onScan)
   const containerId = useRef('barcode-reader-' + Math.random().toString(36).slice(2, 8))
   const mountedRef = useRef(true)
+  const trackRef = useRef(null)
 
   // Update ref setiap render agar callback selalu terbaru
   useEffect(() => { onScanRef.current = onScan }, [onScan])
@@ -33,9 +36,25 @@ export function BarcodeScanner({ onScan, onClose }) {
 
     async function startScanner() {
       try {
-        // Minta izin kamera dulu sebelum load library
+        // Minta izin kamera dengan resolusi tinggi untuk barcode kecil
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: 'environment',
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+            }
+          })
+          // Cek kemampuan zoom kamera
+          const track = stream.getVideoTracks()[0]
+          if (track) {
+            try {
+              const caps = track.getCapabilities?.()
+              if (caps?.zoom) {
+                setMaxZoom(Math.min(caps.zoom.max, 5))
+              }
+            } catch {}
+          }
           // Stop stream setelah dapat izin, biar html5-qrcode yang kelola
           stream.getTracks().forEach(t => t.stop())
         } catch (permErr) {
@@ -64,21 +83,58 @@ export function BarcodeScanner({ onScan, onClose }) {
         scannerRef.current = scanner
 
         await scanner.start(
-          { facingMode: 'environment' }, // Kamera belakang
+          { facingMode: 'environment' },
           {
-            fps: 10,
-            qrbox: { width: 250, height: 150 },
-            aspectRatio: 1.0,
+            fps: 25,                         // 25 FPS untuk scan cepat (was 10)
+            qrbox: { width: 300, height: 100 }, // Area kecil memaksa fokus ke barcode
+            aspectRatio: 1.5,
+            disableFlip: false,
+            videoConstraints: {
+              facingMode: 'environment',
+              width: { ideal: 1920 },        // Resolusi tinggi
+              height: { ideal: 1080 },
+              focusMode: 'continuous',        // Auto-focus terus-menerus
+            },
+            experimentalFeatures: {
+              useBarCodeDetectorIfSupported: true  // Pakai native BarcodeDetector API jika ada
+            },
+            formatsToSupport: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] // Semua format barcode
           },
           (decodedText) => {
-            // Berhasil scan — pakai ref bukan langsung onScan
             if (onScanRef.current) onScanRef.current(decodedText.trim())
-            // Vibrate HP sebagai feedback
             if (navigator.vibrate) navigator.vibrate(100)
           },
           () => {} // Ignore scan errors
         )
-        if (mountedRef.current) setStatus('scanning')
+
+        if (mountedRef.current) {
+          setStatus('scanning')
+          // Ambil track kamera untuk kontrol zoom
+          try {
+            const videoEl = el.querySelector('video')
+            if (videoEl?.srcObject) {
+              const track = videoEl.srcObject.getVideoTracks()[0]
+              trackRef.current = track
+              // Set auto-focus continuous
+              if (track.getCapabilities?.()?.focusMode?.includes('continuous')) {
+                await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] })
+              }
+              // Cek zoom
+              const caps = track.getCapabilities?.()
+              if (caps?.zoom) {
+                setMaxZoom(Math.min(caps.zoom.max, 5))
+                // Set zoom awal 1.5x untuk barcode kecil
+                const initZoom = Math.min(1.5, caps.zoom.max)
+                setZoomLevel(initZoom)
+                await track.applyConstraints({ advanced: [{ zoom: initZoom }] })
+              }
+              // Set torch/flash jika ada
+              if (caps?.torch) {
+                // Torch tersedia, bisa digunakan nanti
+              }
+            }
+          } catch (e) { console.log('Zoom/focus setup:', e) }
+        }
       } catch (err) {
         console.error('Scanner error:', err)
         if (!mountedRef.current) return
@@ -96,7 +152,29 @@ export function BarcodeScanner({ onScan, onClose }) {
         scanner.stop().catch(() => {})
       }
     }
-  }, []) // Tidak ada dependency — hanya jalankan sekali
+  }, [])
+
+  // Fungsi zoom
+  async function changeZoom(val) {
+    const z = Number(val)
+    setZoomLevel(z)
+    if (trackRef.current) {
+      try {
+        await trackRef.current.applyConstraints({ advanced: [{ zoom: z }] })
+      } catch {}
+    }
+  }
+
+  // Toggle flash/torch
+  async function toggleTorch() {
+    if (!trackRef.current) return
+    try {
+      const caps = trackRef.current.getCapabilities?.()
+      if (!caps?.torch) return
+      const settings = trackRef.current.getSettings?.()
+      await trackRef.current.applyConstraints({ advanced: [{ torch: !settings?.torch }] })
+    } catch {}
+  }
 
   function handleClose() {
     if (scannerRef.current && scannerRef.current.isScanning) {
@@ -145,9 +223,18 @@ export function BarcodeScanner({ onScan, onClose }) {
         <div id={containerId.current} style={{ width: '100%', borderRadius: 8, overflow: 'hidden' }} />
 
         {status === 'scanning' && (
-          <div style={{ textAlign: 'center', padding: '12px 0' }}>
-            <p style={{ fontSize: 13, color: '#6b7280' }}>Arahkan kamera ke barcode produk</p>
+          <div style={{ textAlign: 'center', padding: '8px 0' }}>
+            <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 6 }}>Dekatkan kamera ke barcode — zoom otomatis 1.5×</p>
             <div style={styles.scanLine} />
+            {/* Zoom & Flash Controls */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, padding: '8px 12px', background: '#f5f5f5', borderRadius: 8 }}>
+              <span style={{ fontSize: 11, color: '#666', whiteSpace: 'nowrap' }}>🔍 Zoom</span>
+              <input type="range" min="1" max={maxZoom} step="0.1" value={zoomLevel}
+                onChange={e => changeZoom(e.target.value)}
+                style={{ flex: 1, accentColor: '#1565c0' }} />
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#1565c0', minWidth: 32 }}>{zoomLevel.toFixed(1)}×</span>
+              <button onClick={toggleTorch} style={{ border: 'none', background: '#fff', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 16 }} title="Flash">💡</button>
+            </div>
           </div>
         )}
 

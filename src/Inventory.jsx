@@ -1370,6 +1370,23 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   }
 
   const sortedTx = [...transactions].sort((a, b) => b.date.localeCompare(a.date))
+  const [txFilter, setTxFilter] = useState('all') // all | LUNAS | KREDIT
+  const [txDateFrom, setTxDateFrom] = useState('')
+  const [txDateTo, setTxDateTo] = useState('')
+
+  const filteredTx = sortedTx.filter(tx => {
+    if (txFilter === 'LUNAS' && tx.caraBayar === 'KREDIT') return false
+    if (txFilter === 'KREDIT' && tx.caraBayar !== 'KREDIT') return false
+    if (txDateFrom && tx.date < txDateFrom) return false
+    if (txDateTo && tx.date > txDateTo) return false
+    return true
+  })
+
+  const txLunas = sortedTx.filter(tx => tx.caraBayar !== 'KREDIT')
+  const txKredit = sortedTx.filter(tx => tx.caraBayar === 'KREDIT')
+  const totalLunas = txLunas.reduce((a, tx) => a + (tx.total||0), 0)
+  const totalKredit = txKredit.reduce((a, tx) => a + (tx.total||0), 0)
+  const sisaKredit = txKredit.reduce((a, tx) => a + ((tx.total||0) - (tx.payment||0)), 0)
 
   return (
     <div>
@@ -1561,10 +1578,47 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
         </div>
       ) : (
         /* Riwayat Penjualan */
-        <div style={S.card}>
+        <div>
+          {/* Filter & Summary */}
+          <div style={{ ...S.card, marginBottom: 12 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap', marginBottom: 12 }}>
+              <button style={{ ...S.filterBtn, ...(txFilter === 'all' ? S.filterActive : {}) }} onClick={() => setTxFilter('all')}>Semua ({sortedTx.length})</button>
+              <button style={{ ...S.filterBtn, ...(txFilter === 'LUNAS' ? { background: '#2e7d32', color: '#fff', borderColor: '#2e7d32' } : { color: '#2e7d32' }) }} onClick={() => setTxFilter('LUNAS')}>✅ Lunas ({txLunas.length})</button>
+              <button style={{ ...S.filterBtn, ...(txFilter === 'KREDIT' ? { background: '#e65100', color: '#fff', borderColor: '#e65100' } : { color: '#e65100' }) }} onClick={() => setTxFilter('KREDIT')}>⏳ Kredit ({txKredit.length})</button>
+              <span style={{ width: 1, background: '#e5e7eb', margin: '0 4px', alignSelf: 'stretch' }} />
+              <label style={{ ...S.formLabel, marginBottom: 0, fontSize: 12 }}>Dari
+                <input style={{ ...S.input, padding: '5px 8px', fontSize: 12 }} type="date" value={txDateFrom} onChange={e => setTxDateFrom(e.target.value)} />
+              </label>
+              <label style={{ ...S.formLabel, marginBottom: 0, fontSize: 12 }}>Sampai
+                <input style={{ ...S.input, padding: '5px 8px', fontSize: 12 }} type="date" value={txDateTo} onChange={e => setTxDateTo(e.target.value)} />
+              </label>
+              {(txDateFrom || txDateTo) && <button style={{ ...S.filterBtn, color: '#c62828', fontSize: 11 }} onClick={() => { setTxDateFrom(''); setTxDateTo('') }}>Reset</button>}
+            </div>
+
+            {/* Summary Cards */}
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 160, padding: '10px 14px', background: '#e8f5e9', borderRadius: 8, borderLeft: '4px solid #2e7d32' }}>
+                <div style={{ fontSize: 11, color: '#666' }}>Total Lunas</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#2e7d32' }}>{formatRp(totalLunas)}</div>
+                <div style={{ fontSize: 11, color: '#999' }}>{txLunas.length} transaksi</div>
+              </div>
+              <div style={{ flex: 1, minWidth: 160, padding: '10px 14px', background: '#fff3e0', borderRadius: 8, borderLeft: '4px solid #e65100' }}>
+                <div style={{ fontSize: 11, color: '#666' }}>Total Kredit</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#e65100' }}>{formatRp(totalKredit)}</div>
+                <div style={{ fontSize: 11, color: '#999' }}>{txKredit.length} transaksi</div>
+              </div>
+              <div style={{ flex: 1, minWidth: 160, padding: '10px 14px', background: '#ffebee', borderRadius: 8, borderLeft: '4px solid #c62828' }}>
+                <div style={{ fontSize: 11, color: '#666' }}>Sisa Piutang Kredit</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#c62828' }}>{formatRp(sisaKredit)}</div>
+                <div style={{ fontSize: 11, color: '#999' }}>belum terbayar</div>
+              </div>
+            </div>
+          </div>
+
+          <div style={S.card}>
           <table style={S.table}>
-            <thead><tr>{['Tanggal', 'No Nota', 'Pembeli', 'Item', 'Total', 'Bayar', 'Kembali', 'Status'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-            <tbody>{sortedTx.map(tx => {
+            <thead><tr>{['Tanggal', 'No Nota', 'Pembeli', 'Item', 'Total', 'Bayar', 'Kembali/Sisa', 'Status', ''].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{filteredTx.map(tx => {
               const m = members.find(mm => mm.id === tx.memberId)
               const isKredit = tx.caraBayar === 'KREDIT'
               return (
@@ -1575,12 +1629,14 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
                   <td style={S.td}>{(tx.items || []).map((it, i) => <div key={i} style={{ fontSize: 12 }}>{it.name} × {it.qty}{it.diskon > 0 ? ' (-' + it.diskon + '%)' : ''}</div>)}</td>
                   <td style={{ ...S.td, fontWeight: 600 }}>{formatRp(tx.total)}</td>
                   <td style={S.td}>{formatRp(tx.payment)}</td>
-                  <td style={{ ...S.td, color: isKredit ? '#e65100' : 'var(--g)' }}>{isKredit ? formatRp(tx.total - (tx.payment || 0)) : formatRp(tx.change || 0)}</td>
+                  <td style={{ ...S.td, color: isKredit ? '#e65100' : 'var(--g)', fontWeight: 600 }}>{isKredit ? formatRp(tx.total - (tx.payment || 0)) : formatRp(tx.change || 0)}</td>
                   <td style={S.td}><span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600, background: isKredit ? '#fff3e0' : '#e8f5e9', color: isKredit ? '#e65100' : '#2e7d32' }}>{isKredit ? 'KREDIT' : 'LUNAS'}</span></td>
+                  <td style={S.td}><button style={{ ...S.smallBtn, color: '#1565c0', fontSize: 11, padding: '3px 8px', border: '1px solid #e0e0e0', borderRadius: 4 }} onClick={() => { try { cetakStruk(tx, settings, members) } catch(e) {} }}>🖨️</button></td>
                 </tr>
               )
-            })}{sortedTx.length === 0 && <tr><td colSpan={8} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Belum ada transaksi</td></tr>}</tbody>
+            })}{filteredTx.length === 0 && <tr><td colSpan={9} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Tidak ada transaksi</td></tr>}</tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

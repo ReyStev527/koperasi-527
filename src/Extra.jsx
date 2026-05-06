@@ -19,49 +19,53 @@ function toLocalDate(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1
 // =============================================
 export function cetakStruk(tx, settings, members) {
   const member = members?.find(m => m.id === tx.memberId)
-  const win = window.open('', '_blank', 'width=320,height=600')
+  const win = window.open('', '_blank', 'width=300,height=500')
   win.document.write(`<!DOCTYPE html><html><head><style>
-    @page { margin: 0; size: 72mm auto; }
-    body { font-family: 'Courier New', monospace; font-size: 11px; width: 64mm; margin: 3mm; padding: 0; color: #000; }
+    @page { margin: 0; size: 58mm auto; }
+    * { box-sizing: border-box; }
+    body { font-family: 'Courier New', monospace; font-size: 10px; width: 54mm; margin: 2mm; padding: 0; color: #000; line-height: 1.3; }
     .center { text-align: center; }
     .bold { font-weight: bold; }
-    .line { border-top: 1px dashed #000; margin: 4px 0; }
-    .row { display: flex; justify-content: space-between; }
+    .line { border-top: 1px dashed #000; margin: 3px 0; }
+    .dline { border-top: 2px solid #000; margin: 3px 0; }
+    .row { display: flex; justify-content: space-between; gap: 4px; }
+    .row span:last-child { text-align: right; white-space: nowrap; }
     .right { text-align: right; }
-    .small { font-size: 10px; }
+    .small { font-size: 8px; }
+    .item-name { font-size: 10px; font-weight: bold; margin-bottom: 0; }
+    .item-detail { font-size: 9px; display: flex; justify-content: space-between; }
+    .total-box { font-size: 13px; font-weight: bold; padding: 3px 0; }
     table { width: 100%; border-collapse: collapse; }
-    td { padding: 1px 0; vertical-align: top; }
+    td { padding: 0; vertical-align: top; font-size: 9px; }
   </style></head><body>
-    <div class="center bold" style="font-size:14px">${settings?.name || 'KOPERASI YONIF 527/BY'}</div>
+    <div class="center bold" style="font-size:11px;letter-spacing:1px">${settings?.name || 'KOPERASI YONIF 527/BY'}</div>
     <div class="center small">Baladibya Yudha</div>
     <div class="center small">Lumajang, Jawa Timur</div>
+    <div class="dline"></div>
+    <div class="row" style="font-size:9px"><span>No: ${tx.noNota || '-'}</span><span>${tx.date || today()}</span></div>
+    <div style="font-size:9px">Kasir: ${tx.cashier || 'admin'}</div>
+    ${member ? '<div style="font-size:9px">Pembeli: ' + member.name + '</div>' : ''}
     <div class="line"></div>
-    <div class="row"><span>No: ${tx.noNota || '-'}</span><span>${tx.date || today()}</span></div>
-    <div>Kasir: ${tx.cashier || 'admin'}</div>
-    ${member ? '<div>Pembeli: ' + member.name + '</div>' : ''}
+    ${(tx.items || []).map(item => {
+      const sub = item.price * item.qty
+      const dis = item.diskon ? sub * item.diskon / 100 : 0
+      const net = sub - dis
+      return '<div class="item-name">' + item.name + '</div>' +
+        '<div class="item-detail"><span>' + item.qty + ' x ' + Number(item.price).toLocaleString('id-ID') +
+        (item.diskon ? ' (-' + item.diskon + '%)' : '') +
+        '</span><span style="font-weight:bold">' + Number(net).toLocaleString('id-ID') + '</span></div>'
+    }).join('')}
+    <div class="dline"></div>
+    ${tx.totalDiskon > 0 ? '<div class="row" style="font-size:9px"><span>Subtotal</span><span>' + Number(tx.totalSebelumDiskon).toLocaleString('id-ID') + '</span></div><div class="row" style="font-size:9px"><span>Diskon</span><span>-' + Number(tx.totalDiskon).toLocaleString('id-ID') + '</span></div>' : ''}
+    <div class="row total-box"><span>TOTAL</span><span>Rp ${Number(tx.total).toLocaleString('id-ID')}</span></div>
     <div class="line"></div>
-    <table>
-      ${(tx.items || []).map(item => {
-        const sub = item.price * item.qty
-        const dis = item.diskon ? sub * item.diskon / 100 : 0
-        return '<tr><td colspan="2">' + item.name + '</td></tr>' +
-          '<tr><td>' + item.qty + ' x ' + Number(item.price).toLocaleString('id-ID') +
-          (item.diskon ? ' (dis ' + item.diskon + '%)' : '') +
-          '</td><td class="right">' + Number(sub - dis).toLocaleString('id-ID') + '</td></tr>'
-      }).join('')}
-    </table>
-    <div class="line"></div>
-    ${tx.totalDiskon > 0 ? '<div class="row"><span>Subtotal</span><span>' + Number(tx.totalSebelumDiskon).toLocaleString('id-ID') + '</span></div><div class="row"><span>Diskon</span><span>-' + Number(tx.totalDiskon).toLocaleString('id-ID') + '</span></div>' : ''}
-    <div class="row bold" style="font-size:14px"><span>TOTAL</span><span>${Number(tx.total).toLocaleString('id-ID')}</span></div>
-    <div class="line"></div>
-    <div class="row"><span>${tx.caraBayar || 'LUNAS'}</span><span>${Number(tx.payment || 0).toLocaleString('id-ID')}</span></div>
-    ${tx.caraBayar === 'LUNAS' && tx.change > 0 ? '<div class="row"><span>Kembali</span><span>' + Number(tx.change).toLocaleString('id-ID') + '</span></div>' : ''}
-    ${tx.caraBayar === 'KREDIT' ? '<div class="row" style="color:red"><span>Sisa Piutang</span><span>' + Number(tx.total - (tx.payment || 0)).toLocaleString('id-ID') + '</span></div>' : ''}
+    <div class="row" style="font-size:9px"><span>${tx.caraBayar || 'TUNAI'}</span><span>${Number(tx.payment || 0).toLocaleString('id-ID')}</span></div>
+    ${tx.caraBayar !== 'KREDIT' && tx.change > 0 ? '<div class="row" style="font-size:9px;font-weight:bold"><span>Kembali</span><span>' + Number(tx.change).toLocaleString('id-ID') + '</span></div>' : ''}
+    ${tx.caraBayar === 'KREDIT' ? '<div class="row" style="font-size:10px;font-weight:bold;color:#000"><span>SISA PIUTANG</span><span>' + Number(tx.total - (tx.payment || 0)).toLocaleString('id-ID') + '</span></div>' : ''}
     <div class="line"></div>
     <div class="center small">Terima kasih atas kunjungan Anda</div>
-    <div class="center small">Barang yang sudah dibeli</div>
-    <div class="center small">tidak dapat dikembalikan</div>
-    <div class="center small" style="margin-top:8px">--- ${new Date().toLocaleString('id-ID')} ---</div>
+    <div class="center small">Barang yg sudah dibeli tidak dapat dikembalikan</div>
+    <div class="center small" style="margin-top:4px">--- ${new Date().toLocaleString('id-ID')} ---</div>
     <script>setTimeout(()=>{window.print();},300)</script>
   </body></html>`)
   win.document.close()
