@@ -246,7 +246,7 @@ export default function App() {
             priceUpdate.sellPrice2 = Math.round(item.buyPrice * (1 + oldMargin2))
           }
         }
-        await setOne('products', prod.id, priceUpdate) // merge:true → hanya update harga
+        await setOne('products', prod.id, priceUpdate) // merge:true → hanya update harga, TIDAK timpa stok
       }
     }
 
