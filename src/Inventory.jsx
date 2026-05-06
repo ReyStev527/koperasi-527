@@ -533,7 +533,7 @@ function SupplierForm({ initial, onSave }) {
 // =============================================
 // BARANG MASUK (Stock In)
 // =============================================
-export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProductStock, setModal, showToast }) {
+export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProductStock, saveProduct, setModal, showToast }) {
   const [search, setSearch] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -713,19 +713,56 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
     setModal({
       title: 'Catat Barang Masuk',
       content: <StockInForm products={products} suppliers={suppliers} onSave={async d => {
-        await saveStockIn(d)
-        // Update stok + harga produk
+        // Proses setiap item — buat produk baru jika belum ada
+        const processedItems = []
         for (const item of (d.items||[])) {
-          const prod = products.find(p => p.id === item.productId)
+          let prodId = item.productId
+          let prod = products.find(p => p.id === prodId)
+
+          if (!prod && item.productName) {
+            // Cek dulu apakah ada produk existing dengan nama sama
+            prod = products.find(p => p.name.toLowerCase() === item.productName.toLowerCase())
+            if (prod) {
+              prodId = prod.id
+            } else {
+              // Buat produk baru otomatis
+              const newProd = {
+                name: item.productName,
+                sku: item.sku || '',
+                barcode: item.barcode || '',
+                category: 'Lainnya',
+                buyPrice: item.buyPrice || 0,
+                sellPrice: item.sellPrice || 0,
+                sellPrice2: item.sellPrice2 || 0,
+                stock: 0,
+                unit: 'pcs',
+                minStock: 5,
+                ppn: 0,
+                qtyPerBox: 1,
+                buyPriceBox: '',
+                tipeBarang: 'MILIK',
+                supplierId: d.supplierId || '',
+              }
+              await saveProduct(newProd, false)
+              prodId = newProd.id
+              prod = newProd
+            }
+          }
+
+          processedItems.push({ ...item, productId: prodId })
+
+          // Update stok + harga produk
           if (prod) {
-            const updates = { stock: (prod.stock||0) + (item.qty||0) }
-            // Update harga jika berubah
+            const newStock = (prod.stock||0) + (item.qty||0)
+            const updates = { ...prod, stock: newStock, updatedAt: today() }
             if (item.buyPrice && item.buyPrice !== prod.buyPrice) updates.buyPrice = item.buyPrice
             if (item.sellPrice && item.sellPrice !== prod.sellPrice) updates.sellPrice = item.sellPrice
             if (item.sellPrice2 && item.sellPrice2 !== prod.sellPrice2) updates.sellPrice2 = item.sellPrice2
-            await updateProductStock(prod.id, updates.stock)
+            await updateProductStock(prod.id || prodId, newStock)
           }
         }
+
+        await saveStockIn({ ...d, items: processedItems })
         setModal(null)
         showToast('Barang masuk berhasil dicatat — stok diperbarui')
       }} />,
@@ -827,12 +864,11 @@ function StockInForm({ products, suppliers, onSave }) {
 
   const selectedSup = suppliers.find(s => s.id === supplierId)
 
-  function addItem(prodId) {
-    const p = products.find(pr => pr.id === (prodId || products[0]?.id))
-    if (!p) return
+  // Tambah baris kosong untuk input manual
+  function addItem() {
     setItems(prev => [...prev, {
-      productId: p.id, qty: 1, buyPrice: p.buyPrice || 0,
-      sellPrice: p.sellPrice || 0, sellPrice2: p.sellPrice2 || 0
+      productId: '', productName: '', qty: 1, buyPrice: 0,
+      sellPrice: 0, sellPrice2: 0, isNew: true
     }])
   }
 
@@ -842,15 +878,44 @@ function StockInForm({ products, suppliers, onSave }) {
     setItems(prev => prev.map((item, idx) => {
       if (idx !== i) return item
       const updated = { ...item, [k]: v }
-      if (k === 'productId') {
+
+      // Kalau nama produk berubah, cari matching dari produk yang ada
+      if (k === 'productName') {
+        const match = products.find(p => p.name.toLowerCase() === String(v).toLowerCase())
+        if (match) {
+          updated.productId = match.id
+          updated.buyPrice = updated.buyPrice || match.buyPrice || 0
+          updated.sellPrice = updated.sellPrice || match.sellPrice || 0
+          updated.sellPrice2 = updated.sellPrice2 || match.sellPrice2 || 0
+          updated.isNew = false
+        } else {
+          updated.productId = ''
+          updated.isNew = true
+        }
+      }
+
+      // Kalau pilih dari dropdown (productId langsung)
+      if (k === 'productId' && v) {
         const p = products.find(pr => pr.id === v)
         if (p) {
+          updated.productName = p.name
           updated.buyPrice = p.buyPrice || 0
           updated.sellPrice = p.sellPrice || 0
           updated.sellPrice2 = p.sellPrice2 || 0
+          updated.isNew = false
         }
       }
       return updated
+    }))
+  }
+
+  // Pilih produk existing dari suggestions
+  function selectProduct(itemIdx, prodId) {
+    const p = products.find(pr => pr.id === prodId)
+    if (!p) return
+    setItems(prev => prev.map((item, idx) => {
+      if (idx !== itemIdx) return item
+      return { ...item, productId: p.id, productName: p.name, buyPrice: p.buyPrice||0, sellPrice: p.sellPrice||0, sellPrice2: p.sellPrice2||0, isNew: false }
     }))
   }
 
@@ -868,12 +933,17 @@ function StockInForm({ products, suppliers, onSave }) {
         updateItem(existIdx, 'qty', (items[existIdx].qty || 0) + 1)
       } else {
         setItems(prev => [...prev, {
-          productId: found.id, qty: 1, buyPrice: found.buyPrice || 0,
-          sellPrice: found.sellPrice || 0, sellPrice2: found.sellPrice2 || 0
+          productId: found.id, productName: found.name, qty: 1,
+          buyPrice: found.buyPrice || 0, sellPrice: found.sellPrice || 0,
+          sellPrice2: found.sellPrice2 || 0, isNew: false
         }])
       }
     } else {
-      alert('Barcode "' + code + '" tidak ditemukan. Tambah produk baru dulu di Stok Barang.')
+      // Barcode tidak ditemukan → tambah baris manual dengan barcode
+      setItems(prev => [...prev, {
+        productId: '', productName: '', barcode: code, qty: 1,
+        buyPrice: 0, sellPrice: 0, sellPrice2: 0, isNew: true
+      }])
     }
     setScanInput('')
   }
@@ -885,9 +955,9 @@ function StockInForm({ products, suppliers, onSave }) {
     )
     setShowScanIdx(-1)
     if (found) {
-      updateItem(itemIdx, 'productId', found.id)
+      selectProduct(itemIdx, found.id)
     } else {
-      alert('Barcode "' + code + '" tidak ditemukan.')
+      updateItem(itemIdx, 'barcode', code)
     }
   }
 
@@ -897,10 +967,13 @@ function StockInForm({ products, suppliers, onSave }) {
   const totalNotaNum = Number(totalNota) || 0
   const selisih = totalNotaNum > 0 ? total - totalNotaNum : 0
   const isMatch = totalNotaNum === 0 || Math.abs(selisih) === 0
-  const hasItems = items.length > 0 && items.some(it => it.qty > 0)
+  const hasItems = items.length > 0 && items.some(it => it.qty > 0 && (it.productId || it.productName))
 
   function handleSave() {
     if (!hasItems) { alert('Tambahkan minimal 1 item barang!'); return }
+    // Validasi semua item punya nama
+    const emptyName = items.find(it => !it.productId && !it.productName?.trim())
+    if (emptyName) { alert('Ada item yang belum diisi nama barangnya!'); return }
     if (totalNotaNum > 0 && !isMatch) {
       alert('⚠️ TOTAL TIDAK SESUAI NOTA!\n\nTotal Nota: Rp ' + totalNotaNum.toLocaleString('id-ID') + '\nTotal Sistem: Rp ' + total.toLocaleString('id-ID') + '\nSelisih: Rp ' + Math.abs(selisih).toLocaleString('id-ID') + '\n\nPerbaiki jumlah/harga agar sesuai nota.')
       return
@@ -965,7 +1038,7 @@ function StockInForm({ products, suppliers, onSave }) {
               <tr><td colSpan={10} style={{ padding: 40, textAlign: 'center', color: '#999', fontStyle: 'italic', fontSize: 14 }}>Scan barcode atau klik "+ Manual" untuk tambah barang</td></tr>
             )}
             {items.map((it, i) => {
-              const prod = products.find(p => p.id === it.productId)
+              const prod = it.productId ? products.find(p => p.id === it.productId) : null
               const stokAwal = prod?.stock || 0
               const stokAkhir = stokAwal + (it.qty || 0)
               const itemSub = (it.qty || 0) * (it.buyPrice || 0)
@@ -973,14 +1046,22 @@ function StockInForm({ products, suppliers, onSave }) {
                 <tr key={i} style={{ borderBottom: '1px solid #ccc', background: i % 2 === 0 ? '#fff' : '#f8f9fa' }}>
                   <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: 12, minWidth: 110, borderRight: '1px solid #e0e0e0' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <span>{prod?.barcode || prod?.sku || '-'}</span>
+                      <span>{prod?.barcode || prod?.sku || it.barcode || '-'}</span>
                       <button type="button" style={{ ...S.smallBtn, padding: '2px 5px', color: '#7b1fa2', fontSize: 11, border: '1px solid #e0e0e0', borderRadius: 4 }} onClick={() => setShowScanIdx(showScanIdx === i ? -1 : i)} title="Scan">📷</button>
                     </div>
                   </td>
-                  <td style={{ padding: '6px 8px', minWidth: 180, borderRight: '1px solid #e0e0e0' }}>
-                    <select style={{ ...S.input, fontSize: 13, padding: '5px 8px', border: 'none', background: 'transparent', width: '100%', fontWeight: 600 }} value={it.productId} onChange={e => updateItem(i, 'productId', e.target.value)}>
-                      {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
+                  <td style={{ padding: '6px 8px', minWidth: 200, borderRight: '1px solid #e0e0e0' }}>
+                    <input
+                      list={'prodlist-' + i}
+                      style={{ ...S.input, fontSize: 13, padding: '5px 8px', width: '100%', fontWeight: 600, border: it.isNew && it.productName ? '2px solid #ff9800' : '1px solid #e0e0e0', background: it.isNew && it.productName ? '#fff8e1' : 'transparent' }}
+                      value={it.productName || ''}
+                      onChange={e => updateItem(i, 'productName', e.target.value)}
+                      placeholder="Ketik nama barang..."
+                    />
+                    <datalist id={'prodlist-' + i}>
+                      {products.map(p => <option key={p.id} value={p.name}>{p.sku ? p.sku + ' - ' : ''}{p.name}</option>)}
+                    </datalist>
+                    {it.isNew && it.productName && <div style={{ fontSize: 9, color: '#e65100', marginTop: 2 }}>★ Barang baru — otomatis masuk Stok</div>}
                   </td>
                   <td style={{ padding: '6px 6px', textAlign: 'center', borderRight: '1px solid #e0e0e0' }}>
                     <input style={{ ...S.input, width: 65, fontSize: 14, fontWeight: 700, textAlign: 'center', padding: '5px', background: '#fffde7', border: '2px solid #fdd835', borderRadius: 4 }} type="number" min="1" value={it.qty} onChange={e => updateItem(i, 'qty', Number(e.target.value))} />

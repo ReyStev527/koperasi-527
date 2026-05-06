@@ -612,7 +612,7 @@ export default function App() {
         {page === 'reports' && <Reports {...{ members, savings, loans, getMember }} />}
         {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, transactions, stockInData }} />}
         {page === 'stokhistori' && <StokHistori products={products} stockIn={stockInData} transactions={transactions} mutasis={mutasis} />}
-        {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, products, suppliers, updateProductStock, setModal, showToast }} />}
+        {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, products, suppliers, updateProductStock, saveProduct, setModal, showToast }} />}
         {page === 'pos' && <POS {...{ products, transactions, saveTransaction, updateProductStock, members, showToast, savePiutang, settings }} />}
         {page === 'suppliers' && <Suppliers {...{ suppliers, saveSupplier, deleteSupplier, products, setModal, showToast }} />}
         {page === 'retur' && <ReturBarang {...{ returs, saveRetur, products, suppliers, updateProductStock, setModal, showToast }} />}
