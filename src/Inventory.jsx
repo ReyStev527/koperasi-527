@@ -713,53 +713,53 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
     setModal({
       title: 'Catat Barang Masuk',
       content: <StockInForm products={products} suppliers={suppliers} onSave={async d => {
-        // Proses setiap item — buat produk baru jika belum ada
+        // Proses setiap item — buat/update produk
         const processedItems = []
         for (const item of (d.items||[])) {
           let prodId = item.productId
           let prod = products.find(p => p.id === prodId)
 
           if (!prod && item.productName) {
-            // Cek dulu apakah ada produk existing dengan nama sama
+            // Cek apakah ada produk existing dengan nama sama
             prod = products.find(p => p.name.toLowerCase() === item.productName.toLowerCase())
             if (prod) {
               prodId = prod.id
-            } else {
-              // Buat produk baru otomatis
-              const newProd = {
-                name: item.productName,
-                sku: item.sku || '',
-                barcode: item.barcode || '',
-                category: 'Lainnya',
-                buyPrice: item.buyPrice || 0,
-                sellPrice: item.sellPrice || 0,
-                sellPrice2: item.sellPrice2 || 0,
-                stock: 0,
-                unit: 'pcs',
-                minStock: 5,
-                ppn: 0,
-                qtyPerBox: 1,
-                buyPriceBox: '',
-                tipeBarang: 'MILIK',
-                supplierId: d.supplierId || '',
-              }
-              await saveProduct(newProd, false)
-              prodId = newProd.id
-              prod = newProd
             }
           }
 
-          processedItems.push({ ...item, productId: prodId })
-
-          // Update stok + harga produk
           if (prod) {
+            // PRODUK EXISTING — update stok & harga langsung via setOne
+            prodId = prod.id
             const newStock = (prod.stock||0) + (item.qty||0)
-            const updates = { ...prod, stock: newStock, updatedAt: today() }
-            if (item.buyPrice && item.buyPrice !== prod.buyPrice) updates.buyPrice = item.buyPrice
-            if (item.sellPrice && item.sellPrice !== prod.sellPrice) updates.sellPrice = item.sellPrice
-            if (item.sellPrice2 && item.sellPrice2 !== prod.sellPrice2) updates.sellPrice2 = item.sellPrice2
-            await updateProductStock(prod.id || prodId, newStock)
+            const updatedProd = { ...prod, stock: newStock, updatedAt: today() }
+            if (item.buyPrice && item.buyPrice > 0) updatedProd.buyPrice = item.buyPrice
+            if (item.sellPrice && item.sellPrice > 0) updatedProd.sellPrice = item.sellPrice
+            if (item.sellPrice2 && item.sellPrice2 > 0) updatedProd.sellPrice2 = item.sellPrice2
+            await saveProduct(updatedProd, true) // isEdit=true → langsung overwrite
+          } else if (item.productName) {
+            // PRODUK BARU — buat dengan stok sudah terisi
+            const newProd = {
+              name: item.productName,
+              sku: item.sku || '',
+              barcode: item.barcode || '',
+              category: 'Lainnya',
+              buyPrice: item.buyPrice || 0,
+              sellPrice: item.sellPrice || 0,
+              sellPrice2: item.sellPrice2 || 0,
+              stock: item.qty || 0, // ← Stok langsung diisi jumlah barang masuk
+              unit: 'pcs',
+              minStock: 5,
+              ppn: 0,
+              qtyPerBox: 1,
+              buyPriceBox: '',
+              tipeBarang: 'MILIK',
+              supplierId: d.supplierId || '',
+            }
+            await saveProduct(newProd, false) // isEdit=false → buat baru + generate id
+            prodId = newProd.id
           }
+
+          processedItems.push({ ...item, productId: prodId })
         }
 
         await saveStockIn({ ...d, items: processedItems })
