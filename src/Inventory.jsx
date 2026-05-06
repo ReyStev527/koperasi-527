@@ -39,6 +39,64 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   const [tipeFilter, setTipeFilter] = useState('all') // all | MILIK | TITIPAN
   const pageSize = 50
 
+  // Riwayat stok per produk
+  function showRiwayat(prod) {
+    // Kumpulkan semua mutasi: barang masuk + penjualan
+    const riwayat = []
+    // Dari Barang Masuk
+    ;(stockInData||[]).forEach(si => {
+      ;(si.items||[]).forEach(it => {
+        if (it.productId === prod.id || String(it.kode||'').toLowerCase() === String(prod.sku||'').toLowerCase()) {
+          riwayat.push({ date: si.date, type: 'masuk', qty: it.qty||0, price: it.buyPrice||0, note: 'Barang Masuk ' + (si.invoice||'-'), ref: si.invoice })
+        }
+      })
+    })
+    // Dari Penjualan POS
+    ;(transactions||[]).forEach(tx => {
+      ;(tx.items||[]).forEach(it => {
+        if (it.productId === prod.id) {
+          riwayat.push({ date: tx.date, type: 'keluar', qty: it.qty||0, price: it.price||0, note: 'Penjualan ' + (tx.invoice||'-') + ' - ' + (tx.memberName||'Umum'), ref: tx.invoice })
+        }
+      })
+    })
+    riwayat.sort((a,b) => b.date.localeCompare(a.date))
+    const totalMasuk = riwayat.filter(r => r.type === 'masuk').reduce((a,r) => a + r.qty, 0)
+    const totalKeluar = riwayat.filter(r => r.type === 'keluar').reduce((a,r) => a + r.qty, 0)
+    const thR = { background: '#1a3a8a', color: '#fff', border: '1px solid #999', padding: '6px 8px', fontSize: 11, fontWeight: 700 }
+
+    setModal({ title: 'Riwayat Stok: ' + prod.name, wide: true, content: (
+      <div style={{ fontSize: 13 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
+          <div style={{ background: '#e3f2fd', padding: '10px 12px', borderRadius: 8 }}><div style={{ fontSize: 11, color: '#666' }}>Stok Sekarang</div><div style={{ fontSize: 18, fontWeight: 700, color: '#1565c0' }}>{prod.stock||0} {prod.unit||'pcs'}</div></div>
+          <div style={{ background: '#e8f5e9', padding: '10px 12px', borderRadius: 8 }}><div style={{ fontSize: 11, color: '#666' }}>Total Masuk</div><div style={{ fontSize: 18, fontWeight: 700, color: '#2e7d32' }}>+{totalMasuk}</div></div>
+          <div style={{ background: '#ffebee', padding: '10px 12px', borderRadius: 8 }}><div style={{ fontSize: 11, color: '#666' }}>Total Keluar</div><div style={{ fontSize: 18, fontWeight: 700, color: '#c62828' }}>-{totalKeluar}</div></div>
+          <div style={{ background: '#f3e5f5', padding: '10px 12px', borderRadius: 8 }}><div style={{ fontSize: 11, color: '#666' }}>Total Transaksi</div><div style={{ fontSize: 18, fontWeight: 700, color: '#7b1fa2' }}>{riwayat.length}</div></div>
+        </div>
+        {riwayat.length === 0 ? <div style={{ textAlign: 'center', padding: 30, color: '#999' }}>Belum ada riwayat untuk produk ini</div> : (
+          <div style={{ overflowX: 'auto', maxHeight: 400, overflowY: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead style={{ position: 'sticky', top: 0 }}><tr>
+                <th style={thR}>No</th><th style={thR}>Tanggal</th><th style={thR}>Tipe</th><th style={thR}>Qty</th><th style={thR}>Harga</th><th style={thR}>Keterangan</th>
+              </tr></thead>
+              <tbody>{riwayat.map((r, i) => (
+                <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9f9f9' }}>
+                  <td style={{ border: '1px solid #ddd', padding: '4px 6px', textAlign: 'center', fontSize: 12 }}>{i+1}</td>
+                  <td style={{ border: '1px solid #ddd', padding: '4px 6px', fontSize: 12 }}>{fmtDate(r.date)}</td>
+                  <td style={{ border: '1px solid #ddd', padding: '4px 6px', textAlign: 'center' }}>
+                    <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 700, background: r.type === 'masuk' ? '#e8f5e9' : '#ffebee', color: r.type === 'masuk' ? '#2e7d32' : '#c62828' }}>{r.type === 'masuk' ? '↑ MASUK' : '↓ KELUAR'}</span>
+                  </td>
+                  <td style={{ border: '1px solid #ddd', padding: '4px 6px', textAlign: 'center', fontWeight: 700, color: r.type === 'masuk' ? '#2e7d32' : '#c62828' }}>{r.type === 'masuk' ? '+' : '-'}{r.qty}</td>
+                  <td style={{ border: '1px solid #ddd', padding: '4px 6px', textAlign: 'right', fontSize: 12 }}>{formatRp(r.price)}</td>
+                  <td style={{ border: '1px solid #ddd', padding: '4px 6px', fontSize: 12 }}>{r.note}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    ) })
+  }
+
   const categories = [...new Set(products.map(p => p.category || 'Lainnya'))].filter(Boolean).sort()
   const filtered = products.filter(p => {
     if (catFilter === '_low') return (p.stock||0) <= (p.minStock || 10)
@@ -223,7 +281,8 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
                     <span style={{ ...S.badge, background: '#e8f5e9', color: '#2e7d32' }}>Aman</span>}
                 </td>
                 <td style={S.td}>
-                  <button style={S.smallBtn} onClick={() => openForm(p)}>{IC.edit}</button>
+                  <button style={S.smallBtn} onClick={() => openForm(p)} title="Edit">{IC.edit}</button>
+                  <button style={{ ...S.smallBtn, color: '#7b1fa2' }} onClick={() => showRiwayat(p)} title="Riwayat Stok">📊</button>
                   <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus ' + p.name + '?')) { const ok = await deleteProduct(p.id); if (ok) showToast('Produk dihapus', 'error') } }}>{IC.trash}</button>
                 </td>
               </tr>
@@ -634,7 +693,7 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
                 <td style={S.td}>
                   {(s.items||[]).map((it, i) => {
                     const p = products.find(pr => pr.id === it.productId)
-                    return <div key={i} style={{ fontSize: 12 }}>{String(p?.name || it.productId)} × {it.qty} @ {formatRp(it.buyPrice||0)}</div>
+                    return <div key={i} style={{ fontSize: 12 }}>{String(p?.name || it.nama || it.kode || '-')} × {it.qty} @ {formatRp(it.buyPrice||0)}</div>
                   })}
                 </td>
                 <td style={S.td}>{formatRp(s.subtotal || s.total || 0)}</td>

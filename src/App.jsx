@@ -1,3 +1,43 @@
+// =============================================
+// KOPERASI YONIF 527/BY — Baladibya Yudha
+// Sistem Manajemen Koperasi Digital
+// =============================================
+// CHANGELOG:
+// v2.5 - 06 Mei 2026
+//   - Fix stok tidak bertambah saat Barang Masuk (saveStockIn pakai state, bukan getAll)
+//   - Tambah Riwayat Stok per produk (tombol 📊 di Stok Barang)
+//   - Fix nama produk di listing Barang Masuk (tampil nama bukan ID)
+//   - Tambah autocomplete cari nama barang di form Barang Masuk
+//   - Fix scan kartu anggota format AGT- dan KOP di Kasir POS
+//   - Fix harga kredit (sellPrice2) otomatis saat pilih KREDIT di POS
+//   - Tambah cari nama anggota autocomplete di Kasir POS
+//   - Kembalikan tombol Tambah Produk di Stok Barang
+//   - Tambah fitur Reset Data Uji Coba (password: 527reset)
+//   - Fix collection piutangs & hutangs di Reset Data
+//
+// v2.4 - 05 Mei 2026
+//   - Form Barang Masuk lebar format MS Access (tabel: Kode, Nama, Jumlah, Stok Awal/Akhir, Hpp, Hrg Lunas/Kredit)
+//   - Export Excel 4 halaman (Detail, Rekap Supplier, Rekap Jenis Bayar, Rekap Barang)
+//   - Export CSV Barang Masuk
+//   - Rekap Penambahan Barang (modal + cetak)
+//   - Filter periode di halaman Barang Masuk
+//   - Supplier default "---" (tidak auto-terisi)
+//
+// v2.3 - Apr 2026
+//   - Kartu Anggota dengan barcode (AGT-xxxxx)
+//   - Cetak batch 6 kartu per lembar HVS
+//   - Scan barcode kartu di POS
+//   - Tagihan Juyar (Potong Gaji)
+//   - Laporan Tutup Buku per Kompi
+//   - Hutang Supplier
+//   - Setoran Harian → Bulanan
+//
+// v2.0 - Mar 2026
+//   - 40+ fitur: POS, Simpanan, Pinjaman, Kas, Jurnal, SHU
+//   - Import data VB6 (CSV/XML)
+//   - Firebase Firestore + Netlify deploy
+//   - RBAC (4 role), PWA, Mobile Responsive
+// =============================================
 import { useState, useEffect, useCallback } from 'react'
 import { db } from './firebase'
 import {
