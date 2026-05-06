@@ -114,7 +114,7 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
           </button>
           <button style={{ ...S.primaryBtn, background: '#2e7d32' }} onClick={exportCSV}><svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg> Export</button>
           <ScanButton onClick={() => setShowScanner(true)} label="Scan" />
-          <button style={S.primaryBtn} onClick={() => setPage('stockin')}>{IC.plus} Tambah Produk</button>
+          <button style={S.primaryBtn} onClick={() => openForm(null)}>{IC.plus} Tambah Produk</button>
         </div>
       </div>
 
@@ -574,9 +574,13 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
       title: 'Catat Barang Masuk',
       wide: true,
       content: <StockInForm products={products} suppliers={suppliers} onSave={async d => {
-        await saveStockIn(d)
+        const result = await saveStockIn(d)
         setModal(null)
-        showToast('Barang masuk berhasil dicatat! Stok otomatis bertambah.')
+        const msg = []
+        if (result?.successCount) msg.push(result.successCount + ' produk stok diupdate')
+        if (result?.newCount) msg.push(result.newCount + ' produk baru dibuat')
+        if (result?.failCount) msg.push(result.failCount + ' gagal!')
+        showToast('Barang masuk dicatat! ' + (msg.join(', ') || ''), result?.failCount ? 'error' : 'success')
       }} />,
     })
   }
@@ -889,14 +893,24 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   }
 
   function handleBarcodeScan(code) {
-    // 1. Cek apakah scan anggota (NRP, no anggota, phone)
+    // 1. Cek format barcode kartu anggota: AGT-xxxxx
+    let memberCode = code
+    if (code.startsWith('AGT-')) {
+      memberCode = code.replace('AGT-', '')
+    }
+
+    // 2. Cek apakah scan anggota (ID, NRP, no anggota, phone, KOP-format)
     const foundMember = members.find(m =>
       (m.status === 'active') && (
+        String(m.id||'') === memberCode ||
+        String(m.nrp||'') === memberCode ||
+        String(m.no||'') === memberCode ||
+        String(m.phone||'') === memberCode ||
         String(m.nrp||'') === code ||
         String(m.no||'') === code ||
-        String(m.phone||'') === code ||
+        String(m.id||'') === code ||
         String(m.nrp||'').includes(code) ||
-        String(m.id||'') === code
+        ('KOP' + String(m.no||'').padStart(4,'0')) === code.toUpperCase()
       )
     )
     if (foundMember) {
@@ -906,7 +920,7 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
       return
     }
 
-    // 2. Cari produk
+    // 3. Cari produk
     const found = products.find(p =>
       String(p.sku||'').toLowerCase() === code.toLowerCase() ||
       String(p.name||'').toLowerCase() === code.toLowerCase() ||

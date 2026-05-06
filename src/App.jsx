@@ -231,58 +231,62 @@ export default function App() {
     si.id = genId()
     await setOne('stockIn', si.id, si)
 
-    // UPDATE STOK + HARGA — baca data FRESH dari Firestore
-    const freshProducts = await getAll('products')
+    // UPDATE STOK — pakai products dari state (sudah loaded via listener)
+    let successCount = 0, failCount = 0, newCount = 0
     for (const item of (si.items||[])) {
-      // Cari produk: by ID → by SKU → by Nama
-      let prod = freshProducts.find(p => p.id === item.productId)
-      if (!prod && item.kode) {
-        prod = freshProducts.find(p => String(p.sku||'').toLowerCase() === String(item.kode).toLowerCase())
-      }
-      if (!prod && item.nama) {
-        prod = freshProducts.find(p => String(p.name||'').toLowerCase() === String(item.nama).toLowerCase())
-      }
+      try {
+        // Cari produk: by ID → by SKU → by Nama
+        let prod = products.find(p => p.id === item.productId)
+        if (!prod && item.kode) {
+          prod = products.find(p => String(p.sku||'').toLowerCase() === String(item.kode).toLowerCase())
+        }
+        if (!prod && item.nama) {
+          prod = products.find(p => String(p.name||'').toLowerCase().trim() === String(item.nama).toLowerCase().trim())
+        }
 
-      if (prod) {
-        // Produk SUDAH ADA → update stok + harga
-        const newStock = (prod.stock || 0) + (item.qty || 0)
-        const updatedProd = { ...prod, stock: newStock }
-        if ((item.buyPrice||0) > (prod.buyPrice||0)) {
-          updatedProd.buyPrice = item.buyPrice
-          if (prod.buyPrice > 0 && prod.sellPrice > 0) {
-            const oldMargin = (prod.sellPrice - prod.buyPrice) / prod.buyPrice
-            updatedProd.sellPrice = Math.round(item.buyPrice * (1 + oldMargin))
-            if (prod.sellPrice2) {
-              const oldMargin2 = (prod.sellPrice2 - prod.buyPrice) / prod.buyPrice
-              updatedProd.sellPrice2 = Math.round(item.buyPrice * (1 + oldMargin2))
+        if (prod) {
+          // Produk ADA → baca stok FRESH dari Firestore untuk 1 doc saja
+          let currentStock = prod.stock || 0
+          try {
+            const freshProd = await getOne('products', prod.id)
+            if (freshProd) currentStock = freshProd.stock || 0
+          } catch(e) { /* kuota habis, pakai stok dari state */ }
+
+          const newStock = currentStock + (item.qty || 0)
+          const updatedProd = { ...prod, stock: newStock }
+          if ((item.buyPrice||0) > (prod.buyPrice||0)) {
+            updatedProd.buyPrice = item.buyPrice
+            if (prod.buyPrice > 0 && prod.sellPrice > 0) {
+              const oldMargin = (prod.sellPrice - prod.buyPrice) / prod.buyPrice
+              updatedProd.sellPrice = Math.round(item.buyPrice * (1 + oldMargin))
+              if (prod.sellPrice2) {
+                const oldMargin2 = (prod.sellPrice2 - prod.buyPrice) / prod.buyPrice
+                updatedProd.sellPrice2 = Math.round(item.buyPrice * (1 + oldMargin2))
+              }
             }
           }
+          if (item.sellPrice && item.sellPrice > 0) updatedProd.sellPrice = item.sellPrice
+          if (item.sellPrice2 && item.sellPrice2 > 0) updatedProd.sellPrice2 = item.sellPrice2
+          await setOne('products', prod.id, updatedProd)
+          successCount++
+        } else {
+          // Produk BARU → buat otomatis
+          const newId = genId()
+          await setOne('products', newId, {
+            id: newId, sku: item.kode || '',
+            name: (item.nama || item.kode || 'Produk Baru').toUpperCase(),
+            stock: item.qty || 0, buyPrice: item.buyPrice || 0,
+            sellPrice: item.sellPrice || item.buyPrice || 0,
+            sellPrice2: item.sellPrice2 || 0,
+            unit: 'Pcs', category: 'Umum', type: 'milik', minStock: 5,
+            createdAt: new Date().toISOString(), createdVia: 'barang-masuk',
+          })
+          item.productId = newId
+          newCount++
         }
-        if (item.sellPrice && item.sellPrice > 0) updatedProd.sellPrice = item.sellPrice
-        if (item.sellPrice2 && item.sellPrice2 > 0) updatedProd.sellPrice2 = item.sellPrice2
-        await setOne('products', prod.id, updatedProd)
-        console.log('✅ Stok updated:', prod.name, prod.stock, '→', newStock)
-      } else {
-        // Produk BELUM ADA → buat baru otomatis
-        const newId = genId()
-        const newProd = {
-          id: newId,
-          sku: item.kode || '',
-          name: (item.nama || item.kode || 'Produk Baru').toUpperCase(),
-          stock: item.qty || 0,
-          buyPrice: item.buyPrice || 0,
-          sellPrice: item.sellPrice || item.buyPrice || 0,
-          sellPrice2: item.sellPrice2 || 0,
-          unit: 'Pcs',
-          category: 'Umum',
-          type: 'milik',
-          minStock: 5,
-          createdAt: new Date().toISOString(),
-          createdVia: 'barang-masuk',
-        }
-        await setOne('products', newId, newProd)
-        item.productId = newId
-        console.log('🆕 Produk baru:', newProd.name, 'stok:', newProd.stock)
+      } catch (err) {
+        console.error('❌ Gagal update:', item.nama || item.kode, err)
+        failCount++
       }
     }
 
@@ -336,6 +340,7 @@ export default function App() {
     await setOne('jurnal', jurnalEntry.id, jurnalEntry)
 
     await logAction('Barang Masuk', 'create', 'Invoice ' + (si.invoice||'') + ': ' + (si.items||[]).length + ' item, total ' + (si.total||0))
+    return { successCount, newCount, failCount }
   }
   async function saveTransaction(tx) {
     tx.id = genId()
