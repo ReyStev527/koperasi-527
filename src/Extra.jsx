@@ -474,7 +474,7 @@ function BayarHutangForm({ hutang, onSave }) {
 // =============================================
 // 5. BACKUP & RESTORE
 // =============================================
-export function BackupRestore({ members, savings, loans, products, suppliers, kasData, jurnalData, transactions, stockInData, piutangs, hutangs, returs, mutasis, setorans, settings, showToast, deleteCollection, saveImportedProducts, saveImportedMembers }) {
+export function BackupRestore({ members, savings, loans, products, suppliers, kasData, jurnalData, transactions, stockInData, piutangs, hutangs, returs, mutasis, setorans, settings, showToast, deleteCollection, removeOne, saveImportedProducts, saveImportedMembers }) {
   const [restoring, setRestoring] = useState(false)
   const [restoreProgress, setRestoreProgress] = useState('')
   const fileRef = useRef()
@@ -482,72 +482,172 @@ export function BackupRestore({ members, savings, loans, products, suppliers, ka
   // Reset Data state
   const [showReset, setShowReset] = useState(false)
   const [resetPin, setResetPin] = useState('')
-  const [resetSelections, setResetSelections] = useState({})
+  const [resetSelections, setResetSelections] = useState({}) // { key: true } = hapus semua
+  const [expandedKey, setExpandedKey] = useState(null) // kategori yg dibuka
+  const [selectedItems, setSelectedItems] = useState({}) // { key: Set(id1, id2) }
   const [resetting, setResetting] = useState(false)
   const [resetProgress, setResetProgress] = useState('')
 
-  const RESET_PIN = '527reset' // Sandi untuk reset data
+  const RESET_PIN = '527reset'
+
+  // Data untuk setiap kategori
+  const dataMap = {
+    transactions: transactions||[],
+    stockIn: stockInData||[],
+    kas: kasData||[],
+    jurnal: jurnalData||[],
+    piutangs: piutangs||[],
+    hutangs: hutangs||[],
+    returs: returs||[],
+    mutasis: mutasis||[],
+    setorans: setorans||[],
+    auditLogs: [],
+  }
 
   const resetOptions = [
-    { key: 'transactions', label: 'Riwayat Penjualan (Kasir)', count: (transactions||[]).length, color: '#1565c0' },
-    { key: 'stockIn', label: 'Riwayat Barang Masuk', count: (stockInData||[]).length, color: '#6a1b9a' },
-    { key: 'kas', label: 'Riwayat Kas Masuk/Keluar', count: (kasData||[]).length, color: '#2e7d32' },
-    { key: 'jurnal', label: 'Jurnal Umum', count: (jurnalData||[]).length, color: '#e65100' },
-    { key: 'piutangs', label: 'Data Piutang', count: (piutangs||[]).length, color: '#c62828' },
-    { key: 'hutangs', label: 'Data Hutang Supplier', count: (hutangs||[]).length, color: '#ad1457' },
-    { key: 'returs', label: 'Data Retur', count: (returs||[]).length, color: '#4527a0' },
-    { key: 'mutasis', label: 'Mutasi Stok', count: (mutasis||[]).length, color: '#00695c' },
-    { key: 'setorans', label: 'Setoran Harian', count: (setorans||[]).length, color: '#ef6c00' },
-    { key: 'auditLogs', label: 'Audit Log', count: 0, color: '#546e7a' },
+    { key: 'transactions', label: 'Riwayat Penjualan (Kasir)', color: '#1565c0' },
+    { key: 'stockIn', label: 'Riwayat Barang Masuk', color: '#6a1b9a' },
+    { key: 'kas', label: 'Riwayat Kas Masuk/Keluar', color: '#2e7d32' },
+    { key: 'jurnal', label: 'Jurnal Umum', color: '#e65100' },
+    { key: 'piutangs', label: 'Data Piutang', color: '#c62828' },
+    { key: 'hutangs', label: 'Data Hutang Supplier', color: '#ad1457' },
+    { key: 'returs', label: 'Data Retur', color: '#4527a0' },
+    { key: 'mutasis', label: 'Mutasi Stok', color: '#00695c' },
+    { key: 'setorans', label: 'Setoran Harian', color: '#ef6c00' },
+    { key: 'auditLogs', label: 'Audit Log', color: '#546e7a' },
   ]
 
-  function toggleReset(key) {
-    setResetSelections(prev => ({ ...prev, [key]: !prev[key] }))
+  // Deskripsi item untuk ditampilkan di list
+  function itemLabel(key, item) {
+    const d = fmtDate(item.date||'')
+    switch(key) {
+      case 'transactions': return d + ' — ' + (item.noNota||'-') + ' — ' + (item.customerName||'Umum') + ' — ' + formatRp(item.total||0)
+      case 'stockIn': return d + ' — ' + (item.invoice||'-') + ' — ' + formatRp(item.total||0)
+      case 'kas': return d + ' — ' + (item.type==='masuk'?'Masuk':'Keluar') + ' — ' + (item.description||item.category||'-') + ' — ' + formatRp(item.amount||0)
+      case 'jurnal': return d + ' — ' + (item.description||'-')
+      case 'piutangs': return d + ' — ' + (item.customerName||'-') + ' — ' + formatRp(item.total||0) + (item.status==='LUNAS'?' ✅':'')
+      case 'hutangs': return d + ' — ' + (item.supplierName||'-') + ' — ' + formatRp(item.total||0)
+      case 'returs': return d + ' — ' + (item.productName||'-') + ' × ' + (item.qty||0)
+      case 'mutasis': return d + ' — ' + (item.tipe||'') + ' — ' + (item.productName||products.find(p=>p.id===item.productId)?.name||'-')
+      case 'setorans': return d + ' — ' + formatRp(item.total||item.penjualan||0)
+      default: return d + ' — ' + (item.id||'')
+    }
   }
+
+  function toggleReset(key) {
+    setResetSelections(prev => {
+      const next = { ...prev }
+      if (next[key]) {
+        delete next[key]
+        // Clear individual selections too
+        setSelectedItems(p => { const n = {...p}; delete n[key]; return n })
+      } else {
+        next[key] = true
+      }
+      return next
+    })
+    setExpandedKey(null)
+  }
+
+  // Expand/collapse item list
+  function toggleExpand(key) {
+    if (expandedKey === key) { setExpandedKey(null); return }
+    setExpandedKey(key)
+    // Init selected items for this key if not exists
+    if (!selectedItems[key]) {
+      setSelectedItems(prev => ({ ...prev, [key]: new Set() }))
+    }
+  }
+
+  function toggleItem(key, id) {
+    setSelectedItems(prev => {
+      const set = new Set(prev[key] || [])
+      if (set.has(id)) set.delete(id); else set.add(id)
+      // If some items selected, remove "select all" flag
+      if (set.size > 0 && set.size < dataMap[key].length) {
+        setResetSelections(p => { const n = {...p}; delete n[key]; return n })
+      }
+      return { ...prev, [key]: set }
+    })
+  }
+
+  function selectAllItems(key) {
+    const allIds = dataMap[key].map(item => item.id)
+    setSelectedItems(prev => ({ ...prev, [key]: new Set(allIds) }))
+    setResetSelections(prev => ({ ...prev, [key]: true }))
+  }
+
+  function deselectAllItems(key) {
+    setSelectedItems(prev => ({ ...prev, [key]: new Set() }))
+    setResetSelections(prev => { const n = {...prev}; delete n[key]; return n })
+  }
+
+  // Hitung total yang akan dihapus
+  function getDeleteCount(key) {
+    if (resetSelections[key]) return dataMap[key].length // hapus semua
+    return (selectedItems[key]?.size) || 0
+  }
+
+  const totalToDelete = resetOptions.reduce((a, opt) => a + getDeleteCount(opt.key), 0)
 
   async function doReset() {
     if (resetPin !== RESET_PIN) {
-      alert('❌ Sandi salah! Sandi reset: hubungi administrator.')
+      alert('❌ Sandi salah!')
       return
     }
-
-    const selected = Object.entries(resetSelections).filter(([_, v]) => v).map(([k]) => k)
-    if (selected.length === 0) {
+    if (totalToDelete === 0) {
       alert('Pilih minimal 1 data yang ingin direset.')
       return
     }
 
-    const names = selected.map(k => resetOptions.find(o => o.key === k)?.label || k).join('\n- ')
+    // Build summary
+    const summary = resetOptions
+      .filter(opt => getDeleteCount(opt.key) > 0)
+      .map(opt => '- ' + opt.label + ': ' + getDeleteCount(opt.key) + ' dari ' + dataMap[opt.key].length)
+      .join('\n')
+
     const confirmed = window.confirm(
       '⚠️ PERINGATAN RESET DATA ⚠️\n\n' +
-      'Data berikut akan DIHAPUS PERMANEN:\n- ' + names + '\n\n' +
-      'Data yang TIDAK dihapus:\n' +
-      '✅ Daftar Anggota (' + members.length + ')\n' +
-      '✅ Daftar Barang (' + products.length + ')\n' +
-      '✅ Daftar Supplier (' + suppliers.length + ')\n' +
-      '✅ Simpanan & Pinjaman\n' +
-      '✅ Pengaturan & Users\n\n' +
+      'Data yang akan DIHAPUS:\n' + summary + '\n\n' +
+      'Total: ' + totalToDelete + ' record\n\n' +
       'AKSI INI TIDAK BISA DIBATALKAN!\nKetik OK untuk melanjutkan.'
     )
     if (!confirmed) return
 
     setResetting(true)
     let totalDeleted = 0
-    for (const key of selected) {
-      try {
-        setResetProgress('Menghapus ' + (resetOptions.find(o => o.key === key)?.label || key) + '...')
-        const count = await deleteCollection(key, (done, total) => {
-          setResetProgress('Menghapus ' + (resetOptions.find(o => o.key === key)?.label || key) + ' (' + done + '/' + total + ')')
-        })
-        totalDeleted += count
-      } catch (err) {
-        console.error('Reset error for', key, err)
+
+    for (const opt of resetOptions) {
+      const count = getDeleteCount(opt.key)
+      if (count === 0) continue
+
+      setResetProgress('Menghapus ' + opt.label + '...')
+
+      if (resetSelections[opt.key] && (!selectedItems[opt.key] || selectedItems[opt.key].size === 0 || selectedItems[opt.key].size >= dataMap[opt.key].length)) {
+        // Hapus semua → pakai deleteCollection (batch, lebih cepat)
+        try {
+          const deleted = await deleteCollection(opt.key)
+          totalDeleted += deleted
+        } catch (err) { console.error('Reset all error:', opt.key, err) }
+      } else {
+        // Hapus sebagian → pakai removeOne per item
+        const ids = [...(selectedItems[opt.key] || [])]
+        for (let i = 0; i < ids.length; i++) {
+          try {
+            await removeOne(opt.key, ids[i])
+            totalDeleted++
+            setResetProgress('Menghapus ' + opt.label + ' (' + (i+1) + '/' + ids.length + ')')
+          } catch (err) { console.error('Remove error:', opt.key, ids[i], err) }
+        }
       }
     }
+
     setResetting(false)
     setResetProgress('')
     setResetPin('')
     setResetSelections({})
+    setSelectedItems({})
+    setExpandedKey(null)
     setShowReset(false)
     showToast(totalDeleted + ' data berhasil dihapus', 'error')
   }
@@ -666,28 +766,56 @@ export function BackupRestore({ members, savings, loans, products, suppliers, ka
                 </div>
 
                 <div style={{ fontSize: 14, fontWeight: 700, color: '#c62828', marginBottom: 8 }}>Pilih data yang ingin direset:</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 8, marginBottom: 16 }}>
-                  {resetOptions.map(opt => (
-                    <label key={opt.key} style={{
-                      display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
-                      background: resetSelections[opt.key] ? '#ffebee' : '#f8f9fa',
-                      border: resetSelections[opt.key] ? '2px solid #c62828' : '1px solid #e0e0e0',
-                      borderRadius: 8, cursor: 'pointer', fontSize: 13
-                    }}>
-                      <input type="checkbox" checked={!!resetSelections[opt.key]} onChange={() => toggleReset(opt.key)} style={{ width: 18, height: 18, accentColor: '#c62828' }} />
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 600, color: resetSelections[opt.key] ? '#c62828' : '#333' }}>{opt.label}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8, marginBottom: 16 }}>
+                  {resetOptions.map(opt => {
+                    const data = dataMap[opt.key]
+                    const deleteCount = getDeleteCount(opt.key)
+                    const isExpanded = expandedKey === opt.key
+                    const itemSet = selectedItems[opt.key] || new Set()
+                    return (
+                      <div key={opt.key} style={{ border: deleteCount > 0 ? '2px solid #c62828' : '1px solid #e0e0e0', borderRadius: 8, background: deleteCount > 0 ? '#ffebee' : '#f8f9fa', overflow: 'hidden' }}>
+                        {/* Header */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={!!resetSelections[opt.key]} onChange={() => toggleReset(opt.key)}
+                            style={{ width: 18, height: 18, accentColor: '#c62828' }} title="Pilih semua" />
+                          <div style={{ flex: 1 }} onClick={() => data.length > 0 && toggleExpand(opt.key)}>
+                            <div style={{ fontWeight: 600, fontSize: 13, color: deleteCount > 0 ? '#c62828' : '#333' }}>{opt.label}</div>
+                            {deleteCount > 0 && deleteCount < data.length && <div style={{ fontSize: 10, color: '#e65100' }}>{deleteCount} dari {data.length} dipilih</div>}
+                          </div>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: opt.color, background: '#fff', padding: '2px 8px', borderRadius: 10, border: '1px solid ' + opt.color }}>{data.length}</span>
+                          {data.length > 0 && (
+                            <button style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 14, color: '#666', padding: '2px 4px' }} onClick={() => toggleExpand(opt.key)} title="Lihat detail">
+                              {isExpanded ? '▲' : '▼'}
+                            </button>
+                          )}
+                        </div>
+                        {/* Expanded item list */}
+                        {isExpanded && data.length > 0 && (
+                          <div style={{ borderTop: '1px solid #e0e0e0', padding: '8px 12px', maxHeight: 250, overflow: 'auto', background: '#fff' }}>
+                            <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+                              <button style={{ fontSize: 10, color: '#1565c0', border: '1px solid #e0e0e0', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', background: '#fff' }} onClick={() => selectAllItems(opt.key)}>Pilih Semua</button>
+                              <button style={{ fontSize: 10, color: '#c62828', border: '1px solid #e0e0e0', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', background: '#fff' }} onClick={() => deselectAllItems(opt.key)}>Hapus Pilihan</button>
+                              <span style={{ fontSize: 10, color: '#666', marginLeft: 'auto' }}>{itemSet.size}/{data.length} dipilih</span>
+                            </div>
+                            {[...data].sort((a,b) => (b.date||'').localeCompare(a.date||'')).map(item => (
+                              <label key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderBottom: '1px solid #f5f5f5', cursor: 'pointer', fontSize: 11 }}>
+                                <input type="checkbox" checked={itemSet.has(item.id)} onChange={() => toggleItem(opt.key, item.id)}
+                                  style={{ width: 14, height: 14, accentColor: '#c62828', flexShrink: 0 }} />
+                                <span style={{ color: itemSet.has(item.id) ? '#c62828' : '#333', wordBreak: 'break-all' }}>{itemLabel(opt.key, item)}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: opt.color, background: '#fff', padding: '2px 8px', borderRadius: 10, border: '1px solid ' + opt.color }}>{opt.count}</span>
-                    </label>
-                  ))}
+                    )
+                  })}
                 </div>
 
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <button style={{ ...S.primaryBtn, background: '#c62828', fontSize: 14, padding: '12px 24px' }}
-                    disabled={resetting || Object.values(resetSelections).filter(Boolean).length === 0}
+                    disabled={resetting || totalToDelete === 0}
                     onClick={doReset}>
-                    🗑️ Reset {Object.values(resetSelections).filter(Boolean).length} Data Terpilih
+                    🗑️ Hapus {totalToDelete} Data Terpilih
                   </button>
                   {resetting && <span style={{ fontSize: 13, color: '#c62828', fontWeight: 600 }}>{resetProgress}</span>}
                 </div>
