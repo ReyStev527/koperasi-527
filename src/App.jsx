@@ -232,21 +232,21 @@ export default function App() {
     si.id = genId()
     await setOne('stockIn', si.id, si)
 
-    // Feature 9: Update harga beli produk jika harga baru lebih mahal
+    // Auto-update harga jual jika harga beli naik
+    // PENTING: hanya kirim field harga, JANGAN spread ...prod (akan timpa stok!)
     for (const item of (si.items||[])) {
       const prod = products.find(p => p.id === item.productId)
       if (prod && (item.buyPrice||0) > (prod.buyPrice||0)) {
-        const updatedProd = { ...prod, buyPrice: item.buyPrice }
-        // Auto-update harga jual dengan margin yang sama
+        const priceUpdate = { buyPrice: item.buyPrice, updatedAt: today() }
         if (prod.buyPrice > 0 && prod.sellPrice > 0) {
           const oldMargin = (prod.sellPrice - prod.buyPrice) / prod.buyPrice
-          updatedProd.sellPrice = Math.round(item.buyPrice * (1 + oldMargin))
+          priceUpdate.sellPrice = Math.round(item.buyPrice * (1 + oldMargin))
           if (prod.sellPrice2) {
             const oldMargin2 = (prod.sellPrice2 - prod.buyPrice) / prod.buyPrice
-            updatedProd.sellPrice2 = Math.round(item.buyPrice * (1 + oldMargin2))
+            priceUpdate.sellPrice2 = Math.round(item.buyPrice * (1 + oldMargin2))
           }
         }
-        await setOne('products', prod.id, updatedProd)
+        await setOne('products', prod.id, priceUpdate) // merge:true → hanya update harga
       }
     }
 
