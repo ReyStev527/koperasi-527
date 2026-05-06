@@ -575,12 +575,8 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
       wide: true,
       content: <StockInForm products={products} suppliers={suppliers} onSave={async d => {
         await saveStockIn(d)
-        for (const item of (d.items||[])) {
-          const prod = products.find(p => p.id === item.productId)
-          if (prod) await updateProductStock(prod.id, prod.stock + item.qty)
-        }
         setModal(null)
-        showToast('Barang masuk berhasil dicatat')
+        showToast('Barang masuk berhasil dicatat! Stok otomatis bertambah.')
       }} />,
     })
   }
