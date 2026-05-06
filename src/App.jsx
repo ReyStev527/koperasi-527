@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { db } from './firebase'
 import {
-  getAll, getOne, setOne, addOne, removeOne, listenCollection, seedIfEmpty, seedInventoryIfEmpty, batchSet
+  getAll, getOne, setOne, addOne, removeOne, listenCollection, seedIfEmpty, seedInventoryIfEmpty, batchSet, deleteCollection
 } from './db'
 import { Products, Suppliers, StockIn, POS } from './Inventory'
 import { KasMasukKeluar, JurnalUmum, LabaRugi, HitungSHU, CetakKwitansi } from './Finance'
@@ -636,7 +636,7 @@ export default function App() {
         }} />}
         {page === 'audit' && <AuditTrail {...{ auditLogs, members, getMember }} />}
         {page === 'notif' && <NotifikasiPage loans={loans} members={members} getMember={getMember} />}
-        {page === 'backup' && <BackupRestore {...{ members, savings, loans, products, suppliers, kasData, jurnalData, transactions, settings, showToast,
+        {page === 'backup' && <BackupRestore {...{ members, savings, loans, products, suppliers, kasData, jurnalData, transactions, stockInData, piutangs, hutangs, returs, mutasis, setorans, settings, showToast, deleteCollection,
           saveImportedProducts: async (items, onProgress) => { return await batchSet('products', items, onProgress) },
           saveImportedMembers: async (items, onProgress) => { return await batchSet('members', items, onProgress) }
         }} />}

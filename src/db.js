@@ -195,13 +195,13 @@ export async function seedInventoryIfEmpty() {
 }
 
 // =============================================
-// BATCH DELETE (hapus semua data dalam collection)
+// DELETE COLLECTION (untuk reset data)
 // =============================================
-export async function batchDelete(col, onProgress) {
+export async function deleteCollection(col, onProgress) {
   const snap = await getDocs(collection(db, col))
-  if (snap.size === 0) return 0
-  const BATCH_SIZE = 450
   const docs = snap.docs
+  if (docs.length === 0) return 0
+  const BATCH_SIZE = 450
   let done = 0
   for (let i = 0; i < docs.length; i += BATCH_SIZE) {
     const batch = writeBatch(db)

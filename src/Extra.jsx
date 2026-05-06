@@ -470,10 +470,83 @@ function BayarHutangForm({ hutang, onSave }) {
 // =============================================
 // 5. BACKUP & RESTORE
 // =============================================
-export function BackupRestore({ members, savings, loans, products, suppliers, kasData, jurnalData, transactions, settings, showToast, saveImportedProducts, saveImportedMembers }) {
+export function BackupRestore({ members, savings, loans, products, suppliers, kasData, jurnalData, transactions, stockInData, piutangs, hutangs, returs, mutasis, setorans, settings, showToast, deleteCollection, saveImportedProducts, saveImportedMembers }) {
   const [restoring, setRestoring] = useState(false)
   const [restoreProgress, setRestoreProgress] = useState('')
   const fileRef = useRef()
+
+  // Reset Data state
+  const [showReset, setShowReset] = useState(false)
+  const [resetPin, setResetPin] = useState('')
+  const [resetSelections, setResetSelections] = useState({})
+  const [resetting, setResetting] = useState(false)
+  const [resetProgress, setResetProgress] = useState('')
+
+  const RESET_PIN = '527reset' // Sandi untuk reset data
+
+  const resetOptions = [
+    { key: 'transactions', label: 'Riwayat Penjualan (Kasir)', count: (transactions||[]).length, color: '#1565c0' },
+    { key: 'stockIn', label: 'Riwayat Barang Masuk', count: (stockInData||[]).length, color: '#6a1b9a' },
+    { key: 'kas', label: 'Riwayat Kas Masuk/Keluar', count: (kasData||[]).length, color: '#2e7d32' },
+    { key: 'jurnal', label: 'Jurnal Umum', count: (jurnalData||[]).length, color: '#e65100' },
+    { key: 'piutangs', label: 'Data Piutang', count: (piutangs||[]).length, color: '#c62828' },
+    { key: 'hutangs', label: 'Data Hutang Supplier', count: (hutangs||[]).length, color: '#ad1457' },
+    { key: 'returs', label: 'Data Retur', count: (returs||[]).length, color: '#4527a0' },
+    { key: 'mutasis', label: 'Mutasi Stok', count: (mutasis||[]).length, color: '#00695c' },
+    { key: 'setorans', label: 'Setoran Harian', count: (setorans||[]).length, color: '#ef6c00' },
+    { key: 'auditLogs', label: 'Audit Log', count: 0, color: '#546e7a' },
+  ]
+
+  function toggleReset(key) {
+    setResetSelections(prev => ({ ...prev, [key]: !prev[key] }))
+  }
+
+  async function doReset() {
+    if (resetPin !== RESET_PIN) {
+      alert('❌ Sandi salah! Sandi reset: hubungi administrator.')
+      return
+    }
+
+    const selected = Object.entries(resetSelections).filter(([_, v]) => v).map(([k]) => k)
+    if (selected.length === 0) {
+      alert('Pilih minimal 1 data yang ingin direset.')
+      return
+    }
+
+    const names = selected.map(k => resetOptions.find(o => o.key === k)?.label || k).join('\n- ')
+    const confirmed = window.confirm(
+      '⚠️ PERINGATAN RESET DATA ⚠️\n\n' +
+      'Data berikut akan DIHAPUS PERMANEN:\n- ' + names + '\n\n' +
+      'Data yang TIDAK dihapus:\n' +
+      '✅ Daftar Anggota (' + members.length + ')\n' +
+      '✅ Daftar Barang (' + products.length + ')\n' +
+      '✅ Daftar Supplier (' + suppliers.length + ')\n' +
+      '✅ Simpanan & Pinjaman\n' +
+      '✅ Pengaturan & Users\n\n' +
+      'AKSI INI TIDAK BISA DIBATALKAN!\nKetik OK untuk melanjutkan.'
+    )
+    if (!confirmed) return
+
+    setResetting(true)
+    let totalDeleted = 0
+    for (const key of selected) {
+      try {
+        setResetProgress('Menghapus ' + (resetOptions.find(o => o.key === key)?.label || key) + '...')
+        const count = await deleteCollection(key, (done, total) => {
+          setResetProgress('Menghapus ' + (resetOptions.find(o => o.key === key)?.label || key) + ' (' + done + '/' + total + ')')
+        })
+        totalDeleted += count
+      } catch (err) {
+        console.error('Reset error for', key, err)
+      }
+    }
+    setResetting(false)
+    setResetProgress('')
+    setResetPin('')
+    setResetSelections({})
+    setShowReset(false)
+    showToast(totalDeleted + ' data berhasil dihapus', 'error')
+  }
 
   function doBackup() {
     const data = { version: '1.0', date: new Date().toISOString(), members, savings, loans, products, suppliers, kasData, jurnalData, transactions, settings }
@@ -553,6 +626,71 @@ export function BackupRestore({ members, savings, loans, products, suppliers, ka
           <input ref={fileRef} type="file" accept=".json" onChange={doRestore} style={{ ...S.input, padding: 8, fontSize: 13, width: '100%' }} />
           {restoring && <div style={{ textAlign: 'center', padding: 16, color: '#e65100', fontWeight: 600 }}>{restoreProgress || 'Sedang restore data...'}</div>}
         </div>
+      </div>
+
+      {/* RESET DATA */}
+      <div style={{ ...S.card, padding: 24, marginTop: 24, border: '2px solid #c62828' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: '#c62828', marginBottom: 4 }}>Reset Data Transaksi</h3>
+            <p style={{ fontSize: 12, color: '#999', margin: 0 }}>Hapus riwayat transaksi tanpa menghapus data master (anggota, barang, supplier)</p>
+          </div>
+          <button style={{ ...S.primaryBtn, background: showReset ? '#666' : '#c62828' }} onClick={() => setShowReset(!showReset)}>
+            {showReset ? 'Tutup' : '🔒 Buka Reset Data'}
+          </button>
+        </div>
+
+        {showReset && (
+          <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: 16 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'end', marginBottom: 16 }}>
+              <label style={{ ...S.formLabel, marginBottom: 0, flex: 1 }}>
+                Masukkan Sandi Reset
+                <input style={{ ...S.input, fontSize: 14, fontWeight: 600, letterSpacing: 2 }} type="password" value={resetPin} onChange={e => setResetPin(e.target.value)} placeholder="Ketik sandi..." />
+              </label>
+              <div style={{ padding: '10px 16px', background: resetPin === RESET_PIN ? '#e8f5e9' : '#f5f5f5', borderRadius: 8, fontSize: 13, fontWeight: 600, color: resetPin === RESET_PIN ? '#2e7d32' : '#999' }}>
+                {resetPin === RESET_PIN ? '✅ Sandi benar' : '🔒 Terkunci'}
+              </div>
+            </div>
+
+            {resetPin === RESET_PIN && (
+              <>
+                <div style={{ padding: '10px 14px', background: '#e8f5e9', borderRadius: 8, marginBottom: 16, fontSize: 13 }}>
+                  <strong style={{ color: '#2e7d32' }}>✅ Data yang TIDAK akan dihapus:</strong>
+                  <span style={{ color: '#333', marginLeft: 8 }}>
+                    Anggota ({members.length}), Barang ({products.length}), Supplier ({suppliers.length}), Simpanan ({savings.length}), Pinjaman ({loans.length}), Users, Pengaturan
+                  </span>
+                </div>
+
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#c62828', marginBottom: 8 }}>Pilih data yang ingin direset:</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 8, marginBottom: 16 }}>
+                  {resetOptions.map(opt => (
+                    <label key={opt.key} style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+                      background: resetSelections[opt.key] ? '#ffebee' : '#f8f9fa',
+                      border: resetSelections[opt.key] ? '2px solid #c62828' : '1px solid #e0e0e0',
+                      borderRadius: 8, cursor: 'pointer', fontSize: 13
+                    }}>
+                      <input type="checkbox" checked={!!resetSelections[opt.key]} onChange={() => toggleReset(opt.key)} style={{ width: 18, height: 18, accentColor: '#c62828' }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, color: resetSelections[opt.key] ? '#c62828' : '#333' }}>{opt.label}</div>
+                      </div>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: opt.color, background: '#fff', padding: '2px 8px', borderRadius: 10, border: '1px solid ' + opt.color }}>{opt.count}</span>
+                    </label>
+                  ))}
+                </div>
+
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <button style={{ ...S.primaryBtn, background: '#c62828', fontSize: 14, padding: '12px 24px' }}
+                    disabled={resetting || Object.values(resetSelections).filter(Boolean).length === 0}
+                    onClick={doReset}>
+                    🗑️ Reset {Object.values(resetSelections).filter(Boolean).length} Data Terpilih
+                  </button>
+                  {resetting && <span style={{ fontSize: 13, color: '#c62828', fontWeight: 600 }}>{resetProgress}</span>}
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
