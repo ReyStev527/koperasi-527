@@ -233,28 +233,53 @@ export default function App() {
 
     // UPDATE STOK + HARGA dalam satu write per produk
     for (const item of (si.items||[])) {
-      const prod = products.find(p => p.id === item.productId)
-      if (!prod) continue
-      // Hitung stok baru
-      const newStock = (prod.stock || 0) + (item.qty || 0)
-      const updatedProd = { ...prod, stock: newStock }
-      // Feature 9: Update harga beli jika harga baru lebih mahal
-      if ((item.buyPrice||0) > (prod.buyPrice||0)) {
-        updatedProd.buyPrice = item.buyPrice
-        // Auto-update harga jual dengan margin yang sama
-        if (prod.buyPrice > 0 && prod.sellPrice > 0) {
-          const oldMargin = (prod.sellPrice - prod.buyPrice) / prod.buyPrice
-          updatedProd.sellPrice = Math.round(item.buyPrice * (1 + oldMargin))
-          if (prod.sellPrice2) {
-            const oldMargin2 = (prod.sellPrice2 - prod.buyPrice) / prod.buyPrice
-            updatedProd.sellPrice2 = Math.round(item.buyPrice * (1 + oldMargin2))
+      let prod = products.find(p => p.id === item.productId)
+
+      // Cek juga berdasarkan SKU/kode (untuk manual entry)
+      if (!prod && item.kode) {
+        prod = products.find(p => String(p.sku||'').toLowerCase() === String(item.kode).toLowerCase())
+      }
+
+      if (prod) {
+        // Produk SUDAH ADA → update stok + harga
+        const newStock = (prod.stock || 0) + (item.qty || 0)
+        const updatedProd = { ...prod, stock: newStock }
+        if ((item.buyPrice||0) > (prod.buyPrice||0)) {
+          updatedProd.buyPrice = item.buyPrice
+          if (prod.buyPrice > 0 && prod.sellPrice > 0) {
+            const oldMargin = (prod.sellPrice - prod.buyPrice) / prod.buyPrice
+            updatedProd.sellPrice = Math.round(item.buyPrice * (1 + oldMargin))
+            if (prod.sellPrice2) {
+              const oldMargin2 = (prod.sellPrice2 - prod.buyPrice) / prod.buyPrice
+              updatedProd.sellPrice2 = Math.round(item.buyPrice * (1 + oldMargin2))
+            }
           }
         }
+        if (item.sellPrice && item.sellPrice > 0) updatedProd.sellPrice = item.sellPrice
+        if (item.sellPrice2 && item.sellPrice2 > 0) updatedProd.sellPrice2 = item.sellPrice2
+        await setOne('products', prod.id, updatedProd)
+      } else {
+        // Produk BELUM ADA → buat baru otomatis
+        const newId = genId()
+        const newProd = {
+          id: newId,
+          sku: item.kode || '',
+          name: (item.nama || item.kode || 'Produk Baru').toUpperCase(),
+          stock: item.qty || 0,
+          buyPrice: item.buyPrice || 0,
+          sellPrice: item.sellPrice || item.buyPrice || 0,
+          sellPrice2: item.sellPrice2 || 0,
+          unit: 'Pcs',
+          category: 'Umum',
+          type: 'milik',
+          minStock: 5,
+          createdAt: new Date().toISOString(),
+          createdVia: 'barang-masuk',
+        }
+        await setOne('products', newId, newProd)
+        // Update item.productId supaya referensi stockIn record benar
+        item.productId = newId
       }
-      // Update harga jual jika dikirim dari form Barang Masuk
-      if (item.sellPrice && item.sellPrice > 0) updatedProd.sellPrice = item.sellPrice
-      if (item.sellPrice2 && item.sellPrice2 > 0) updatedProd.sellPrice2 = item.sellPrice2
-      await setOne('products', prod.id, updatedProd)
     }
 
     // Auto-create Kas Keluar / Hutang Supplier sesuai jenis bayar
