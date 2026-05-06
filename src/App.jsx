@@ -231,13 +231,16 @@ export default function App() {
     si.id = genId()
     await setOne('stockIn', si.id, si)
 
-    // UPDATE STOK + HARGA dalam satu write per produk
+    // UPDATE STOK + HARGA — baca data FRESH dari Firestore
+    const freshProducts = await getAll('products')
     for (const item of (si.items||[])) {
-      let prod = products.find(p => p.id === item.productId)
-
-      // Cek juga berdasarkan SKU/kode (untuk manual entry)
+      // Cari produk: by ID → by SKU → by Nama
+      let prod = freshProducts.find(p => p.id === item.productId)
       if (!prod && item.kode) {
-        prod = products.find(p => String(p.sku||'').toLowerCase() === String(item.kode).toLowerCase())
+        prod = freshProducts.find(p => String(p.sku||'').toLowerCase() === String(item.kode).toLowerCase())
+      }
+      if (!prod && item.nama) {
+        prod = freshProducts.find(p => String(p.name||'').toLowerCase() === String(item.nama).toLowerCase())
       }
 
       if (prod) {
@@ -258,6 +261,7 @@ export default function App() {
         if (item.sellPrice && item.sellPrice > 0) updatedProd.sellPrice = item.sellPrice
         if (item.sellPrice2 && item.sellPrice2 > 0) updatedProd.sellPrice2 = item.sellPrice2
         await setOne('products', prod.id, updatedProd)
+        console.log('✅ Stok updated:', prod.name, prod.stock, '→', newStock)
       } else {
         // Produk BELUM ADA → buat baru otomatis
         const newId = genId()
@@ -277,8 +281,8 @@ export default function App() {
           createdVia: 'barang-masuk',
         }
         await setOne('products', newId, newProd)
-        // Update item.productId supaya referensi stockIn record benar
         item.productId = newId
+        console.log('🆕 Produk baru:', newProd.name, 'stok:', newProd.stock)
       }
     }
 
