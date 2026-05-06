@@ -1,53 +1,13 @@
-// =============================================
-// KOPERASI YONIF 527/BY — Baladibya Yudha
-// Sistem Manajemen Koperasi Digital
-// =============================================
-// CHANGELOG:
-// v2.5 - 06 Mei 2026
-//   - Fix stok tidak bertambah saat Barang Masuk (saveStockIn pakai state, bukan getAll)
-//   - Tambah Riwayat Stok per produk (tombol 📊 di Stok Barang)
-//   - Fix nama produk di listing Barang Masuk (tampil nama bukan ID)
-//   - Tambah autocomplete cari nama barang di form Barang Masuk
-//   - Fix scan kartu anggota format AGT- dan KOP di Kasir POS
-//   - Fix harga kredit (sellPrice2) otomatis saat pilih KREDIT di POS
-//   - Tambah cari nama anggota autocomplete di Kasir POS
-//   - Kembalikan tombol Tambah Produk di Stok Barang
-//   - Tambah fitur Reset Data Uji Coba (password: 527reset)
-//   - Fix collection piutangs & hutangs di Reset Data
-//
-// v2.4 - 05 Mei 2026
-//   - Form Barang Masuk lebar format MS Access (tabel: Kode, Nama, Jumlah, Stok Awal/Akhir, Hpp, Hrg Lunas/Kredit)
-//   - Export Excel 4 halaman (Detail, Rekap Supplier, Rekap Jenis Bayar, Rekap Barang)
-//   - Export CSV Barang Masuk
-//   - Rekap Penambahan Barang (modal + cetak)
-//   - Filter periode di halaman Barang Masuk
-//   - Supplier default "---" (tidak auto-terisi)
-//
-// v2.3 - Apr 2026
-//   - Kartu Anggota dengan barcode (AGT-xxxxx)
-//   - Cetak batch 6 kartu per lembar HVS
-//   - Scan barcode kartu di POS
-//   - Tagihan Juyar (Potong Gaji)
-//   - Laporan Tutup Buku per Kompi
-//   - Hutang Supplier
-//   - Setoran Harian → Bulanan
-//
-// v2.0 - Mar 2026
-//   - 40+ fitur: POS, Simpanan, Pinjaman, Kas, Jurnal, SHU
-//   - Import data VB6 (CSV/XML)
-//   - Firebase Firestore + Netlify deploy
-//   - RBAC (4 role), PWA, Mobile Responsive
-// =============================================
 import { useState, useEffect, useCallback } from 'react'
 import { db } from './firebase'
 import {
-  getAll, getOne, setOne, addOne, removeOne, listenCollection, seedIfEmpty, seedInventoryIfEmpty, batchSet, batchDelete
+  getAll, getOne, setOne, addOne, removeOne, listenCollection, seedIfEmpty, seedInventoryIfEmpty, batchSet
 } from './db'
 import { Products, Suppliers, StockIn, POS } from './Inventory'
 import { KasMasukKeluar, JurnalUmum, LabaRugi, HitungSHU, CetakKwitansi } from './Finance'
 import { ExportData, RekapBulanan, GrafikTrend, AuditTrail, createAuditLog, LaporanPenjualan } from './Reporting'
 import { ReturBarang, PiutangPage, HargaBertingkat, MutasiStok, SetoranHarian } from './Legacy'
-import { HutangSupplier, BackupRestore, DashboardCharts, cetakStruk, cetakLaporanPDF, KartuAnggota, LaporanTutupBuku, StokHistori, TagihanJuyar, LabaPerAnggota } from './Extra'
+import { HutangSupplier, BackupRestore, DashboardCharts, cetakStruk, cetakLaporanPDF, KartuAnggota, cetakSemuaKartu, LaporanTutupBuku, StokHistori, TagihanJuyar, LabaPerAnggota } from './Extra'
 import logoSrc from '/logo.png?url'
 
 // =============================================
@@ -118,7 +78,7 @@ export default function App() {
   const [setorans, setSetorans] = useState([])
   const [hutangs, setHutangs] = useState([])
   const [settings, setSettings] = useState({
-    name: 'KOPERASI YONIF 527/BY', simpPokok: 500000, simpWajib: 100000, bungaPinjaman: 1.5, maxPinjaman: 10000000
+    name: 'KOPERASI YONIF 527/BY', simpPokok: 500000, simpWajib: 100000, bungaPinjaman: 1.5, maxPinjaman: 10000000, kasPin: '527'
   })
 
   const [modal, setModal] = useState(null)
@@ -241,8 +201,9 @@ export default function App() {
 
   // ---- Inventory CRUD ----
   async function saveProduct(p, isEdit) {
+    p.updatedAt = today()
     if (isEdit) await setOne('products', p.id, p)
-    else { p.id = genId(); await setOne('products', p.id, p) }
+    else { p.id = genId(); p.createdAt = today(); await setOne('products', p.id, p) }
   }
   async function deleteProduct(id) {
     const p = products.find(x => x.id === id)
@@ -271,62 +232,21 @@ export default function App() {
     si.id = genId()
     await setOne('stockIn', si.id, si)
 
-    // UPDATE STOK — pakai products dari state (sudah loaded via listener)
-    let successCount = 0, failCount = 0, newCount = 0
+    // Feature 9: Update harga beli produk jika harga baru lebih mahal
     for (const item of (si.items||[])) {
-      try {
-        // Cari produk: by ID → by SKU → by Nama
-        let prod = products.find(p => p.id === item.productId)
-        if (!prod && item.kode) {
-          prod = products.find(p => String(p.sku||'').toLowerCase() === String(item.kode).toLowerCase())
-        }
-        if (!prod && item.nama) {
-          prod = products.find(p => String(p.name||'').toLowerCase().trim() === String(item.nama).toLowerCase().trim())
-        }
-
-        if (prod) {
-          // Produk ADA → baca stok FRESH dari Firestore untuk 1 doc saja
-          let currentStock = prod.stock || 0
-          try {
-            const freshProd = await getOne('products', prod.id)
-            if (freshProd) currentStock = freshProd.stock || 0
-          } catch(e) { /* kuota habis, pakai stok dari state */ }
-
-          const newStock = currentStock + (item.qty || 0)
-          const updatedProd = { ...prod, stock: newStock }
-          if ((item.buyPrice||0) > (prod.buyPrice||0)) {
-            updatedProd.buyPrice = item.buyPrice
-            if (prod.buyPrice > 0 && prod.sellPrice > 0) {
-              const oldMargin = (prod.sellPrice - prod.buyPrice) / prod.buyPrice
-              updatedProd.sellPrice = Math.round(item.buyPrice * (1 + oldMargin))
-              if (prod.sellPrice2) {
-                const oldMargin2 = (prod.sellPrice2 - prod.buyPrice) / prod.buyPrice
-                updatedProd.sellPrice2 = Math.round(item.buyPrice * (1 + oldMargin2))
-              }
-            }
+      const prod = products.find(p => p.id === item.productId)
+      if (prod && (item.buyPrice||0) > (prod.buyPrice||0)) {
+        const updatedProd = { ...prod, buyPrice: item.buyPrice }
+        // Auto-update harga jual dengan margin yang sama
+        if (prod.buyPrice > 0 && prod.sellPrice > 0) {
+          const oldMargin = (prod.sellPrice - prod.buyPrice) / prod.buyPrice
+          updatedProd.sellPrice = Math.round(item.buyPrice * (1 + oldMargin))
+          if (prod.sellPrice2) {
+            const oldMargin2 = (prod.sellPrice2 - prod.buyPrice) / prod.buyPrice
+            updatedProd.sellPrice2 = Math.round(item.buyPrice * (1 + oldMargin2))
           }
-          if (item.sellPrice && item.sellPrice > 0) updatedProd.sellPrice = item.sellPrice
-          if (item.sellPrice2 && item.sellPrice2 > 0) updatedProd.sellPrice2 = item.sellPrice2
-          await setOne('products', prod.id, updatedProd)
-          successCount++
-        } else {
-          // Produk BARU → buat otomatis
-          const newId = genId()
-          await setOne('products', newId, {
-            id: newId, sku: item.kode || '',
-            name: (item.nama || item.kode || 'Produk Baru').toUpperCase(),
-            stock: item.qty || 0, buyPrice: item.buyPrice || 0,
-            sellPrice: item.sellPrice || item.buyPrice || 0,
-            sellPrice2: item.sellPrice2 || 0,
-            unit: 'Pcs', category: 'Umum', type: 'milik', minStock: 5,
-            createdAt: new Date().toISOString(), createdVia: 'barang-masuk',
-          })
-          item.productId = newId
-          newCount++
         }
-      } catch (err) {
-        console.error('❌ Gagal update:', item.nama || item.kode, err)
-        failCount++
+        await setOne('products', prod.id, updatedProd)
       }
     }
 
@@ -380,7 +300,6 @@ export default function App() {
     await setOne('jurnal', jurnalEntry.id, jurnalEntry)
 
     await logAction('Barang Masuk', 'create', 'Invoice ' + (si.invoice||'') + ': ' + (si.items||[]).length + ' item, total ' + (si.total||0))
-    return { successCount, newCount, failCount }
   }
   async function saveTransaction(tx) {
     tx.id = genId()
@@ -606,7 +525,6 @@ export default function App() {
     { id: 'notif', label: 'Notifikasi', icon: I.home, roles: ['admin','bendahara','ketua'] },
     { id: '_sep4', label: 'SISTEM', sep: true, roles: ['admin'] },
     { id: 'backup', label: 'Backup & Restore', icon: I.gear, roles: ['admin'] },
-    { id: 'resetdata', label: 'Reset Data', icon: I.gear, roles: ['admin'] },
     { id: 'settings', label: 'Pengaturan', icon: I.gear, roles: ['admin'] },
   ]
   // Filter nav berdasarkan role user
@@ -692,7 +610,7 @@ export default function App() {
         {page === 'juyar' && <TagihanJuyar {...{ transactions, piutangs, members, settings, savePiutang, showToast, setModal }} />}
         {page === 'labaanggota' && <LabaPerAnggota {...{ transactions, members, products, settings }} />}
         {page === 'reports' && <Reports {...{ members, savings, loans, getMember }} />}
-        {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, transactions, stockInData, setPage }} />}
+        {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, transactions, stockInData }} />}
         {page === 'stokhistori' && <StokHistori products={products} stockIn={stockInData} transactions={transactions} mutasis={mutasis} />}
         {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, products, suppliers, updateProductStock, setModal, showToast }} />}
         {page === 'pos' && <POS {...{ products, transactions, saveTransaction, updateProductStock, members, showToast, savePiutang, settings }} />}
@@ -700,7 +618,7 @@ export default function App() {
         {page === 'retur' && <ReturBarang {...{ returs, saveRetur, products, suppliers, updateProductStock, setModal, showToast }} />}
         {page === 'harga' && <HargaBertingkat {...{ products, saveProduct, setModal, showToast }} />}
         {page === 'mutasi' && <MutasiStok {...{ mutasis, saveMutasi, products, updateProductStock, setModal, showToast }} />}
-        {page === 'kas' && <KasMasukKeluar {...{ kasData, saveKas, deleteKas, setModal, showToast }} />}
+        {page === 'kas' && <KasMasukKeluar {...{ kasData, saveKas, deleteKas, setModal, showToast, settings, user }} />}
         {page === 'jurnal' && <JurnalUmum {...{ jurnalData, saveJurnal, deleteJurnal, setModal, showToast }} />}
         {page === 'piutang' && <PiutangPage {...{ piutangs, savePiutang, bayarPiutang, members, getMember, setModal, showToast }} />}
         {page === 'setoran' && <SetoranHarian {...{ setorans, saveSetoran, transactions, kasData, loans, setModal, showToast }} />}
@@ -722,14 +640,13 @@ export default function App() {
           saveImportedProducts: async (items, onProgress) => { return await batchSet('products', items, onProgress) },
           saveImportedMembers: async (items, onProgress) => { return await batchSet('members', items, onProgress) }
         }} />}
-        {page === 'resetdata' && <ResetDataPage showToast={showToast} />}
         {page === 'settings' && <SettingsPage {...{ settings, saveSettings, showToast, users, saveUser, deleteUser, user }} />}
       </main>
 
       {/* MODAL */}
       {modal && (
         <div style={S.overlay} onClick={() => setModal(null)}>
-          <div style={{...S.modal, ...(modal.wide ? { maxWidth: 960, width: '95%' } : {})}} onClick={e => e.stopPropagation()}>
+          <div style={S.modal} onClick={e => e.stopPropagation()}>
             <div style={S.modalHead}>
               <h3 style={{ fontSize: 17, fontWeight: 700 }}>{modal.title}</h3>
               <button style={S.iconBtn} onClick={() => setModal(null)}>{I.x}</button>
@@ -803,16 +720,6 @@ function LoginScreen({ onLogin }) {
             </label>
             <button onClick={submit} style={LS.submitBtn}>Masuk</button>
           </div>
-        </div>
-
-        <div style={LS.hint}>
-          <div style={{ color: '#64748b', fontSize: 11, fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Akun Default</div>
-          {[['Admin', 'admin / admin123'], ['Bendahara', 'bendahara / bend123'], ['Ketua', 'ketua / ketua123']].map(([l, v]) => (
-            <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#94a3b8', marginBottom: 3 }}>
-              <span>{l}</span>
-              <code style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 6px', borderRadius: 4, fontFamily: 'monospace' }}>{v}</code>
-            </div>
-          ))}
         </div>
       </div>
     </div>
@@ -925,7 +832,38 @@ function Members({ members, saveMember, deleteMember, memberSavings, memberLoans
 
   return (
     <div>
-      <div style={S.pageHead}><h2 style={S.title}>Data Anggota</h2><button style={S.primaryBtn} onClick={() => openForm(null)}>{I.plus} Tambah Anggota</button></div>
+      <div style={S.pageHead}><h2 style={S.title}>Data Anggota</h2>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button style={{ ...S.primaryBtn, background: '#7b1fa2' }} onClick={() => cetakSemuaKartu(members, settings, logoSrc, 6)}>
+            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 10h4M7 14h2"/></svg>
+            Cetak Semua (6/hal)
+          </button>
+          <button style={{ ...S.primaryBtn, background: '#5c6bc0' }} onClick={() => cetakSemuaKartu(members, settings, logoSrc, 4)}>
+            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 10h4M7 14h2"/></svg>
+            Cetak Semua (4/hal)
+          </button>
+          <button style={S.primaryBtn} onClick={() => openForm(null)}>{I.plus} Tambah Anggota</button>
+          <button style={{ ...S.primaryBtn, background: '#ef6c00' }} onClick={() => {
+            const active = members.filter(m => m.status === 'active')
+            const codes = active.map(m => ({ name: m.name, no: m.no, id: m.id, barcode: 'AGT-' + (m.id || '000') }))
+            const seen = {}
+            const dups = []
+            codes.forEach(c => {
+              if (seen[c.barcode]) dups.push(c.name + ' & ' + seen[c.barcode] + ' → SAMA: ' + c.barcode)
+              seen[c.barcode] = c.name
+            })
+            const noId = codes.filter(c => !c.id || c.id === '000')
+            let msg = '=== CEK BARCODE ANGGOTA ===\n\nTotal anggota aktif: ' + active.length + '\n\n'
+            if (dups.length > 0) msg += '❌ DUPLIKAT DITEMUKAN:\n' + dups.join('\n') + '\n\n'
+            else msg += '✅ Tidak ada barcode duplikat\n\n'
+            if (noId.length > 0) msg += '⚠️ Anggota tanpa ID:\n' + noId.map(c => c.name).join(', ') + '\n\n'
+            msg += 'Daftar barcode:\n' + codes.map(c => c.no + ' | ' + c.name + ' → ' + c.barcode).join('\n')
+            alert(msg)
+          }}>
+            🔍 Cek Barcode
+          </button>
+        </div>
+      </div>
       <div style={S.toolbar}>
         <div style={S.searchBox}>{I.search}<input style={S.searchInput} placeholder="Cari nama / no anggota..." value={search} onChange={e => setSearch(e.target.value)} /></div>
         <div style={S.filterGroup}>
@@ -997,7 +935,7 @@ function MemberForm({ initial, onSave }) {
       <label style={S.formLabel}>Alamat<input style={S.input} value={d.address} onChange={e => set('address', e.target.value)} /></label>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <label style={S.formLabel}>Status<select style={S.input} value={d.status} onChange={e => set('status', e.target.value)}><option value="active">Aktif</option><option value="inactive">Nonaktif</option></select></label>
-        <label style={S.formLabel}>Tipe Harga<select style={S.input} value={d.tingkatHrg||'1'} onChange={e => set('tingkatHrg', e.target.value)}><option value="1">Harga 1 (Eceran)</option><option value="2">Harga 2 (Grosir)</option></select></label>
+        <label style={S.formLabel}>Tipe Harga<select style={S.input} value={d.tingkatHrg||'1'} onChange={e => set('tingkatHrg', e.target.value)}><option value="1">Harga Lunas</option><option value="2">Harga Kredit</option></select></label>
       </div>
       <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={() => onSave(d)}>Simpan</button>
     </div>
@@ -1239,150 +1177,15 @@ function Reports({ members, savings, loans, getMember }) {
 }
 
 // =============================================
+// =============================================
 // SETTINGS
 // =============================================
-// =============================================
-// RESET DATA (Hapus Data Uji Coba)
-// =============================================
-function ResetDataPage({ showToast }) {
-  const RESET_PASSWORD = '527reset'
-  const [password, setPassword] = useState('')
-  const [unlocked, setUnlocked] = useState(false)
-  const [selected, setSelected] = useState({
-    transactions: true, kas: true, piutangs: true, hutangs: true, stockIn: true,
-    savings: false, loans: false, auditLogs: false
-  })
-  const [progress, setProgress] = useState('')
-  const [deleting, setDeleting] = useState(false)
-
-  const collections = [
-    { key: 'transactions', label: 'Riwayat Penjualan (POS)', desc: 'Semua nota penjualan kasir', danger: true },
-    { key: 'kas', label: 'Kas Masuk / Keluar', desc: 'Semua catatan kas', danger: true },
-    { key: 'piutangs', label: 'Piutang Pelanggan', desc: 'Semua piutang & Tagihan Juyar', danger: true },
-    { key: 'hutangs', label: 'Hutang Supplier', desc: 'Semua hutang ke supplier', danger: true },
-    { key: 'stockIn', label: 'Riwayat Barang Masuk', desc: 'Nota pembelian barang', danger: true },
-    { key: 'savings', label: 'Simpanan Anggota', desc: 'Data simpanan pokok/wajib/sukarela', danger: false },
-    { key: 'loans', label: 'Pinjaman Anggota', desc: 'Data pinjaman & angsuran', danger: false },
-    { key: 'auditLogs', label: 'Audit Trail / Log', desc: 'Catatan aktivitas sistem', danger: false },
-  ]
-
-  const safeCollections = ['products', 'suppliers', 'members', 'settings', 'users']
-
-  function handleUnlock() {
-    if (password === RESET_PASSWORD) { setUnlocked(true); setPassword('') }
-    else { showToast('Password salah!', 'error'); setPassword('') }
-  }
-
-  async function handleReset() {
-    const toDelete = Object.entries(selected).filter(([_, v]) => v).map(([k]) => k)
-    if (toDelete.length === 0) { showToast('Pilih minimal 1 collection', 'error'); return }
-    const names = toDelete.join(', ')
-    if (!confirm('⚠️ PERINGATAN!\n\nAnda akan MENGHAPUS PERMANEN data:\n' + names + '\n\nData yang dihapus TIDAK BISA dikembalikan!\n\nYakin lanjutkan?')) return
-    if (!confirm('KONFIRMASI TERAKHIR:\nKetik OK untuk menghapus ' + toDelete.length + ' collection')) return
-
-    setDeleting(true)
-    let totalDeleted = 0
-    for (const col of toDelete) {
-      setProgress('Menghapus ' + col + '...')
-      try {
-        const count = await batchDelete(col, (done, total) => {
-          setProgress('Menghapus ' + col + ': ' + done + '/' + total)
-        })
-        totalDeleted += count
-        setProgress(col + ' ✅ (' + count + ' data dihapus)')
-      } catch (err) {
-        setProgress(col + ' ❌ Error: ' + err.message)
-        showToast('Gagal hapus ' + col + ': ' + err.message, 'error')
-      }
-    }
-    setDeleting(false)
-    setProgress('Selesai! Total ' + totalDeleted + ' data dihapus dari ' + toDelete.length + ' collection.')
-    showToast('Reset selesai! ' + totalDeleted + ' data dihapus.')
-  }
-
-  return (
-    <div>
-      <div style={S.pageHead}><h2 style={S.title}>Reset Data Uji Coba</h2></div>
-
-      {/* Warning banner */}
-      <div style={{ ...S.card, background: '#fff3e0', border: '2px solid #e65100', marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 28 }}>⚠️</span>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 15, color: '#e65100' }}>PERHATIAN — FITUR BERBAHAYA</div>
-            <div style={{ fontSize: 13, color: '#bf360c', marginTop: 4 }}>Fitur ini akan menghapus data secara PERMANEN. Pastikan Anda sudah backup data penting sebelum melanjutkan. Data yang dihapus tidak bisa dikembalikan.</div>
-          </div>
-        </div>
-      </div>
-
-      {!unlocked ? (
-        <div style={{ ...S.card, maxWidth: 400 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: '#c62828' }}>🔒 Masukkan Password Reset</h3>
-          <div style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>Password diperlukan untuk mengakses fitur reset data.</div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input style={{ ...S.input, flex: 1 }} type="password" value={password} onChange={e => setPassword(e.target.value)}
-              placeholder="Ketik password..."
-              onKeyDown={e => e.key === 'Enter' && handleUnlock()} />
-            <button style={S.primaryBtn} onClick={handleUnlock}>Buka</button>
-          </div>
-          <div style={{ fontSize: 11, color: '#999', marginTop: 8 }}>Hubungi administrator untuk password reset.</div>
-        </div>
-      ) : (
-        <>
-          {/* Data yang AMAN (tidak dihapus) */}
-          <div style={{ ...S.card, marginBottom: 16 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 700, color: '#2e7d32', marginBottom: 12 }}>✅ Data yang TIDAK akan dihapus (aman):</h3>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-              {safeCollections.map(c => (
-                <span key={c} style={{ padding: '4px 12px', background: '#e8f5e9', borderRadius: 20, fontSize: 12, fontWeight: 600, color: '#2e7d32', border: '1px solid #c8e6c9' }}>{c}</span>
-              ))}
-            </div>
-          </div>
-
-          {/* Data yang bisa dihapus */}
-          <div style={{ ...S.card, marginBottom: 16 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 700, color: '#c62828', marginBottom: 12 }}>🗑 Pilih data yang mau dihapus:</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {collections.map(col => (
-                <label key={col.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: selected[col.key] ? '#ffebee' : '#f9f9f9', borderRadius: 8, cursor: 'pointer', border: selected[col.key] ? '2px solid #c62828' : '2px solid transparent', transition: 'all 0.15s' }}>
-                  <input type="checkbox" checked={selected[col.key] || false} onChange={e => setSelected(prev => ({ ...prev, [col.key]: e.target.checked }))}
-                    style={{ width: 18, height: 18, accentColor: '#c62828' }} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>{col.label}</div>
-                    <div style={{ fontSize: 11, color: '#888' }}>{col.desc}</div>
-                  </div>
-                  <span style={{ fontSize: 11, fontFamily: 'monospace', color: '#999', background: '#eee', padding: '2px 8px', borderRadius: 4 }}>{col.key}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/* Tombol aksi */}
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-            <button style={{ ...S.primaryBtn, background: '#c62828', padding: '12px 32px', fontSize: 15 }}
-              onClick={handleReset} disabled={deleting}>
-              {deleting ? '⏳ Menghapus...' : '🗑 HAPUS DATA TERPILIH'}
-            </button>
-            <button style={{ ...S.filterBtn, padding: '12px 24px' }} onClick={() => setUnlocked(false)}>🔒 Kunci Kembali</button>
-          </div>
-
-          {/* Progress */}
-          {progress && (
-            <div style={{ ...S.card, marginTop: 16, background: deleting ? '#fff8e1' : '#e8f5e9', border: deleting ? '1px solid #ffc107' : '1px solid #4caf50' }}>
-              <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'pre-wrap' }}>{progress}</div>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  )
-}
-
 function SettingsPage({ settings, saveSettings, showToast, users, saveUser, deleteUser, user }) {
   const [d, setD] = useState({ ...settings })
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
   const [nu, setNu] = useState({ username: '', password: '', name: '', role: 'bendahara' })
   const isAdmin = user?.role === 'admin'
+  const [editPwUser, setEditPwUser] = useState(null)
 
   return (
     <div>
@@ -1396,30 +1199,43 @@ function SettingsPage({ settings, saveSettings, showToast, users, saveUser, dele
             <label style={S.formLabel}>Simpanan Wajib (Rp)<input style={S.input} type="number" value={d.simpWajib} onChange={e => set('simpWajib', Number(e.target.value))} /></label>
             <label style={S.formLabel}>Bunga Pinjaman (% / bulan)<input style={S.input} type="number" step="0.1" value={d.bungaPinjaman} onChange={e => set('bungaPinjaman', Number(e.target.value))} /></label>
             <label style={S.formLabel}>Maks. Pinjaman (Rp)<input style={S.input} type="number" value={d.maxPinjaman} onChange={e => set('maxPinjaman', Number(e.target.value))} /></label>
-            <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={async () => { await saveSettings(d); showToast('Pengaturan disimpan') }}>Simpan Pengaturan</button>
+            <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={async () => { const { kasPin, ...rest } = d; await saveSettings({ ...rest, kasPin: settings?.kasPin || '527' }); showToast('Pengaturan disimpan') }}>Simpan Pengaturan</button>
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #eee' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#374151' }}>\ud83d\udd12 PIN Akses Kas</div>
+              <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>PIN diminta saat akan menambah/menghapus data Kas Masuk & Keluar</p>
+              <UbahPinKas settings={settings} saveSettings={saveSettings} showToast={showToast} currentSettings={d} setD={setD} />
+            </div>
           </div>
         </div>
 
         <div style={S.card}>
           <h3 style={{ ...S.cardTitle, marginBottom: 16 }}>Manajemen User</h3>
           <table style={S.table}>
-            <thead><tr>{['Username', 'Nama', 'Role', ''].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <thead><tr>{['Username', 'Nama', 'Role', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
             <tbody>{users.map(u => (
               <tr key={u.id} style={S.tr}>
                 <td style={{ ...S.td, fontWeight: 600 }}>{u.username}</td>
                 <td style={S.td}>{u.name}</td>
                 <td style={S.td}><span style={{ ...S.badge, background: u.role === 'admin' ? 'var(--r)20' : 'var(--b)20', color: u.role === 'admin' ? 'var(--r)' : 'var(--b)', textTransform: 'capitalize' }}>{u.role}</span></td>
-                <td style={S.td}>{isAdmin && u.id !== user.id && <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus user?')) { await deleteUser(u.id); showToast('User dihapus', 'error') } }}>{I.trash}</button>}</td>
+                <td style={{ ...S.td, whiteSpace: 'nowrap' }}>
+                  {isAdmin && <button style={{ ...S.smallBtn, color: 'var(--b)', fontSize: 11 }} onClick={() => setEditPwUser(editPwUser?.id === u.id ? null : u)} title="Ubah Password">\ud83d\udd11</button>}
+                  {isAdmin && u.id !== user.id && <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus user?')) { await deleteUser(u.id); showToast('User dihapus', 'error') } }}>{I.trash}</button>}
+                </td>
               </tr>
             ))}</tbody>
           </table>
+          {editPwUser && (
+            <div style={{ marginTop: 12, padding: 16, background: '#fff8e1', borderRadius: 10, border: '1px solid #ffe082' }}>
+              <UbahPasswordUser targetUser={editPwUser} saveUser={saveUser} showToast={showToast} onClose={() => setEditPwUser(null)} />
+            </div>
+          )}
           {isAdmin && (
             <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #eee' }}>
               <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: 'var(--muted)' }}>Tambah User Baru</div>
               <div style={S.form}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   <label style={S.formLabel}>Username<input style={S.input} value={nu.username} onChange={e => setNu(p => ({ ...p, username: e.target.value }))} /></label>
-                  <label style={S.formLabel}>Password<input style={S.input} value={nu.password} onChange={e => setNu(p => ({ ...p, password: e.target.value }))} /></label>
+                  <label style={S.formLabel}>Password<input style={S.input} type="password" value={nu.password} onChange={e => setNu(p => ({ ...p, password: e.target.value }))} /></label>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   <label style={S.formLabel}>Nama<input style={S.input} value={nu.name} onChange={e => setNu(p => ({ ...p, name: e.target.value }))} /></label>
@@ -1437,6 +1253,75 @@ function SettingsPage({ settings, saveSettings, showToast, users, saveUser, dele
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// Komponen Ubah PIN Kas
+function UbahPinKas({ settings, saveSettings, showToast, currentSettings, setD }) {
+  const [show, setShow] = useState(false)
+  const [pinOld, setPinOld] = useState('')
+  const [pinNew, setPinNew] = useState('')
+  const [pinConfirm, setPinConfirm] = useState('')
+  const [error, setError] = useState('')
+
+  async function handleSave() {
+    const currentPin = settings?.kasPin || '527'
+    if (pinOld !== currentPin) { setError('PIN lama salah!'); return }
+    if (!pinNew || pinNew.length < 3) { setError('PIN baru minimal 3 karakter'); return }
+    if (pinNew !== pinConfirm) { setError('Konfirmasi PIN baru tidak cocok!'); return }
+    const updated = { ...currentSettings, kasPin: pinNew }
+    setD(updated)
+    await saveSettings(updated)
+    setPinOld(''); setPinNew(''); setPinConfirm(''); setError('')
+    setShow(false)
+    showToast('PIN Kas berhasil diubah')
+  }
+
+  if (!show) return <button style={{ ...S.filterBtn, padding: '6px 16px' }} onClick={() => setShow(true)}>Ubah PIN Kas</button>
+
+  return (
+    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 12 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Ubah PIN Kas</div>
+      {error && <div style={{ padding: '6px 10px', background: '#ffebee', color: '#c62828', borderRadius: 6, marginBottom: 8, fontSize: 12 }}>{error}</div>}
+      <label style={S.formLabel}>PIN Lama<input style={S.input} type="password" value={pinOld} onChange={e => { setPinOld(e.target.value); setError('') }} placeholder="Masukkan PIN saat ini" /></label>
+      <label style={S.formLabel}>PIN Baru<input style={S.input} type="password" value={pinNew} onChange={e => setPinNew(e.target.value)} placeholder="Minimal 3 karakter" /></label>
+      <label style={S.formLabel}>Konfirmasi PIN Baru<input style={S.input} type="password" value={pinConfirm} onChange={e => setPinConfirm(e.target.value)} placeholder="Ulangi PIN baru" /></label>
+      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+        <button style={{ ...S.filterBtn, flex: 1 }} onClick={() => { setShow(false); setPinOld(''); setPinNew(''); setPinConfirm(''); setError('') }}>Batal</button>
+        <button style={{ ...S.primaryBtn, flex: 1 }} onClick={handleSave}>Simpan PIN Baru</button>
+      </div>
+    </div>
+  )
+}
+
+// Komponen Ubah Password User
+function UbahPasswordUser({ targetUser, saveUser, showToast, onClose }) {
+  const [oldPw, setOldPw] = useState('')
+  const [newPw, setNewPw] = useState('')
+  const [confirmPw, setConfirmPw] = useState('')
+  const [error, setError] = useState('')
+
+  async function handleSave() {
+    if (oldPw !== targetUser.password) { setError('Password lama salah!'); return }
+    if (!newPw || newPw.length < 4) { setError('Password baru minimal 4 karakter'); return }
+    if (newPw !== confirmPw) { setError('Konfirmasi password tidak cocok!'); return }
+    await saveUser({ ...targetUser, password: newPw })
+    showToast('Password ' + targetUser.username + ' berhasil diubah')
+    onClose()
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <div style={{ fontSize: 13, fontWeight: 700 }}>\ud83d\udd11 Ubah Password: <span style={{ color: 'var(--b)' }}>{targetUser.username}</span></div>
+        <button style={S.smallBtn} onClick={onClose}>{I.x}</button>
+      </div>
+      {error && <div style={{ padding: '6px 10px', background: '#ffebee', color: '#c62828', borderRadius: 6, marginBottom: 8, fontSize: 12 }}>{error}</div>}
+      <label style={S.formLabel}>Password Lama<input style={S.input} type="password" value={oldPw} onChange={e => { setOldPw(e.target.value); setError('') }} placeholder="Masukkan password saat ini" /></label>
+      <label style={S.formLabel}>Password Baru<input style={S.input} value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Minimal 4 karakter" /></label>
+      <label style={S.formLabel}>Konfirmasi Password Baru<input style={S.input} type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} placeholder="Ulangi password baru" /></label>
+      <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={handleSave}>Simpan Password Baru</button>
     </div>
   )
 }
@@ -1631,7 +1516,7 @@ const S = {
   formLabel: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, fontWeight: 600, color: 'var(--muted)' },
   input: { padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 14, outline: 'none' },
   overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, backdropFilter: 'blur(2px)' },
-  modal: { background: '#fff', borderRadius: 16, padding: 24, width: '90%', maxWidth: 440, maxHeight: '85vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' },
+  modal: { background: '#fff', borderRadius: 16, padding: 24, width: '95%', maxWidth: 1200, maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' },
   modalHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   toast: { position: 'fixed', bottom: 24, right: 24, padding: '12px 20px', borderRadius: 10, color: '#fff', fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8, zIndex: 200, boxShadow: '0 8px 24px rgba(0,0,0,0.15)' },
   empty: { textAlign: 'center', color: '#999', padding: 20, fontSize: 14 },

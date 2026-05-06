@@ -534,8 +534,133 @@ function SupplierForm({ initial, onSave }) {
 // BARANG MASUK (Stock In)
 // =============================================
 export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProductStock, setModal, showToast }) {
-  const sorted = [...stockIn].sort((a, b) => b.date.localeCompare(a.date))
+  const [search, setSearch] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [supFilter, setSupFilter] = useState('all')
+
   const getSupplier = id => suppliers.find(s => s.id === id)
+
+  // Filter data
+  const filtered = [...stockIn].filter(s => {
+    if (dateFrom && s.date < dateFrom) return false
+    if (dateTo && s.date > dateTo) return false
+    if (supFilter !== 'all' && s.supplierId !== supFilter) return false
+    if (search) {
+      const q = search.toLowerCase()
+      const sup = getSupplier(s.supplierId)
+      const itemNames = (s.items||[]).map(it => { const p = products.find(pr => pr.id === it.productId); return (p?.name||'').toLowerCase() }).join(' ')
+      if (!(s.invoice||'').toLowerCase().includes(q) && !(sup?.name||'').toLowerCase().includes(q) && !itemNames.includes(q)) return false
+    }
+    return true
+  }).sort((a, b) => b.date.localeCompare(a.date))
+
+  const totalFiltered = filtered.reduce((a, s) => a + (s.total||0), 0)
+  const totalPPN = filtered.reduce((a, s) => a + (s.ppnAmount||0), 0)
+
+  // Export ke CSV/Excel
+  function exportExcel() {
+    const header = 'Tanggal,No Invoice,Supplier,Kode Barang,Nama Barang,Jumlah,Satuan,Harga Beli,Subtotal Item,PPN %,PPN Rp,Total Nota,Jenis Bayar,Catatan\n'
+    const rows = []
+    filtered.forEach(s => {
+      const sup = getSupplier(s.supplierId)
+      ;(s.items||[]).forEach((it, idx) => {
+        const p = products.find(pr => pr.id === it.productId)
+        rows.push([
+          s.date,
+          '"'+(s.invoice||'')+'"',
+          '"'+(sup?.name||'-')+'"',
+          '"'+(p?.sku||'')+'"',
+          '"'+(p?.name||it.productId)+'"',
+          it.qty||0,
+          '"'+(p?.unit||'pcs')+'"',
+          it.buyPrice||0,
+          (it.qty||0)*(it.buyPrice||0),
+          idx === 0 ? (s.ppnPct||0) : '',
+          idx === 0 ? (s.ppnAmount||0) : '',
+          idx === 0 ? (s.total||0) : '',
+          idx === 0 ? '"'+(s.jenisBayar||'TUNAI')+'"' : '',
+          idx === 0 ? '"'+(s.note||'')+'"' : '',
+        ].join(','))
+      })
+    })
+    const bom = '\uFEFF'
+    const blob = new Blob([bom + header + rows.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'laporan_barang_masuk_' + (dateFrom||'all') + '_' + (dateTo||today()) + '.csv'
+    a.click()
+    showToast('Export ' + filtered.length + ' transaksi berhasil')
+  }
+
+  // Print laporan rekapitulasi — format mirip VB app
+  function printLaporan() {
+    // Gabungkan semua item dari semua nota yang terfilter → rekapitulasi per produk
+    const rekapMap = {}
+    filtered.forEach(s => {
+      ;(s.items||[]).forEach(it => {
+        const p = products.find(pr => pr.id === it.productId)
+        const key = it.productId
+        if (!rekapMap[key]) {
+          rekapMap[key] = {
+            kode: p?.barcode || p?.sku || '-',
+            nama: p?.name || it.productId,
+            jumlah: 0,
+            totalHpp: 0,
+          }
+        }
+        rekapMap[key].jumlah += (it.qty || 0)
+        rekapMap[key].totalHpp += (it.qty || 0) * (it.buyPrice || 0)
+      })
+    })
+    const rekapList = Object.values(rekapMap).sort((a, b) => a.nama.localeCompare(b.nama))
+    const grandQty = rekapList.reduce((a, r) => a + r.jumlah, 0)
+    const grandTotal = rekapList.reduce((a, r) => a + r.totalHpp, 0)
+
+    const periodFrom = dateFrom || (filtered.length > 0 ? filtered[filtered.length - 1].date : today())
+    const periodTo = dateTo || (filtered.length > 0 ? filtered[0].date : today())
+
+    const win = window.open('', '_blank')
+    win.document.write(`<!DOCTYPE html><html><head><style>
+      body { font-family: Arial, sans-serif; font-size: 12px; margin: 30px; }
+      .header { display: flex; align-items: center; gap: 16px; margin-bottom: 4px; }
+      .header-icon { font-size: 32px; }
+      .header-text h2 { margin: 0; font-size: 16px; color: #c62828; }
+      .header-text h3 { margin: 2px 0 0 0; font-size: 13px; color: #333; font-weight: 600; }
+      .period { text-align: right; font-size: 11px; color: #666; margin-bottom: 10px; }
+      table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+      th { background: #1a237e; color: #fdd835; padding: 6px 10px; text-align: left; font-size: 11px; border: 1px solid #1a237e; }
+      th.r { text-align: right; }
+      td { border: 1px solid #ccc; padding: 5px 10px; font-size: 12px; }
+      td.r { text-align: right; }
+      td.c { text-align: center; }
+      .total-row td { background: #fff3e0; font-weight: bold; font-size: 13px; border: 2px solid #1a237e; }
+      .footer { margin-top: 20px; text-align: right; font-size: 10px; color: #999; }
+      @media print { button { display: none; } }
+    </style></head><body>`)
+
+    win.document.write('<div class="header"><div class="header-icon">📋</div><div class="header-text"><h2>LAPORAN :</h2><h3>REKAPITULASI PENAMBAHAN BARANG</h3></div></div>')
+    win.document.write('<div class="period">Periode Tanggal : ' + fmtDate(periodFrom) + ' s/d ' + fmtDate(periodTo) + '</div>')
+    win.document.write('<hr style="border:1px solid #c62828;margin-bottom:10px">')
+
+    win.document.write('<table><tr><th>NO.</th><th>KODE BARANG</th><th>NAMA BARANG</th><th class="r">JUMLAH</th><th class="r">TOTAL HPP</th></tr>')
+
+    rekapList.forEach((r, idx) => {
+      win.document.write('<tr>')
+      win.document.write('<td class="c">' + (idx + 1) + '</td>')
+      win.document.write('<td style="font-family:monospace">' + r.kode + '</td>')
+      win.document.write('<td>' + r.nama + '</td>')
+      win.document.write('<td class="r">' + Number(r.jumlah).toLocaleString('id-ID') + '</td>')
+      win.document.write('<td class="r">' + Number(r.totalHpp).toLocaleString('id-ID') + '</td>')
+      win.document.write('</tr>')
+    })
+
+    win.document.write('<tr class="total-row"><td colspan="3" class="r">GRAND TOTAL :</td><td class="r">' + Number(grandQty).toLocaleString('id-ID') + '</td><td class="r">' + Number(grandTotal).toLocaleString('id-ID') + '</td></tr>')
+    win.document.write('</table>')
+    win.document.write('<div class="footer">Dicetak: ' + new Date().toLocaleString('id-ID') + '</div>')
+    win.document.write('<script>setTimeout(()=>{window.print()},500)<\/script></body></html>')
+    win.document.close()
+  }
 
   function openDetail(nota) {
     const sup = getSupplier(nota.supplierId)
@@ -609,11 +734,59 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
 
   return (
     <div>
-      <div style={S.pageHead}><h2 style={S.title}>Barang Masuk</h2><button style={S.primaryBtn} onClick={openForm}>{IC.plus} Catat Barang Masuk</button></div>
+      <div style={S.pageHead}><h2 style={S.title}>Barang Masuk</h2>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button style={{ ...S.primaryBtn, background: '#2e7d32' }} onClick={exportExcel}>
+            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            Export Excel
+          </button>
+          <button style={{ ...S.primaryBtn, background: '#6a1b9a' }} onClick={printLaporan}>
+            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+            Print Laporan
+          </button>
+          <button style={S.primaryBtn} onClick={openForm}>{IC.plus} Catat Barang Masuk</button>
+        </div>
+      </div>
+
+      {/* Filter & Ringkasan */}
+      <div style={{ ...S.card, marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap', marginBottom: 12 }}>
+          <label style={{ ...S.formLabel, marginBottom: 0 }}>Dari
+            <input style={{ ...S.input, padding: '6px 10px', fontSize: 12 }} type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+          </label>
+          <label style={{ ...S.formLabel, marginBottom: 0 }}>Sampai
+            <input style={{ ...S.input, padding: '6px 10px', fontSize: 12 }} type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+          </label>
+          <label style={{ ...S.formLabel, marginBottom: 0 }}>Supplier
+            <select style={{ ...S.input, padding: '6px 10px', fontSize: 12, minWidth: 140 }} value={supFilter} onChange={e => setSupFilter(e.target.value)}>
+              <option value="all">-- Semua Supplier --</option>
+              {suppliers.map(s => <option key={s.id} value={s.id}>{s.code} - {s.name}</option>)}
+            </select>
+          </label>
+          <div style={{ ...S.searchBox, flex: 1, minWidth: 180 }}>{IC.search}<input style={S.searchInput} placeholder="Cari invoice / supplier / barang..." value={search} onChange={e => setSearch(e.target.value)} /></div>
+          {(dateFrom || dateTo || supFilter !== 'all' || search) && (
+            <button style={{ ...S.filterBtn, color: '#c62828', fontSize: 12 }} onClick={() => { setDateFrom(''); setDateTo(''); setSupFilter('all'); setSearch('') }}>Reset Filter</button>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ padding: '8px 16px', background: '#e3f2fd', borderRadius: 8, fontSize: 13 }}>
+            <span style={{ color: '#666' }}>Transaksi: </span><strong style={{ color: '#1565c0' }}>{filtered.length}</strong>
+          </div>
+          {totalPPN > 0 && (
+            <div style={{ padding: '8px 16px', background: '#ffebee', borderRadius: 8, fontSize: 13 }}>
+              <span style={{ color: '#666' }}>Total PPN: </span><strong style={{ color: '#c62828' }}>{formatRp(totalPPN)}</strong>
+            </div>
+          )}
+          <div style={{ padding: '8px 16px', background: '#e8f5e9', borderRadius: 8, fontSize: 13 }}>
+            <span style={{ color: '#666' }}>Total Pembelian: </span><strong style={{ color: '#2e7d32' }}>{formatRp(totalFiltered)}</strong>
+          </div>
+        </div>
+      </div>
+
       <div style={S.card}>
         <table style={S.table}>
           <thead><tr>{['Tanggal', 'No. Invoice', 'Supplier', 'Item', 'Subtotal', 'PPN', 'Total', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-          <tbody>{sorted.map(s => {
+          <tbody>{filtered.map(s => {
             const sup = getSupplier(s.supplierId)
             return (
               <tr key={s.id} style={S.tr}>
@@ -632,7 +805,7 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
                 <td style={S.td}><button style={{ ...S.smallBtn, color: '#1565c0', fontWeight: 600, fontSize: 12 }} onClick={() => openDetail(s)}>Detail</button></td>
               </tr>
             )
-          })}{sorted.length === 0 && <tr><td colSpan={8} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Belum ada data barang masuk</td></tr>}</tbody>
+          })}{filtered.length === 0 && <tr><td colSpan={8} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Tidak ada data barang masuk</td></tr>}</tbody>
         </table>
       </div>
     </div>
@@ -778,18 +951,18 @@ function StockInForm({ products, suppliers, onSave }) {
       </div>
 
       {/* TABEL ITEM — layout mirip VB app */}
-      <div style={{ border: '1px solid #1a237e', borderRadius: 8, overflow: 'hidden', marginTop: 8 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+      <div style={{ border: '2px solid #1a237e', borderRadius: 8, overflow: 'auto', marginTop: 8 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 900 }}>
           <thead>
             <tr style={{ background: '#1a237e', color: '#fdd835' }}>
-              {['Kode', 'Nama Barang', 'Jumlah', 'Stok Awal', 'Stok Akhir', 'Hpp', 'Hrg Lunas', 'Hrg Kredit', 'Sub Total Rp', ''].map(h =>
-                <th key={h} style={{ padding: '6px 8px', textAlign: h === 'Nama Barang' ? 'left' : 'center', fontSize: 11, fontWeight: 700, borderRight: '1px solid #283593' }}>{h}</th>
+              {['Kode', 'Nama Barang', 'Jumlah', 'Stok Awal', 'Stok Akhir', 'Hpp', 'Hrg Tunai', 'Hrg Kredit', 'Sub Total Rp', ''].map(h =>
+                <th key={h} style={{ padding: '8px 10px', textAlign: h === 'Nama Barang' ? 'left' : 'center', fontSize: 12, fontWeight: 700, borderRight: '1px solid #283593', whiteSpace: 'nowrap' }}>{h}</th>
               )}
             </tr>
           </thead>
           <tbody>
             {items.length === 0 && (
-              <tr><td colSpan={10} style={{ padding: 24, textAlign: 'center', color: '#999', fontStyle: 'italic' }}>Scan barcode atau klik "+ Manual" untuk tambah barang</td></tr>
+              <tr><td colSpan={10} style={{ padding: 40, textAlign: 'center', color: '#999', fontStyle: 'italic', fontSize: 14 }}>Scan barcode atau klik "+ Manual" untuk tambah barang</td></tr>
             )}
             {items.map((it, i) => {
               const prod = products.find(p => p.id === it.productId)
@@ -797,33 +970,35 @@ function StockInForm({ products, suppliers, onSave }) {
               const stokAkhir = stokAwal + (it.qty || 0)
               const itemSub = (it.qty || 0) * (it.buyPrice || 0)
               return (
-                <tr key={i} style={{ borderBottom: '1px solid #e0e0e0', background: i % 2 === 0 ? '#fff' : '#f5f5f5' }}>
-                  <td style={{ padding: '4px 6px', fontFamily: 'monospace', fontSize: 11 }}>
-                    {prod?.barcode || prod?.sku || '-'}
-                    <button type="button" style={{ ...S.smallBtn, padding: '1px 4px', marginLeft: 4, color: '#7b1fa2', fontSize: 10 }} onClick={() => setShowScanIdx(showScanIdx === i ? -1 : i)} title="Scan">📷</button>
+                <tr key={i} style={{ borderBottom: '1px solid #ccc', background: i % 2 === 0 ? '#fff' : '#f8f9fa' }}>
+                  <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: 12, minWidth: 110, borderRight: '1px solid #e0e0e0' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span>{prod?.barcode || prod?.sku || '-'}</span>
+                      <button type="button" style={{ ...S.smallBtn, padding: '2px 5px', color: '#7b1fa2', fontSize: 11, border: '1px solid #e0e0e0', borderRadius: 4 }} onClick={() => setShowScanIdx(showScanIdx === i ? -1 : i)} title="Scan">📷</button>
+                    </div>
                   </td>
-                  <td style={{ padding: '4px 6px' }}>
-                    <select style={{ ...S.input, fontSize: 12, padding: '3px 6px', border: 'none', background: 'transparent' }} value={it.productId} onChange={e => updateItem(i, 'productId', e.target.value)}>
+                  <td style={{ padding: '6px 8px', minWidth: 180, borderRight: '1px solid #e0e0e0' }}>
+                    <select style={{ ...S.input, fontSize: 13, padding: '5px 8px', border: 'none', background: 'transparent', width: '100%', fontWeight: 600 }} value={it.productId} onChange={e => updateItem(i, 'productId', e.target.value)}>
                       {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                   </td>
-                  <td style={{ padding: '4px 4px', textAlign: 'center' }}>
-                    <input style={{ ...S.input, width: 55, fontSize: 13, fontWeight: 700, textAlign: 'center', padding: '3px', background: '#fffde7', border: '1px solid #fdd835' }} type="number" min="1" value={it.qty} onChange={e => updateItem(i, 'qty', Number(e.target.value))} />
+                  <td style={{ padding: '6px 6px', textAlign: 'center', borderRight: '1px solid #e0e0e0' }}>
+                    <input style={{ ...S.input, width: 65, fontSize: 14, fontWeight: 700, textAlign: 'center', padding: '5px', background: '#fffde7', border: '2px solid #fdd835', borderRadius: 4 }} type="number" min="1" value={it.qty} onChange={e => updateItem(i, 'qty', Number(e.target.value))} />
                   </td>
-                  <td style={{ padding: '4px 6px', textAlign: 'center', color: '#6b7280' }}>{stokAwal}</td>
-                  <td style={{ padding: '4px 6px', textAlign: 'center', fontWeight: 700, color: '#2e7d32' }}>{stokAkhir}</td>
-                  <td style={{ padding: '4px 4px', textAlign: 'right' }}>
-                    <input style={{ ...S.input, width: 80, fontSize: 12, textAlign: 'right', padding: '3px 6px' }} type="number" value={it.buyPrice} onChange={e => updateItem(i, 'buyPrice', Number(e.target.value))} />
+                  <td style={{ padding: '6px 8px', textAlign: 'center', color: '#6b7280', fontSize: 14, borderRight: '1px solid #e0e0e0' }}>{stokAwal}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 700, color: '#2e7d32', fontSize: 14, borderRight: '1px solid #e0e0e0' }}>{stokAkhir}</td>
+                  <td style={{ padding: '6px 6px', textAlign: 'right', borderRight: '1px solid #e0e0e0' }}>
+                    <input style={{ ...S.input, width: 100, fontSize: 13, textAlign: 'right', padding: '5px 8px' }} type="number" value={it.buyPrice} onChange={e => updateItem(i, 'buyPrice', Number(e.target.value))} />
                   </td>
-                  <td style={{ padding: '4px 4px', textAlign: 'right' }}>
-                    <input style={{ ...S.input, width: 80, fontSize: 12, textAlign: 'right', padding: '3px 6px' }} type="number" value={it.sellPrice||''} onChange={e => updateItem(i, 'sellPrice', Number(e.target.value))} />
+                  <td style={{ padding: '6px 6px', textAlign: 'right', borderRight: '1px solid #e0e0e0' }}>
+                    <input style={{ ...S.input, width: 100, fontSize: 13, textAlign: 'right', padding: '5px 8px' }} type="number" value={it.sellPrice||''} onChange={e => updateItem(i, 'sellPrice', Number(e.target.value))} />
                   </td>
-                  <td style={{ padding: '4px 4px', textAlign: 'right' }}>
-                    <input style={{ ...S.input, width: 80, fontSize: 12, textAlign: 'right', padding: '3px 6px' }} type="number" value={it.sellPrice2||''} onChange={e => updateItem(i, 'sellPrice2', Number(e.target.value))} />
+                  <td style={{ padding: '6px 6px', textAlign: 'right', borderRight: '1px solid #e0e0e0' }}>
+                    <input style={{ ...S.input, width: 100, fontSize: 13, textAlign: 'right', padding: '5px 8px' }} type="number" value={it.sellPrice2||''} onChange={e => updateItem(i, 'sellPrice2', Number(e.target.value))} />
                   </td>
-                  <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{Number(itemSub).toLocaleString('id-ID')}</td>
-                  <td style={{ padding: '4px 4px', textAlign: 'center' }}>
-                    <button style={{ ...S.smallBtn, color: 'var(--r)', padding: '1px 4px', fontSize: 12 }} onClick={() => removeItem(i)} title="Hapus baris">×</button>
+                  <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap', fontSize: 14, borderRight: '1px solid #e0e0e0' }}>{Number(itemSub).toLocaleString('id-ID')}</td>
+                  <td style={{ padding: '6px 6px', textAlign: 'center' }}>
+                    <button style={{ ...S.smallBtn, color: 'var(--r)', padding: '3px 8px', fontSize: 14, border: '1px solid #ffcdd2', borderRadius: 4 }} onClick={() => removeItem(i)} title="Hapus baris (double click)">×</button>
                   </td>
                 </tr>
               )
