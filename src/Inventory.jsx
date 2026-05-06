@@ -97,14 +97,18 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   }
 
   function exportCSV() {
-    const sep = '\t'
-    const header = ['NO', 'SKU', 'NAMA PRODUK', 'TIPE', 'KATEGORI', 'HARGA BELI', 'HARGA JUAL LUNAS', 'HARGA JUAL KREDIT', 'STOK', 'SATUAN', 'MIN STOK', 'STATUS', 'UPDATE'].join(sep)
-    const rows = products.map((p, i) => {
+    let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"><style>td,th{border:1px solid #ccc;padding:4px 8px;font-size:12px;} th{background:#1a237e;color:#fdd835;font-weight:bold;} .r{text-align:right;} .red{color:red;font-weight:bold;} .green{color:green;} .total{background:#e3f2fd;font-weight:bold;}</style></head><body><table>'
+    html += '<tr><th>NO</th><th>SKU</th><th>NAMA PRODUK</th><th>TIPE</th><th>KATEGORI</th><th>HARGA BELI</th><th>HARGA JUAL LUNAS</th><th>HARGA JUAL KREDIT</th><th>STOK</th><th>SATUAN</th><th>MIN STOK</th><th>STATUS</th><th>UPDATE</th></tr>'
+    products.forEach((p, i) => {
       const status = (p.stock||0) <= 0 ? 'Habis' : (p.stock||0) <= (p.minStock||2) ? 'Menipis' : 'Aman'
-      return [i+1, p.sku||'', p.name, p.tipeBarang||'MILIK', p.category||'', p.buyPrice||0, p.sellPrice||0, p.sellPrice2||'', p.stock||0, p.unit||'pcs', p.minStock||0, status, p.updatedAt||''].join(sep)
-    }).join('\n')
-    const bom = '\uFEFF'
-    const blob = new Blob([bom + header + '\n' + rows], { type: 'application/vnd.ms-excel;charset=utf-8;' })
+      const cls = status === 'Habis' ? 'red' : status === 'Menipis' ? 'red' : 'green'
+      html += '<tr><td class="r">' + (i+1) + '</td><td>' + (p.sku||'') + '</td><td>' + p.name + '</td><td>' + (p.tipeBarang||'MILIK') + '</td><td>' + (p.category||'') + '</td><td class="r">' + Number(p.buyPrice||0).toLocaleString('id-ID') + '</td><td class="r">' + Number(p.sellPrice||0).toLocaleString('id-ID') + '</td><td class="r">' + Number(p.sellPrice2||0).toLocaleString('id-ID') + '</td><td class="r">' + (p.stock||0) + '</td><td>' + (p.unit||'pcs') + '</td><td class="r">' + (p.minStock||0) + '</td><td class="' + cls + '">' + status + '</td><td>' + (p.updatedAt||'') + '</td></tr>'
+    })
+    const totalStok = products.reduce((a, p) => a + (p.stock||0), 0)
+    const totalNilai = products.reduce((a, p) => a + ((p.stock||0)*(p.buyPrice||0)), 0)
+    html += '<tr class="total"><td colspan="8" class="r">TOTAL</td><td class="r">' + totalStok + '</td><td colspan="4">Nilai Inventaris: Rp ' + Number(totalNilai).toLocaleString('id-ID') + '</td></tr>'
+    html += '</table></body></html>'
+    const blob = new Blob(['\uFEFF' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = 'stok_barang_' + today() + '.xls'
@@ -562,44 +566,47 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
 
   // Export ke CSV/Excel
   function exportExcel() {
-    const sep = '\t' // Tab separator — selalu benar di Excel semua bahasa
-    const header = ['NO', 'TANGGAL', 'NO INVOICE', 'SUPPLIER', 'KODE BARANG', 'NAMA BARANG', 'JUMLAH', 'SATUAN', 'HARGA BELI', 'SUBTOTAL', 'PPN %', 'PPN Rp', 'TOTAL NOTA', 'JENIS BAYAR', 'CATATAN'].join(sep)
-    const rows = []
-    let no = 0
+    // HTML table format — Excel selalu baca kolom dengan benar
+    let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"><style>td,th{border:1px solid #ccc;padding:4px 8px;font-size:12px;} th{background:#1a237e;color:#fdd835;font-weight:bold;text-align:center;} .r{text-align:right;} .b{font-weight:bold;} .total{background:#fff3e0;font-weight:bold;font-size:13px;}</style></head><body><table>'
+
+    // Header
+    html += '<tr><th>NO</th><th>TANGGAL</th><th>NO INVOICE</th><th>SUPPLIER</th><th>KODE BARANG</th><th>NAMA BARANG</th><th>JUMLAH</th><th>SATUAN</th><th>HARGA BELI</th><th>SUBTOTAL</th><th>PPN %</th><th>PPN Rp</th><th>TOTAL NOTA</th><th>JENIS BAYAR</th><th>CATATAN</th></tr>'
+
+    let no = 0, grandQty = 0, grandSub = 0, grandPPN = 0, grandTotal = 0
     filtered.forEach(s => {
       const sup = getSupplier(s.supplierId)
       ;(s.items||[]).forEach((it, idx) => {
         const p = products.find(pr => pr.id === it.productId)
+        const sub = (it.qty||0) * (it.buyPrice||0)
         if (idx === 0) no++
-        rows.push([
-          idx === 0 ? no : '',
-          idx === 0 ? s.date : '',
-          idx === 0 ? (s.invoice||'-') : '',
-          idx === 0 ? (sup?.name||'-') : '',
-          p?.sku || p?.barcode || '',
-          p?.name || it.productName || it.productId || '-',
-          it.qty || 0,
-          p?.unit || 'pcs',
-          it.buyPrice || 0,
-          (it.qty||0) * (it.buyPrice||0),
-          idx === 0 ? (s.ppnPct||0) : '',
-          idx === 0 ? (s.ppnAmount||0) : '',
-          idx === 0 ? (s.total||0) : '',
-          idx === 0 ? (s.jenisBayar||'TUNAI') : '',
-          idx === 0 ? (s.note||'') : '',
-        ].join(sep))
+        grandQty += (it.qty||0)
+        grandSub += sub
+        if (idx === 0) { grandPPN += (s.ppnAmount||0); grandTotal += (s.total||0) }
+        html += '<tr>'
+        html += '<td class="r">' + (idx === 0 ? no : '') + '</td>'
+        html += '<td>' + (idx === 0 ? (s.date||'') : '') + '</td>'
+        html += '<td>' + (idx === 0 ? (s.invoice||'-') : '') + '</td>'
+        html += '<td>' + (idx === 0 ? (sup?.name||'-') : '') + '</td>'
+        html += '<td>' + (p?.sku || p?.barcode || '') + '</td>'
+        html += '<td>' + (p?.name || it.productName || '-') + '</td>'
+        html += '<td class="r">' + (it.qty||0) + '</td>'
+        html += '<td>' + (p?.unit||'pcs') + '</td>'
+        html += '<td class="r">' + Number(it.buyPrice||0).toLocaleString('id-ID') + '</td>'
+        html += '<td class="r">' + Number(sub).toLocaleString('id-ID') + '</td>'
+        html += '<td class="r">' + (idx === 0 ? (s.ppnPct||0) : '') + '</td>'
+        html += '<td class="r">' + (idx === 0 && (s.ppnAmount||0) > 0 ? Number(s.ppnAmount).toLocaleString('id-ID') : '') + '</td>'
+        html += '<td class="r b">' + (idx === 0 ? Number(s.total||0).toLocaleString('id-ID') : '') + '</td>'
+        html += '<td>' + (idx === 0 ? (s.jenisBayar||'TUNAI') : '') + '</td>'
+        html += '<td>' + (idx === 0 ? (s.note||'') : '') + '</td>'
+        html += '</tr>'
       })
     })
 
-    // Grand total row
-    const grandSubtotal = filtered.reduce((a, s) => a + (s.items||[]).reduce((b, it) => b + (it.qty||0)*(it.buyPrice||0), 0), 0)
-    const grandPPN = filtered.reduce((a, s) => a + (s.ppnAmount||0), 0)
-    const grandTotal = filtered.reduce((a, s) => a + (s.total||0), 0)
-    const grandQty = filtered.reduce((a, s) => a + (s.items||[]).reduce((b, it) => b + (it.qty||0), 0), 0)
-    rows.push(['', '', '', '', '', 'GRAND TOTAL', grandQty, '', '', grandSubtotal, '', grandPPN, grandTotal, '', ''].join(sep))
+    // Grand Total
+    html += '<tr class="total"><td colspan="6" class="r">GRAND TOTAL</td><td class="r">' + grandQty + '</td><td></td><td></td><td class="r">' + Number(grandSub).toLocaleString('id-ID') + '</td><td></td><td class="r">' + Number(grandPPN).toLocaleString('id-ID') + '</td><td class="r">' + Number(grandTotal).toLocaleString('id-ID') + '</td><td colspan="2"></td></tr>'
+    html += '</table></body></html>'
 
-    const bom = '\uFEFF'
-    const blob = new Blob([bom + header + '\n' + rows.join('\n')], { type: 'application/vnd.ms-excel;charset=utf-8;' })
+    const blob = new Blob(['\uFEFF' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = 'laporan_barang_masuk_' + (dateFrom||'all') + '_' + (dateTo||today()) + '.xls'
