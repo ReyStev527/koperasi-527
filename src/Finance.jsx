@@ -383,15 +383,36 @@ export function LabaRugi({ kasData, transactions, loans, products, settings }) {
   const monthTx = transactions.filter(t => t.date.startsWith(period))
   const monthLoans = loans.flatMap(l => (l.installments||[]).filter(i => i.date.startsWith(period)))
 
-  // Pendapatan
-  const pendapatanToko = monthTx.reduce((a, t) => a + (t.total||0), 0)
-  const hpp = monthTx.reduce((a, t) => {
-    return a + (t.items||[]).reduce((s, it) => {
-      const prod = products.find(p => p.id === it.productId)
-      return s + ((prod?.buyPrice || 0) * (it.qty||0))
+  // Split transaksi tunai vs kredit
+  const txTunai = monthTx.filter(t => t.caraBayar !== 'KREDIT')
+  const txKredit = monthTx.filter(t => t.caraBayar === 'KREDIT')
+
+  // Fungsi hitung HPP per list transaksi
+  function hitungHpp(txList) {
+    return txList.reduce((a, t) => {
+      return a + (t.items||[]).reduce((s, it) => {
+        const prod = products.find(p => p.id === it.productId)
+        return s + ((prod?.buyPrice || 0) * (it.qty||0))
+      }, 0)
     }, 0)
-  }, 0)
-  const labaKotor = pendapatanToko - hpp
+  }
+
+  // Pendapatan TUNAI
+  const penjualanTunai = txTunai.reduce((a, t) => a + (t.total||0), 0)
+  const hppTunai = hitungHpp(txTunai)
+  const labaKotorTunai = penjualanTunai - hppTunai
+
+  // Pendapatan KREDIT
+  const penjualanKredit = txKredit.reduce((a, t) => a + (t.total||0), 0)
+  const hppKredit = hitungHpp(txKredit)
+  const labaKotorKredit = penjualanKredit - hppKredit
+  const sisaPiutang = txKredit.reduce((a, t) => a + ((t.total||0) - (t.payment||0)), 0)
+  const sudahDibayar = txKredit.reduce((a, t) => a + (t.payment||0), 0)
+
+  // Total
+  const pendapatanToko = penjualanTunai + penjualanKredit
+  const hpp = hppTunai + hppKredit
+  const labaKotor = labaKotorTunai + labaKotorKredit
   const pendapatanBunga = monthLoans.reduce((a, i) => a + (i.interest||0), 0)
   const pendapatanLain = monthKas.filter(k => k.type === 'masuk' && k.category === 'Lain-lain').reduce((a, k) => a + (k.amount||0), 0)
   const totalPendapatan = labaKotor + pendapatanBunga + pendapatanLain
@@ -403,6 +424,8 @@ export function LabaRugi({ kasData, transactions, loans, products, settings }) {
   const totalBeban = bebanOps + bebanAdmin + bebanLain
 
   const labaBersih = totalPendapatan - totalBeban
+  const labaBersihTunai = labaKotorTunai - totalBeban // beban ditanggung tunai
+  const labaBersihKredit = labaKotorKredit // kredit belum kena beban
 
   const [y, m] = period.split('-').map(Number)
 
@@ -413,7 +436,29 @@ export function LabaRugi({ kasData, transactions, loans, products, settings }) {
         <input type="month" style={{ ...S.input, maxWidth: 180, padding: '8px 12px' }} value={period} onChange={e => setPeriod(e.target.value)} />
       </div>
 
-      <div style={{ ...S.card, maxWidth: 600 }}>
+      {/* Ringkasan Tunai vs Kredit */}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <div style={{ flex: 1, minWidth: 200, ...S.card, padding: 16, borderLeft: '4px solid #2e7d32' }}>
+          <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>💵 LABA TUNAI</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: '#2e7d32' }}>{formatRp(labaKotorTunai)}</div>
+          <div style={{ fontSize: 11, color: '#999', marginTop: 4 }}>Penjualan: {formatRp(penjualanTunai)} — HPP: {formatRp(hppTunai)}</div>
+          <div style={{ fontSize: 11, color: '#999' }}>{txTunai.length} transaksi tunai</div>
+        </div>
+        <div style={{ flex: 1, minWidth: 200, ...S.card, padding: 16, borderLeft: '4px solid #e65100' }}>
+          <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>📋 LABA KREDIT</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: '#e65100' }}>{formatRp(labaKotorKredit)}</div>
+          <div style={{ fontSize: 11, color: '#999', marginTop: 4 }}>Penjualan: {formatRp(penjualanKredit)} — HPP: {formatRp(hppKredit)}</div>
+          <div style={{ fontSize: 11, color: '#999' }}>{txKredit.length} transaksi kredit</div>
+        </div>
+        <div style={{ flex: 1, minWidth: 200, ...S.card, padding: 16, borderLeft: '4px solid #c62828' }}>
+          <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>⏳ PIUTANG KREDIT</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: '#c62828' }}>{formatRp(sisaPiutang)}</div>
+          <div style={{ fontSize: 11, color: '#999', marginTop: 4 }}>Sudah bayar: {formatRp(sudahDibayar)}</div>
+          <div style={{ fontSize: 11, color: '#999' }}>Belum terbayar dari {txKredit.length} nota</div>
+        </div>
+      </div>
+
+      <div style={{ ...S.card, maxWidth: 700 }}>
         <div style={{ textAlign: 'center', marginBottom: 20 }}>
           <div style={{ fontSize: 16, fontWeight: 700 }}>{settings.name}</div>
           <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)' }}>LAPORAN LABA RUGI</div>
@@ -423,9 +468,26 @@ export function LabaRugi({ kasData, transactions, loans, products, settings }) {
         <table style={{ ...S.table, fontSize: 14 }}>
           <tbody>
             <tr style={{ background: '#f0f7ff' }}><td style={{ ...S.td, fontWeight: 700, color: 'var(--b)' }} colSpan={2}>PENDAPATAN</td></tr>
-            <tr style={S.tr}><td style={S.td}>Penjualan Toko</td><td style={R}>{formatRp(pendapatanToko)}</td></tr>
-            <tr style={S.tr}><td style={S.td}>Harga Pokok Penjualan (HPP)</td><td style={{ ...R, color: 'var(--r)' }}>({formatRp(hpp)})</td></tr>
-            <tr style={{ ...S.tr, background: '#fafafa' }}><td style={{ ...S.td, fontWeight: 600 }}>Laba Kotor Toko</td><td style={{ ...R, fontWeight: 600 }}>{formatRp(labaKotor)}</td></tr>
+
+            {/* Penjualan Tunai */}
+            <tr style={{ background: '#f8fff8' }}><td style={{ ...S.td, fontWeight: 600, color: '#2e7d32' }} colSpan={2}>Penjualan Tunai ({txTunai.length} transaksi)</td></tr>
+            <tr style={S.tr}><td style={{ ...S.td, paddingLeft: 24 }}>Penjualan</td><td style={R}>{formatRp(penjualanTunai)}</td></tr>
+            <tr style={S.tr}><td style={{ ...S.td, paddingLeft: 24 }}>HPP Tunai</td><td style={{ ...R, color: 'var(--r)' }}>({formatRp(hppTunai)})</td></tr>
+            <tr style={{ ...S.tr, background: '#e8f5e9' }}><td style={{ ...S.td, paddingLeft: 24, fontWeight: 600 }}>Laba Kotor Tunai</td><td style={{ ...R, fontWeight: 700, color: '#2e7d32' }}>{formatRp(labaKotorTunai)}</td></tr>
+
+            {/* Penjualan Kredit */}
+            <tr style={{ background: '#fff8f0' }}><td style={{ ...S.td, fontWeight: 600, color: '#e65100' }} colSpan={2}>Penjualan Kredit ({txKredit.length} transaksi)</td></tr>
+            <tr style={S.tr}><td style={{ ...S.td, paddingLeft: 24 }}>Penjualan</td><td style={R}>{formatRp(penjualanKredit)}</td></tr>
+            <tr style={S.tr}><td style={{ ...S.td, paddingLeft: 24 }}>HPP Kredit</td><td style={{ ...R, color: 'var(--r)' }}>({formatRp(hppKredit)})</td></tr>
+            <tr style={{ ...S.tr, background: '#fff3e0' }}><td style={{ ...S.td, paddingLeft: 24, fontWeight: 600 }}>Laba Kotor Kredit</td><td style={{ ...R, fontWeight: 700, color: '#e65100' }}>{formatRp(labaKotorKredit)}</td></tr>
+            <tr style={S.tr}><td style={{ ...S.td, paddingLeft: 24, fontSize: 12, color: '#c62828' }}>Sisa Piutang (belum terbayar)</td><td style={{ ...R, fontSize: 12, color: '#c62828' }}>{formatRp(sisaPiutang)}</td></tr>
+
+            <tr><td style={{ padding: 4 }} colSpan={2}></td></tr>
+
+            {/* Total Gabungan */}
+            <tr style={{ background: '#e3f2fd' }}><td style={{ ...S.td, fontWeight: 700 }}>Total Penjualan (Tunai + Kredit)</td><td style={{ ...R, fontWeight: 600 }}>{formatRp(pendapatanToko)}</td></tr>
+            <tr style={S.tr}><td style={S.td}>Total HPP</td><td style={{ ...R, color: 'var(--r)' }}>({formatRp(hpp)})</td></tr>
+            <tr style={{ ...S.tr, background: '#fafafa' }}><td style={{ ...S.td, fontWeight: 600 }}>Total Laba Kotor Toko</td><td style={{ ...R, fontWeight: 600 }}>{formatRp(labaKotor)}</td></tr>
             <tr style={S.tr}><td style={S.td}>Pendapatan Bunga Pinjaman</td><td style={R}>{formatRp(pendapatanBunga)}</td></tr>
             <tr style={S.tr}><td style={S.td}>Pendapatan Lain-lain</td><td style={R}>{formatRp(pendapatanLain)}</td></tr>
             <tr style={{ ...S.tr, background: '#e8f5e9' }}><td style={{ ...S.td, fontWeight: 700 }}>Total Pendapatan</td><td style={{ ...R, fontWeight: 700, color: 'var(--g)' }}>{formatRp(totalPendapatan)}</td></tr>
