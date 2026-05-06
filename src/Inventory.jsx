@@ -97,15 +97,17 @@ export function Products({ products, saveProduct, deleteProduct, suppliers, setM
   }
 
   function exportCSV() {
-    const header = 'SKU,Nama Produk,Kategori,Harga Beli,Harga Jual Lunas,Harga Jual Kredit,Stok,Satuan,Min Stok,Status,Terakhir Update\n'
-    const rows = products.map(p => {
-      const status = p.stock <= 0 ? 'Habis' : p.stock <= p.minStock ? 'Menipis' : 'Aman'
-      return [p.sku, '"'+p.name+'"', p.category, p.buyPrice, p.sellPrice, p.sellPrice2||'', p.stock, p.unit, p.minStock, status, p.updatedAt||''].join(',')
+    const sep = '\t'
+    const header = ['NO', 'SKU', 'NAMA PRODUK', 'TIPE', 'KATEGORI', 'HARGA BELI', 'HARGA JUAL LUNAS', 'HARGA JUAL KREDIT', 'STOK', 'SATUAN', 'MIN STOK', 'STATUS', 'UPDATE'].join(sep)
+    const rows = products.map((p, i) => {
+      const status = (p.stock||0) <= 0 ? 'Habis' : (p.stock||0) <= (p.minStock||2) ? 'Menipis' : 'Aman'
+      return [i+1, p.sku||'', p.name, p.tipeBarang||'MILIK', p.category||'', p.buyPrice||0, p.sellPrice||0, p.sellPrice2||'', p.stock||0, p.unit||'pcs', p.minStock||0, status, p.updatedAt||''].join(sep)
     }).join('\n')
-    const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' })
+    const bom = '\uFEFF'
+    const blob = new Blob([bom + header + '\n' + rows], { type: 'application/vnd.ms-excel;charset=utf-8;' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = 'stok_barang_' + today() + '.csv'
+    a.download = 'stok_barang_' + today() + '.xls'
     a.click()
     showToast('Export ' + products.length + ' produk berhasil')
   }
@@ -560,35 +562,47 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
 
   // Export ke CSV/Excel
   function exportExcel() {
-    const header = 'Tanggal,No Invoice,Supplier,Kode Barang,Nama Barang,Jumlah,Satuan,Harga Beli,Subtotal Item,PPN %,PPN Rp,Total Nota,Jenis Bayar,Catatan\n'
+    const sep = '\t' // Tab separator — selalu benar di Excel semua bahasa
+    const header = ['NO', 'TANGGAL', 'NO INVOICE', 'SUPPLIER', 'KODE BARANG', 'NAMA BARANG', 'JUMLAH', 'SATUAN', 'HARGA BELI', 'SUBTOTAL', 'PPN %', 'PPN Rp', 'TOTAL NOTA', 'JENIS BAYAR', 'CATATAN'].join(sep)
     const rows = []
+    let no = 0
     filtered.forEach(s => {
       const sup = getSupplier(s.supplierId)
       ;(s.items||[]).forEach((it, idx) => {
         const p = products.find(pr => pr.id === it.productId)
+        if (idx === 0) no++
         rows.push([
-          s.date,
-          '"'+(s.invoice||'')+'"',
-          '"'+(sup?.name||'-')+'"',
-          '"'+(p?.sku||'')+'"',
-          '"'+(p?.name||it.productId)+'"',
-          it.qty||0,
-          '"'+(p?.unit||'pcs')+'"',
-          it.buyPrice||0,
-          (it.qty||0)*(it.buyPrice||0),
+          idx === 0 ? no : '',
+          idx === 0 ? s.date : '',
+          idx === 0 ? (s.invoice||'-') : '',
+          idx === 0 ? (sup?.name||'-') : '',
+          p?.sku || p?.barcode || '',
+          p?.name || it.productName || it.productId || '-',
+          it.qty || 0,
+          p?.unit || 'pcs',
+          it.buyPrice || 0,
+          (it.qty||0) * (it.buyPrice||0),
           idx === 0 ? (s.ppnPct||0) : '',
           idx === 0 ? (s.ppnAmount||0) : '',
           idx === 0 ? (s.total||0) : '',
-          idx === 0 ? '"'+(s.jenisBayar||'TUNAI')+'"' : '',
-          idx === 0 ? '"'+(s.note||'')+'"' : '',
-        ].join(','))
+          idx === 0 ? (s.jenisBayar||'TUNAI') : '',
+          idx === 0 ? (s.note||'') : '',
+        ].join(sep))
       })
     })
+
+    // Grand total row
+    const grandSubtotal = filtered.reduce((a, s) => a + (s.items||[]).reduce((b, it) => b + (it.qty||0)*(it.buyPrice||0), 0), 0)
+    const grandPPN = filtered.reduce((a, s) => a + (s.ppnAmount||0), 0)
+    const grandTotal = filtered.reduce((a, s) => a + (s.total||0), 0)
+    const grandQty = filtered.reduce((a, s) => a + (s.items||[]).reduce((b, it) => b + (it.qty||0), 0), 0)
+    rows.push(['', '', '', '', '', 'GRAND TOTAL', grandQty, '', '', grandSubtotal, '', grandPPN, grandTotal, '', ''].join(sep))
+
     const bom = '\uFEFF'
-    const blob = new Blob([bom + header + rows.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const blob = new Blob([bom + header + '\n' + rows.join('\n')], { type: 'application/vnd.ms-excel;charset=utf-8;' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = 'laporan_barang_masuk_' + (dateFrom||'all') + '_' + (dateTo||today()) + '.csv'
+    a.download = 'laporan_barang_masuk_' + (dateFrom||'all') + '_' + (dateTo||today()) + '.xls'
     a.click()
     showToast('Export ' + filtered.length + ' transaksi berhasil')
   }
