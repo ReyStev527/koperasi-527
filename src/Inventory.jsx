@@ -1088,13 +1088,47 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   }
 
   const sortedTx = [...transactions].sort((a, b) => b.date.localeCompare(a.date))
+  const [scanTarget, setScanTarget] = useState('member') // 'member' | 'product'
+
+  // Wrapper scan: buka scanner dengan target tertentu
+  function openScanMember() { setScanTarget('member'); setShowScanner(true) }
+  function openScanProduct() { setScanTarget('product'); setShowScanner(true) }
+
+  function handleScanResult(code) {
+    if (scanTarget === 'member') {
+      // Paksa cari anggota dulu
+      let memberCode = code
+      if (code.startsWith('AGT-')) memberCode = code.replace('AGT-', '')
+      const found = members.find(m =>
+        (m.status === 'active') && (
+          String(m.id||'') === memberCode || String(m.nrp||'') === memberCode ||
+          String(m.no||'') === memberCode || String(m.phone||'') === memberCode ||
+          String(m.nrp||'') === code || String(m.no||'') === code || String(m.id||'') === code ||
+          String(m.nrp||'').includes(code) ||
+          ('KOP' + String(m.no||'').padStart(4,'0')) === code.toUpperCase()
+        )
+      )
+      if (found) {
+        selectMember(found.id)
+        setLastScanned('👤 Anggota: ' + found.name)
+        showToast('Anggota: ' + found.name + ' terpilih. Sekarang scan barang.')
+      } else {
+        showToast('Kartu anggota tidak ditemukan: ' + code, 'error')
+        setLastScanned('Anggota tidak ditemukan: ' + code)
+      }
+    } else {
+      // Scan produk
+      handleBarcodeScan(code)
+    }
+  }
 
   return (
     <div>
       <div style={S.pageHead}>
         <h2 style={S.title}>Kasir / POS</h2>
         <div style={{ display: 'flex', gap: 8 }}>
-          <ScanButton onClick={() => setShowScanner(true)} label="Scan Barcode" />
+          <ScanButton onClick={openScanMember} label="① Scan Kartu" />
+          <ScanButton onClick={openScanProduct} label="② Scan Barang" />
           <div style={S.filterGroup}>
             <button style={{ ...S.filterBtn, ...(tab === 'kasir' ? S.filterActive : {}) }} onClick={() => setTab('kasir')}>Kasir</button>
             <button style={{ ...S.filterBtn, ...(tab === 'riwayat' ? S.filterActive : {}) }} onClick={() => setTab('riwayat')}>Riwayat Penjualan</button>
@@ -1105,9 +1139,21 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
       {/* Barcode Scanner Modal */}
       {showScanner && (
         <BarcodeScanner
-          onScan={(code) => handleBarcodeScan(code)}
+          onScan={(code) => handleScanResult(code)}
           onClose={() => setShowScanner(false)}
         />
+      )}
+
+      {/* Info anggota terpilih */}
+      {memberId && tab === 'kasir' && (
+        <div style={{ background: '#e3f2fd', border: '2px solid #1565c0', borderRadius: 10, padding: '10px 16px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 24 }}>👤</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#1565c0' }}>{members.find(m => m.id === memberId)?.name || 'Anggota'}</div>
+            <div style={{ fontSize: 12, color: '#555' }}>NRP: {members.find(m => m.id === memberId)?.nrp || '-'} | No: {members.find(m => m.id === memberId)?.no || '-'} | {members.find(m => m.id === memberId)?.pangkat || ''}</div>
+          </div>
+          <button style={{ ...S.filterBtn, background: '#c62828', color: '#fff', border: 'none', fontSize: 12, padding: '6px 12px' }} onClick={clearMember}>✕ Ganti</button>
+        </div>
       )}
 
       {/* Last scanned indicator */}
