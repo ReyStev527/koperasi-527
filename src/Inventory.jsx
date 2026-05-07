@@ -1264,7 +1264,7 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
         setCart(prev => prev.map(c => {
           const prod = products.find(p => p.id === c.productId)
           if (!prod) return c
-          const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
+          const newPrice = Number(useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice) || 0
           return { ...c, price: newPrice }
         }))
         setLastScanned('✅ Scan: "' + code + '" → ' + found.name + ' (No.' + found.no + ')')
@@ -1304,13 +1304,13 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
     // Pilih harga berdasarkan cara bayar DAN tipe anggota
     const member = members.find(m => m.id === memberId)
     const useHarga2 = caraBayar === 'KREDIT' || member?.tingkatHrg === '2'
-    const price = useHarga2 && product.sellPrice2 ? product.sellPrice2 : product.sellPrice
+    const price = Number(useHarga2 && product.sellPrice2 ? product.sellPrice2 : product.sellPrice) || 0
 
     setCart(prev => {
       const existing = prev.find(c => c.productId === product.id)
       if (existing) {
         if (existing.qty >= product.stock) return prev
-        return prev.map(c => c.productId === product.id ? { ...c, qty: c.qty + 1 } : c)
+        return prev.map(c => c.productId === product.id ? { ...c, qty: c.qty + 1, price } : c)
       }
       return [...prev, { productId: product.id, name: product.name, price, qty: 1, maxStock: product.stock, diskon: 0 }]
     })
@@ -1324,7 +1324,7 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
     setCart(prev => prev.map(c => {
       const prod = products.find(p => p.id === c.productId)
       if (!prod) return c
-      const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
+      const newPrice = Number(useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice) || 0
       return { ...c, price: newPrice }
     }))
   }
@@ -1445,7 +1445,7 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
               setCart(prev => prev.map(c => {
                 const prod = products.find(p => p.id === c.productId)
                 if (!prod) return c
-                const newPrice = useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice
+                const newPrice = Number(useH2 && prod.sellPrice2 ? prod.sellPrice2 : prod.sellPrice) || 0
                 return { ...c, price: newPrice }
               }))
               if (m) showToast('Anggota: ' + m.name + (useH2 ? ' (Harga Kredit)' : ' (Harga Lunas)'))
@@ -1492,16 +1492,26 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
             )}
             <div style={{ ...S.searchBox, marginBottom: 12 }}>{IC.search}<input style={S.searchInput} placeholder="Cari produk..." value={search} onChange={e => setSearch(e.target.value)} /></div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
-              {filteredProducts.map(p => (
+              {filteredProducts.map(p => {
+                const member = members.find(m => m.id === memberId)
+                const useH2 = caraBayar === 'KREDIT' || member?.tingkatHrg === '2'
+                const activePrice = useH2 && p.sellPrice2 ? p.sellPrice2 : p.sellPrice
+                const hasKreditPrice = p.sellPrice2 && p.sellPrice2 !== p.sellPrice
+                return (
                 <div key={p.id} onClick={() => addToCart(p)}
                   style={{ background: '#fff', borderRadius: 10, padding: 14, cursor: 'pointer', border: '1px solid var(--border)', transition: 'all 0.15s', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}
                   onMouseOver={e => e.currentTarget.style.borderColor = 'var(--b)'}
                   onMouseOut={e => e.currentTarget.style.borderColor = 'var(--border)'}>
                   <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{p.name}</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--b)' }}>{formatRp(p.sellPrice)}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: useH2 ? '#e65100' : 'var(--b)' }}>{formatRp(activePrice)}</div>
+                  {hasKreditPrice && (
+                    <div style={{ fontSize: 10, color: '#999', marginTop: 1 }}>
+                      {useH2 ? 'Lunas: ' + formatRp(p.sellPrice) : 'Kredit: ' + formatRp(p.sellPrice2)}
+                    </div>
+                  )}
                   <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>Stok: {p.stock} {p.unit}</div>
                 </div>
-              ))}
+              )})}
             </div>
           </div>
 
