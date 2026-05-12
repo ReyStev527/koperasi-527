@@ -1516,14 +1516,16 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
           </div>
 
           {/* Cart panel */}
-          <div style={{ ...S.card, position: 'sticky', top: 20 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+          <div style={{ ...S.card, position: 'sticky', top: 20, display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 40px)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexShrink: 0 }}>
               {IC.cart}
               <h3 style={S.cardTitle}>Keranjang ({cart.length})</h3>
+              {cart.length > 0 && <button style={{ ...S.smallBtn, marginLeft: 'auto', color: 'var(--r)', fontSize: 11, border: '1px solid #ffcdd2', borderRadius: 4, padding: '2px 8px' }} onClick={() => setCart([])}>Kosongkan</button>}
             </div>
 
+            {/* Daftar item — scrollable */}
             {cart.length === 0 ? <p style={S.empty}>Klik produk untuk menambahkan</p> : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+              <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, marginBottom: 8, paddingRight: 4 }}>
                 {cart.map(c => {
                   const sub = c.price * c.qty
                   const afterDis = sub * (1 - (c.diskon || 0) / 100)
@@ -1557,7 +1559,8 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
               </div>
             )}
 
-            <div style={{ borderTop: '2px solid var(--border)', paddingTop: 12 }}>
+            {/* Total & Payment — selalu tampil di bawah */}
+            <div style={{ borderTop: '2px solid var(--border)', paddingTop: 12, flexShrink: 0 }}>
               {totalDiskon > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#c62828', marginBottom: 4 }}>
                   <span>Subtotal: {formatRp(totalSebelumDiskon)}</span><span>Diskon: -{formatRp(totalDiskon)}</span>
