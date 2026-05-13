@@ -1349,9 +1349,12 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
     if (caraBayar === 'LUNAS' && Number(payment) < total) { showToast('Pembayaran kurang', 'error'); return }
 
     const noNota = 'N' + Date.now().toString().slice(-7)
+    const now = new Date()
+    const timeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     const tx = {
       noNota,
       date: today(),
+      time: timeStr,
       memberId: memberId || null,
       customerName: members.find(m => m.id === memberId)?.name || 'Umum',
       items: cart.map(c => ({ productId: c.productId, name: c.name, qty: c.qty, price: c.price, diskon: c.diskon || 0, subtotal: c.price * c.qty * (1 - (c.diskon || 0) / 100) })),
@@ -1651,24 +1654,66 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
 
           <div style={S.card}>
           <table style={S.table}>
-            <thead><tr>{['Tanggal', 'No Nota', 'Pembeli', 'Item', 'Total', 'Bayar', 'Kembali/Sisa', 'Status', ''].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-            <tbody>{filteredTx.map(tx => {
-              const m = members.find(mm => mm.id === tx.memberId)
-              const isKredit = tx.caraBayar === 'KREDIT'
-              return (
-                <tr key={tx.id} style={S.tr}>
-                  <td style={S.td}>{fmtDate(tx.date)}</td>
-                  <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{tx.noNota || '-'}</td>
-                  <td style={S.td}>{m?.name || tx.customerName || 'Umum'}</td>
-                  <td style={S.td}>{(tx.items || []).map((it, i) => <div key={i} style={{ fontSize: 12 }}>{it.name} × {it.qty}{it.diskon > 0 ? ' (-' + it.diskon + '%)' : ''}</div>)}</td>
-                  <td style={{ ...S.td, fontWeight: 600 }}>{formatRp(tx.total)}</td>
-                  <td style={S.td}>{formatRp(tx.payment)}</td>
-                  <td style={{ ...S.td, color: isKredit ? '#e65100' : 'var(--g)', fontWeight: 600 }}>{isKredit ? formatRp(tx.total - (tx.payment || 0)) : formatRp(tx.change || 0)}</td>
-                  <td style={S.td}><span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600, background: isKredit ? '#fff3e0' : '#e8f5e9', color: isKredit ? '#e65100' : '#2e7d32' }}>{isKredit ? 'KREDIT' : 'LUNAS'}</span></td>
-                  <td style={S.td}><button style={{ ...S.smallBtn, color: '#1565c0', fontSize: 11, padding: '3px 8px', border: '1px solid #e0e0e0', borderRadius: 4 }} onClick={() => { try { cetakStruk(tx, settings, members) } catch(e) {} }}>🖨️</button></td>
-                </tr>
-              )
-            })}{filteredTx.length === 0 && <tr><td colSpan={9} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Tidak ada transaksi</td></tr>}</tbody>
+            <thead><tr>{['Tanggal/Jam', 'No Nota', 'Pembeli', 'Item', 'Total', 'Bayar', 'Kembali/Sisa', 'Status', ''].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{(() => {
+              // Group by date
+              const grouped = {}
+              filteredTx.forEach(tx => {
+                const d = tx.date || 'unknown'
+                if (!grouped[d]) grouped[d] = []
+                grouped[d].push(tx)
+              })
+              const dates = Object.keys(grouped).sort((a, b) => b.localeCompare(a))
+              const rows = []
+
+              dates.forEach(date => {
+                const dayTx = grouped[date]
+                const dayLunas = dayTx.filter(t => t.caraBayar !== 'KREDIT')
+                const dayKredit = dayTx.filter(t => t.caraBayar === 'KREDIT')
+                const dayTotalLunas = dayLunas.reduce((a, t) => a + (t.total||0), 0)
+                const dayTotalKredit = dayKredit.reduce((a, t) => a + (t.total||0), 0)
+                const dayTotal = dayTx.reduce((a, t) => a + (t.total||0), 0)
+
+                // Render each transaction in this date group
+                dayTx.forEach(tx => {
+                  const m = members.find(mm => mm.id === tx.memberId)
+                  const isKredit = tx.caraBayar === 'KREDIT'
+                  rows.push(
+                    <tr key={tx.id} style={S.tr}>
+                      <td style={S.td}>
+                        <div>{fmtDate(tx.date)}</div>
+                        <div style={{ fontSize: 11, color: '#1565c0', fontWeight: 600 }}>{tx.time || '-'}</div>
+                      </td>
+                      <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{tx.noNota || '-'}</td>
+                      <td style={S.td}>{m?.name || tx.customerName || 'Umum'}</td>
+                      <td style={S.td}>{(tx.items || []).map((it, i) => <div key={i} style={{ fontSize: 12 }}>{it.name} × {it.qty}{it.diskon > 0 ? ' (-' + it.diskon + '%)' : ''}</div>)}</td>
+                      <td style={{ ...S.td, fontWeight: 600 }}>{formatRp(tx.total)}</td>
+                      <td style={S.td}>{formatRp(tx.payment)}</td>
+                      <td style={{ ...S.td, color: isKredit ? '#e65100' : 'var(--g)', fontWeight: 600 }}>{isKredit ? formatRp(tx.total - (tx.payment || 0)) : formatRp(tx.change || 0)}</td>
+                      <td style={S.td}><span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600, background: isKredit ? '#fff3e0' : '#e8f5e9', color: isKredit ? '#e65100' : '#2e7d32' }}>{isKredit ? 'KREDIT' : 'LUNAS'}</span></td>
+                      <td style={S.td}><button style={{ ...S.smallBtn, color: '#1565c0', fontSize: 11, padding: '3px 8px', border: '1px solid #e0e0e0', borderRadius: 4 }} onClick={() => { try { cetakStruk(tx, settings, members) } catch(e) {} }}>🖨️</button></td>
+                    </tr>
+                  )
+                })
+
+                // Daily total row
+                rows.push(
+                  <tr key={'total-' + date} style={{ background: '#e3f2fd' }}>
+                    <td colSpan={4} style={{ ...S.td, fontWeight: 700, fontSize: 12, textAlign: 'right', padding: '8px 12px' }}>
+                      Total {fmtDate(date)} — {dayTx.length} transaksi
+                    </td>
+                    <td style={{ ...S.td, fontWeight: 700, fontSize: 13, color: '#1565c0' }}>{formatRp(dayTotal)}</td>
+                    <td colSpan={2} style={{ ...S.td, fontSize: 11, lineHeight: 1.6 }}>
+                      {dayLunas.length > 0 && <div style={{ color: '#2e7d32', fontWeight: 600 }}>✅ Lunas: {formatRp(dayTotalLunas)} ({dayLunas.length})</div>}
+                      {dayKredit.length > 0 && <div style={{ color: '#e65100', fontWeight: 600 }}>⏳ Kredit: {formatRp(dayTotalKredit)} ({dayKredit.length})</div>}
+                    </td>
+                    <td colSpan={2} style={S.td}></td>
+                  </tr>
+                )
+              })
+
+              return rows.length > 0 ? rows : <tr><td colSpan={9} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Tidak ada transaksi</td></tr>
+            })()}</tbody>
           </table>
           </div>
         </div>
