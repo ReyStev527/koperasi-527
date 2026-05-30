@@ -1265,24 +1265,35 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   // HITUNG TAGIHAN & TUNGGAKAN
   // ============================================
 
-  // 1. Bangun map piutang per noNota untuk lookup cepat
-  const piutangByNota = {}
-  piutangs.forEach(p => { if (p.noNota) piutangByNota[p.noNota] = p })
+  // 1. Kumpulkan semua piutang yang belum lunas (recalculate sisa dari total - totalBayar)
+  const activePiutangs = piutangs.filter(p => {
+    const sisa = Math.max(0, (p.total||0) - (p.totalBayar||0))
+    return sisa > 0 && p.status !== 'LUNAS'
+  }).map(p => ({
+    ...p,
+    sisa: Math.max(0, (p.total||0) - (p.totalBayar||0)) // recalculate, jangan pakai p.sisa yang mungkin salah
+  }))
 
-  // 2. Ambil SEMUA transaksi KREDIT
-  const allKredit = (transactions||[]).filter(t => t.caraBayar === 'KREDIT')
+  // 2. Cari transaksi KREDIT yang TIDAK punya piutang (data lama)
+  const piutangNotas = new Set(piutangs.map(p => p.noNota).filter(Boolean))
+  const piutangMemberDates = new Set(piutangs.map(p => (p.memberId||'') + '_' + (p.date||'')))
+  const orphanKredit = (transactions||[]).filter(t => {
+    if (t.caraBayar !== 'KREDIT') return false
+    if (t.noNota && piutangNotas.has(t.noNota)) return false // sudah ada piutang
+    if (piutangMemberDates.has((t.memberId||'') + '_' + (t.date||''))) return false
+    const sisa = (t.total||0) - (t.payment||0)
+    return sisa > 0
+  }).map(t => ({
+    ...t,
+    sisa: (t.total||0) - (t.payment||0)
+  }))
 
-  // 3. Hitung sisa per transaksi kredit (dari piutang jika ada, atau dari transaksi langsung)
-  const kreditSaldo = allKredit.map(t => {
-    const piutang = piutangByNota[t.noNota] || piutangs.find(p => p.memberId === t.memberId && p.date === t.date && Math.abs((p.total||0) - (t.total||0)) < 100)
-    const sisa = piutang ? (piutang.sisa||0) : ((t.total||0) - (t.payment||0))
-    const status = piutang?.status || (sisa <= 0 ? 'LUNAS' : 'KREDIT')
-    return { ...t, piutangId: piutang?.id, sisa, status, memberId: t.memberId || piutang?.memberId }
-  }).filter(k => k.sisa > 0) // Hanya yang masih ada sisa
+  // 3. Gabungkan semua data kredit belum lunas
+  const allUnpaid = [...activePiutangs, ...orphanKredit]
 
-  // 4. Pisah tagihan bulan ini vs tunggakan (bulan lalu dan sebelumnya)
-  const kreditPeriod = kreditSaldo.filter(k => k.date >= startDate && k.date <= endDate)
-  const tunggakanList = kreditSaldo.filter(k => k.date < startDate)
+  // 4. Pisah tagihan bulan ini vs tunggakan
+  const kreditPeriod = allUnpaid.filter(k => k.date >= startDate && k.date <= endDate)
+  const tunggakanList = allUnpaid.filter(k => k.date < startDate)
 
   // 5. Group per kompi → per anggota
   const kompiData = {}
