@@ -1261,41 +1261,53 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
 
   const kompiList = [...new Set(members.map(m => m.kompi || 'LAINNYA'))].filter(Boolean).sort()
 
-  // Piutang kredit dalam periode yang belum lunas
-  const kreditPeriod = piutangs.filter(p =>
-    p.date >= startDate && p.date <= endDate && (p.sisa||0) > 0
-  )
+  // ============================================
+  // HITUNG TAGIHAN & TUNGGAKAN
+  // ============================================
 
-  // Group per kompi → per anggota
+  // 1. Bangun map piutang per noNota untuk lookup cepat
+  const piutangByNota = {}
+  piutangs.forEach(p => { if (p.noNota) piutangByNota[p.noNota] = p })
+
+  // 2. Ambil SEMUA transaksi KREDIT
+  const allKredit = (transactions||[]).filter(t => t.caraBayar === 'KREDIT')
+
+  // 3. Hitung sisa per transaksi kredit (dari piutang jika ada, atau dari transaksi langsung)
+  const kreditSaldo = allKredit.map(t => {
+    const piutang = piutangByNota[t.noNota] || piutangs.find(p => p.memberId === t.memberId && p.date === t.date && Math.abs((p.total||0) - (t.total||0)) < 100)
+    const sisa = piutang ? (piutang.sisa||0) : ((t.total||0) - (t.payment||0))
+    const status = piutang?.status || (sisa <= 0 ? 'LUNAS' : 'KREDIT')
+    return { ...t, piutangId: piutang?.id, sisa, status, memberId: t.memberId || piutang?.memberId }
+  }).filter(k => k.sisa > 0) // Hanya yang masih ada sisa
+
+  // 4. Pisah tagihan bulan ini vs tunggakan (bulan lalu dan sebelumnya)
+  const kreditPeriod = kreditSaldo.filter(k => k.date >= startDate && k.date <= endDate)
+  const tunggakanList = kreditSaldo.filter(k => k.date < startDate)
+
+  // 5. Group per kompi → per anggota
   const kompiData = {}
-  kreditPeriod.forEach(p => {
-    const member = members.find(m => m.id === p.memberId)
-    const kompi = member?.kompi || 'NON-ANGGOTA'
-    if (filterKompi !== 'all' && kompi !== filterKompi) return
-    if (!kompiData[kompi]) kompiData[kompi] = {}
-    const mid = p.memberId || 'umum'
-    if (!kompiData[kompi][mid]) kompiData[kompi][mid] = {
-      member, pangkat: member?.pangkat || '-', nrp: member?.nrp || '-',
-      name: member?.name || p.customerName || 'Umum', items: [], totalTagihan: 0, totalTunggakan: 0
-    }
-    kompiData[kompi][mid].items.push(p)
-    kompiData[kompi][mid].totalTagihan += (p.sisa||0)
-  })
 
-  // Cek tunggakan (piutang dari periode SEBELUMNYA yang masih belum lunas)
-  const tunggakan = piutangs.filter(p => p.date < startDate && (p.sisa||0) > 0)
-  tunggakan.forEach(p => {
-    const member = members.find(m => m.id === p.memberId)
+  function addToKompi(record, isTunggakan) {
+    const member = members.find(m => m.id === record.memberId)
     const kompi = member?.kompi || 'NON-ANGGOTA'
     if (filterKompi !== 'all' && kompi !== filterKompi) return
     if (!kompiData[kompi]) kompiData[kompi] = {}
-    const mid = p.memberId || 'umum'
+    const mid = record.memberId || 'umum'
     if (!kompiData[kompi][mid]) kompiData[kompi][mid] = {
       member, pangkat: member?.pangkat || '-', nrp: member?.nrp || '-',
-      name: member?.name || 'Umum', items: [], totalTagihan: 0, totalTunggakan: 0
+      name: member?.name || record.customerName || 'Umum', items: [], totalTagihan: 0, totalTunggakan: 0, tunggakanItems: []
     }
-    kompiData[kompi][mid].totalTunggakan += (p.sisa||0)
-  })
+    if (isTunggakan) {
+      kompiData[kompi][mid].totalTunggakan += (record.sisa||0)
+      kompiData[kompi][mid].tunggakanItems.push(record)
+    } else {
+      kompiData[kompi][mid].totalTagihan += (record.sisa||0)
+      kompiData[kompi][mid].items.push(record)
+    }
+  }
+
+  kreditPeriod.forEach(k => addToKompi(k, false))
+  tunggakanList.forEach(k => addToKompi(k, true))
 
   const sortedKompi = Object.keys(kompiData).sort()
   const grandTotal = Object.values(kompiData).reduce((a, members_) => a + Object.values(members_).reduce((b, m) => b + m.totalTagihan + m.totalTunggakan, 0), 0)
@@ -1342,9 +1354,9 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
         </div>
       </div>
       <div style={S.grid3}>
-        <div style={S.statCard}><div style={S.statLabel}>Total Tagihan</div><div style={{ ...S.statVal, color: '#1565c0' }}>{formatRp(grandTotal)}</div></div>
-        <div style={S.statCard}><div style={S.statLabel}>Anggota Ditagih</div><div style={S.statVal}>{Object.values(kompiData).reduce((a, m) => a + Object.keys(m).length, 0)}</div></div>
-        <div style={S.statCard}><div style={S.statLabel}>Ada Tunggakan</div><div style={{ ...S.statVal, color: '#c62828' }}>{Object.values(kompiData).reduce((a, members_) => a + Object.values(members_).filter(m => m.totalTunggakan > 0).length, 0)}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Tagihan Bulan Ini</div><div style={{ ...S.statVal, color: '#1565c0' }}>{formatRp(Object.values(kompiData).reduce((a, m) => a + Object.values(m).reduce((b, x) => b + x.totalTagihan, 0), 0))}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Tunggakan Bulan Lalu</div><div style={{ ...S.statVal, color: '#c62828' }}>{formatRp(Object.values(kompiData).reduce((a, m) => a + Object.values(m).reduce((b, x) => b + x.totalTunggakan, 0), 0))}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Grand Total Potong</div><div style={{ ...S.statVal, color: '#2e7d32' }}>{formatRp(grandTotal)}</div><div style={{ fontSize: 11, color: '#999' }}>{Object.values(kompiData).reduce((a, m) => a + Object.keys(m).length, 0)} anggota</div></div>
       </div>
       {sortedKompi.map(kompi => {
         const anggotaList = Object.values(kompiData[kompi]).sort((a,b) => (a.name||'').localeCompare(b.name||''))
