@@ -1176,7 +1176,7 @@ function StockInForm({ products, suppliers, onSave }) {
 // =============================================
 // KASIR / POS (Barang Keluar = Penjualan)
 // =============================================
-export function POS({ products, transactions, saveTransaction, updateProductStock, members, showToast, savePiutang, settings }) {
+export function POS({ products, transactions, saveTransaction, deleteTransaction, updateProductStock, members, showToast, savePiutang, settings }) {
   const [cart, setCart] = useState([])
   const [search, setSearch] = useState('')
   const [memberId, setMemberId] = useState('')
@@ -1347,50 +1347,58 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
   async function checkout() {
     if (cart.length === 0) { showToast('Keranjang kosong', 'error'); return }
     if (caraBayar === 'LUNAS' && Number(payment) < total) { showToast('Pembayaran kurang', 'error'); return }
+    if (total <= 0) { showToast('Total harus lebih dari 0', 'error'); return }
 
-    const noNota = 'N' + Date.now().toString().slice(-7)
-    const now = new Date()
-    const timeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    const tx = {
-      noNota,
-      date: today(),
-      time: timeStr,
-      memberId: memberId || null,
-      customerName: members.find(m => m.id === memberId)?.name || 'Umum',
-      items: cart.map(c => ({ productId: c.productId, name: c.name, qty: c.qty, price: c.price, diskon: c.diskon || 0, subtotal: c.price * c.qty * (1 - (c.diskon || 0) / 100) })),
-      totalSebelumDiskon,
-      totalDiskon,
-      total,
-      payment: caraBayar === 'LUNAS' ? Number(payment) : Number(dp),
-      change: caraBayar === 'LUNAS' ? Number(payment) - total : 0,
-      caraBayar,
-      cashier: 'user',
-    }
-    await saveTransaction(tx)
-
-    // Kalau KREDIT, catat piutang
-    if (caraBayar === 'KREDIT' && savePiutang) {
-      await savePiutang({
-        noNota, date: today(), memberId: memberId || null,
+    try {
+      const noNota = 'N' + Date.now().toString().slice(-7)
+      const now = new Date()
+      const timeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      const tx = {
+        noNota,
+        date: today(),
+        time: timeStr,
+        memberId: memberId || null,
         customerName: members.find(m => m.id === memberId)?.name || 'Umum',
-        total, dp: Number(dp) || 0, totalBayar: Number(dp) || 0,
-        sisa: total - (Number(dp) || 0), status: 'KREDIT', payments: Number(dp) > 0 ? [{ date: today(), amount: Number(dp) }] : []
-      })
+        items: cart.map(c => ({ productId: c.productId, name: c.name, qty: c.qty, price: Number(c.price)||0, diskon: c.diskon || 0, subtotal: (Number(c.price)||0) * c.qty * (1 - (c.diskon || 0) / 100) })),
+        totalSebelumDiskon,
+        totalDiskon,
+        total,
+        payment: caraBayar === 'LUNAS' ? Number(payment) : Number(dp),
+        change: caraBayar === 'LUNAS' ? Number(payment) - total : 0,
+        caraBayar,
+        cashier: 'user',
+      }
+      await saveTransaction(tx)
+
+      // Kalau KREDIT, catat piutang
+      if (caraBayar === 'KREDIT' && savePiutang) {
+        await savePiutang({
+          noNota, date: today(), memberId: memberId || null,
+          customerName: members.find(m => m.id === memberId)?.name || 'Umum',
+          total, dp: Number(dp) || 0, totalBayar: Number(dp) || 0,
+          sisa: total - (Number(dp) || 0), status: 'KREDIT', payments: Number(dp) > 0 ? [{ date: today(), amount: Number(dp) }] : []
+        })
+      }
+
+      // Kurangi stok
+      for (const item of cart) {
+        const prod = products.find(p => p.id === item.productId)
+        if (prod) await updateProductStock(prod.id, Math.max(0, (prod.stock||0) - item.qty))
+      }
+
+      // Cetak struk otomatis
+      try { cetakStruk(tx, settings, members) } catch(e) { console.log('Struk print skipped:', e) }
+
+      const msg = caraBayar === 'LUNAS'
+        ? 'Transaksi LUNAS! Kembalian: ' + formatRp(Number(payment) - total)
+        : 'Transaksi KREDIT dicatat. Sisa piutang: ' + formatRp(total - (Number(dp) || 0))
+
+      setCart([]); setPayment(''); setDp(''); setMemberId(''); setCaraBayar('LUNAS')
+      showToast(msg)
+    } catch (err) {
+      console.error('Checkout error:', err)
+      showToast('Gagal menyimpan transaksi: ' + (err.message || 'Cek koneksi internet'), 'error')
     }
-
-    // Kurangi stok
-    for (const item of cart) {
-      const prod = products.find(p => p.id === item.productId)
-      if (prod) await updateProductStock(prod.id, prod.stock - item.qty)
-    }
-
-    // Cetak struk otomatis
-    try { cetakStruk(tx, settings, members) } catch(e) { console.log('Struk print skipped:', e) }
-
-    setCart([]); setPayment(''); setDp(''); setMemberId(''); setCaraBayar('LUNAS')
-    showToast(caraBayar === 'LUNAS'
-      ? 'Transaksi LUNAS! Kembalian: ' + formatRp(Number(payment) - total)
-      : 'Transaksi KREDIT dicatat. Sisa piutang: ' + formatRp(total - (Number(dp) || 0)))
   }
 
   const sortedTx = [...transactions].sort((a, b) => b.date.localeCompare(a.date))
@@ -1691,7 +1699,17 @@ export function POS({ products, transactions, saveTransaction, updateProductStoc
                       <td style={S.td}>{formatRp(tx.payment)}</td>
                       <td style={{ ...S.td, color: isKredit ? '#e65100' : 'var(--g)', fontWeight: 600 }}>{isKredit ? formatRp(tx.total - (tx.payment || 0)) : formatRp(tx.change || 0)}</td>
                       <td style={S.td}><span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600, background: isKredit ? '#fff3e0' : '#e8f5e9', color: isKredit ? '#e65100' : '#2e7d32' }}>{isKredit ? 'KREDIT' : 'LUNAS'}</span></td>
-                      <td style={S.td}><button style={{ ...S.smallBtn, color: '#1565c0', fontSize: 11, padding: '3px 8px', border: '1px solid #e0e0e0', borderRadius: 4 }} onClick={() => { try { cetakStruk(tx, settings, members) } catch(e) {} }}>🖨️</button></td>
+                      <td style={S.td}>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button style={{ ...S.smallBtn, color: '#1565c0', fontSize: 11, padding: '3px 8px', border: '1px solid #e0e0e0', borderRadius: 4 }} onClick={() => { try { cetakStruk(tx, settings, members) } catch(e) {} }} title="Print">🖨️</button>
+                          <button style={{ ...S.smallBtn, color: '#c62828', fontSize: 11, padding: '3px 8px', border: '1px solid #ffcdd2', borderRadius: 4 }} onClick={async () => {
+                            if (!confirm('Hapus transaksi ' + (tx.noNota||'') + '?\n\n' + (tx.items||[]).map(it => it.name + ' × ' + it.qty).join('\n') + '\nTotal: Rp ' + (tx.total||0).toLocaleString('id-ID') + '\n\nStok akan dikembalikan. Aksi ini tidak bisa dibatalkan!')) return
+                            const ok = await deleteTransaction(tx.id)
+                            if (ok) showToast('Transaksi ' + (tx.noNota||'') + ' dihapus — stok dikembalikan', 'error')
+                            else showToast('Gagal menghapus transaksi', 'error')
+                          }} title="Hapus">🗑️</button>
+                        </div>
+                      </td>
                     </tr>
                   )
                 })

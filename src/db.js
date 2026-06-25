@@ -55,12 +55,30 @@ export async function batchSet(col, items, onProgress) {
 }
 
 // =============================================
-// REALTIME LISTENER
+// REALTIME LISTENER (dengan error handling + reconnect)
 // =============================================
 export function listenCollection(col, callback) {
-  return onSnapshot(collection(db, col), (snap) => {
-    callback(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-  })
+  let retryCount = 0
+  function startListener() {
+    return onSnapshot(
+      collection(db, col),
+      (snap) => {
+        retryCount = 0 // reset retry counter on success
+        callback(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+      },
+      (error) => {
+        console.error('Listener error [' + col + ']:', error)
+        // Jangan clear data saat error — biarkan data lama tetap tampil
+        // Auto-reconnect setelah delay
+        if (retryCount < 5) {
+          retryCount++
+          console.log('Reconnecting listener [' + col + '] attempt', retryCount)
+          setTimeout(() => startListener(), 2000 * retryCount)
+        }
+      }
+    )
+  }
+  return startListener()
 }
 
 // =============================================

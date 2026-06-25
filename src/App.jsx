@@ -378,6 +378,40 @@ export default function App() {
   }
 
   // ---- Legacy CRUD ----
+  async function deleteTransaction(txId) {
+    const tx = transactions.find(t => t.id === txId)
+    if (!tx) return false
+    try {
+      // Hapus transaksi
+      await removeOne('transactions', txId)
+
+      // Hapus kas & jurnal terkait (berdasarkan ref = noNota)
+      const ref = tx.noNota || txId
+      const relatedKas = kasData.filter(k => k.ref === ref)
+      for (const k of relatedKas) { try { await removeOne('kas', k.id) } catch {} }
+      const relatedJurnal = jurnalData.filter(j => j.ref === ref)
+      for (const j of relatedJurnal) { try { await removeOne('jurnal', j.id) } catch {} }
+
+      // Kalau KREDIT, hapus piutang terkait
+      if (tx.caraBayar === 'KREDIT') {
+        const relatedPiutang = piutangs.find(p => p.noNota === tx.noNota)
+        if (relatedPiutang) { try { await removeOne('piutangs', relatedPiutang.id) } catch {} }
+      }
+
+      // Kembalikan stok
+      for (const item of (tx.items || [])) {
+        const prod = products.find(p => p.id === item.productId)
+        if (prod) await updateProductStock(prod.id, (prod.stock || 0) + (item.qty || 0))
+      }
+
+      await logAction('Transaksi', 'delete', 'Hapus transaksi ' + (tx.noNota || txId) + ' — ' + (tx.customerName || 'Umum') + ' Rp ' + (tx.total || 0).toLocaleString('id-ID'))
+      return true
+    } catch (err) {
+      console.error('Delete transaction error:', err)
+      return false
+    }
+  }
+
   async function saveRetur(r) { r.id = genId(); await setOne('returs', r.id, r); await logAction('Retur', 'create', `Retur ${r.noRetur}: ${r.productName} x${r.qty}`) }
   async function savePiutang(p) { if (!p.id) p.id = genId(); await setOne('piutangs', p.id, p) }
   async function bayarPiutang(piutang, amount) {
@@ -492,8 +526,7 @@ export default function App() {
   const allNavItems = [
     { id: 'dashboard', label: 'Dashboard', icon: I.home, roles: ['admin','bendahara','ketua','staff'] },
     { id: 'members', label: 'Anggota', icon: I.users, roles: ['admin','bendahara','ketua'] },
-    { id: 'savings', label: 'Simpanan', icon: I.wallet, roles: ['admin','bendahara'] },
-    { id: 'loans', label: 'Pinjaman', icon: I.loan, roles: ['admin','bendahara','ketua'] },
+    // Simpanan & Pinjaman dihapus dari menu
     { id: '_sep1', label: 'TOKO', sep: true, roles: ['admin','bendahara','staff'] },
     { id: 'products', label: 'Stok Barang', icon: I.box, roles: ['admin','bendahara','staff'] },
     { id: 'stokhistori', label: 'Stok per Tanggal', icon: I.chart, roles: ['admin','bendahara'] },
@@ -516,7 +549,7 @@ export default function App() {
     { id: 'tutupbuku', label: 'Tutup Buku', icon: I.chart, roles: ['admin','bendahara','ketua'] },
     { id: 'juyar', label: 'Tagihan Juyar', icon: I.loan, roles: ['admin','bendahara'] },
     { id: 'labaanggota', label: 'Laba per Anggota', icon: I.chart, roles: ['admin','bendahara','ketua'] },
-    { id: 'reports', label: 'Neraca', icon: I.chart, roles: ['admin','bendahara','ketua'] },
+    // Neraca dihapus dari menu
     { id: 'rekap', label: 'Rekap Bulanan', icon: I.chart, roles: ['admin','bendahara','ketua'] },
     { id: 'lapjual', label: 'Laporan Penjualan', icon: I.chart, roles: ['admin','bendahara','ketua'] },
     { id: 'grafik', label: 'Grafik Trend', icon: I.chart, roles: ['admin','bendahara','ketua'] },
@@ -604,16 +637,15 @@ export default function App() {
       <main className="app-main" style={S.main}>
         {page === 'dashboard' && <Dashboard {...{ totalMembers, totalSavings, totalLoansOut, members, savings, loans, getMember, setPage, products, transactions, kasData }} />}
         {page === 'members' && <Members {...{ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc }} />}
-        {page === 'savings' && <Savings {...{ savings, saveSaving, deleteSaving, members, getMember, setModal, showToast }} />}
-        {page === 'loans' && <Loans {...{ loans, saveLoan, payLoan, members, getMember, setModal, showToast, settings }} />}
+        {/* Simpanan & Pinjaman halaman dihapus */}
         {page === 'tutupbuku' && <LaporanTutupBuku transactions={transactions} members={members} settings={settings} />}
         {page === 'juyar' && <TagihanJuyar {...{ transactions, piutangs, members, settings, savePiutang, showToast, setModal }} />}
         {page === 'labaanggota' && <LabaPerAnggota {...{ transactions, members, products, settings }} />}
-        {page === 'reports' && <Reports {...{ members, savings, loans, getMember }} />}
+        {/* Neraca halaman dihapus */}
         {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, transactions, stockInData }} />}
         {page === 'stokhistori' && <StokHistori products={products} stockIn={stockInData} transactions={transactions} mutasis={mutasis} />}
         {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, products, suppliers, updateProductStock, saveProduct, setModal, showToast }} />}
-        {page === 'pos' && <POS {...{ products, transactions, saveTransaction, updateProductStock, members, showToast, savePiutang, settings }} />}
+        {page === 'pos' && <POS {...{ products, transactions, saveTransaction, deleteTransaction, updateProductStock, members, showToast, savePiutang, settings }} />}
         {page === 'suppliers' && <Suppliers {...{ suppliers, saveSupplier, deleteSupplier, products, setModal, showToast }} />}
         {page === 'retur' && <ReturBarang {...{ returs, saveRetur, products, suppliers, updateProductStock, setModal, showToast }} />}
         {page === 'harga' && <HargaBertingkat {...{ products, saveProduct, setModal, showToast }} />}
@@ -735,8 +767,6 @@ function Dashboard({ totalMembers, totalSavings, totalLoansOut, members, savings
   const lowStock = products.filter(p => (p.stock||0) <= (p.minStock||2)).length
   const cards = [
     { label: 'Total Anggota', value: totalMembers, icon: I.users, color: 'var(--b)' },
-    { label: 'Total Simpanan', value: formatRp(totalSavings), icon: I.wallet, color: 'var(--g)' },
-    { label: 'Pinjaman Berjalan', value: formatRp(totalLoansOut), icon: I.loan, color: 'var(--o)' },
     { label: 'Nilai Inventaris', value: formatRp(totalInventory), icon: I.box, color: 'var(--p)' },
     { label: 'Penjualan Hari Ini', value: formatRp(todaySales), icon: I.cart, color: 'var(--g)' },
     { label: 'Stok Menipis', value: lowStock + ' item', icon: I.chart, color: lowStock > 0 ? 'var(--r)' : 'var(--g)' },
@@ -761,41 +791,6 @@ function Dashboard({ totalMembers, totalSavings, totalLoansOut, members, savings
           <div style={S.statVal}>{c.value}</div>
         </div>
       ))}</div>
-
-      <div style={S.row2}>
-        <div style={S.card}>
-          <div style={S.cardHead}><h3 style={S.cardTitle}>Simpanan Terakhir</h3><button style={S.linkBtn} onClick={() => setPage('savings')}>Lihat Semua</button></div>
-          <table style={S.table}>
-            <thead><tr>{['Anggota', 'Jenis', 'Jumlah', 'Tanggal'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-            <tbody>{recentSavings.map(s => {
-              const m = getMember(s.memberId)
-              return (<tr key={s.id} style={S.tr}>
-                <td style={S.td}>{m?.name || '-'}</td>
-                <td style={S.td}><span style={{ ...S.badge, ...badgeColor(s.type) }}>{s.type}</span></td>
-                <td style={S.td}>{formatRp(s.amount)}</td>
-                <td style={S.td}>{fmtDate(s.date)}</td>
-              </tr>)
-            })}</tbody>
-          </table>
-        </div>
-        <div style={S.card}>
-          <div style={S.cardHead}><h3 style={S.cardTitle}>Pinjaman Aktif</h3><button style={S.linkBtn} onClick={() => setPage('loans')}>Lihat Semua</button></div>
-          {activeLoans.length === 0 ? <p style={S.empty}>Tidak ada pinjaman aktif</p> : (
-            <table style={S.table}>
-              <thead><tr>{['Anggota', 'Jumlah', 'Sisa', 'Tenor'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-              <tbody>{activeLoans.map(l => {
-                const m = getMember(l.memberId)
-                return (<tr key={l.id} style={S.tr}>
-                  <td style={S.td}>{m?.name || '-'}</td>
-                  <td style={S.td}>{formatRp(l.amount)}</td>
-                  <td style={S.td}>{formatRp(l.amount - l.paid)}</td>
-                  <td style={S.td}>{l.tenor} bln</td>
-                </tr>)
-              })}</tbody>
-            </table>
-          )}
-        </div>
-      </div>
 
       {/* Grafik Detail */}
       <DashboardCharts transactions={transactions} kasData={kasData || []} savings={savings} loans={loans} products={products} />
