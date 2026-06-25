@@ -639,7 +639,7 @@ export default function App() {
         {page === 'members' && <Members {...{ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc }} />}
         {/* Simpanan & Pinjaman halaman dihapus */}
         {page === 'tutupbuku' && <LaporanTutupBuku transactions={transactions} members={members} settings={settings} />}
-        {page === 'juyar' && <TagihanJuyar {...{ transactions, piutangs, members, settings, savePiutang, showToast, setModal }} />}
+        {page === 'juyar' && <TagihanJuyar {...{ transactions, piutangs, members, settings, savePiutang, bayarPiutang, showToast, setModal }} />}
         {page === 'labaanggota' && <LabaPerAnggota {...{ transactions, members, products, settings }} />}
         {/* Neraca halaman dihapus */}
         {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, transactions, stockInData }} />}

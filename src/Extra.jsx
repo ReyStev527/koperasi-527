@@ -1250,7 +1250,7 @@ const td = { padding: '8px 12px', borderBottom: '1px solid #e5e7eb' }
 // 8. TAGIHAN JUYAR (Potong Gaji) per Kompi
 // + TUNGGAKAN ketika tidak bisa dipotong
 // =============================================
-export function TagihanJuyar({ transactions, piutangs, members, settings, savePiutang, showToast, setModal }) {
+export function TagihanJuyar({ transactions, piutangs, members, settings, savePiutang, bayarPiutang, showToast, setModal }) {
   const now = new Date()
   const defaultEnd = new Date(now.getFullYear(), now.getMonth(), 25)
   const defaultStart = new Date(defaultEnd); defaultStart.setMonth(defaultStart.getMonth() - 1); defaultStart.setDate(26)
@@ -1258,6 +1258,30 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   const [startDate, setStartDate] = useState(toLocalDate(defaultStart))
   const [endDate, setEndDate] = useState(toLocalDate(defaultEnd))
   const [filterKompi, setFilterKompi] = useState('all')
+  const [bayarMid, setBayarMid] = useState(null)
+  const [bayarAmount, setBayarAmount] = useState('')
+
+  async function prosesBayarTunggakan(mid) {
+    const amount = Number(bayarAmount)
+    if (!amount || amount <= 0) { showToast('Masukkan jumlah pembayaran', 'error'); return }
+    const memberPiutangs = piutangs
+      .filter(p => p.memberId === mid && (Math.max(0, (p.total||0) - (p.totalBayar||0))) > 0 && p.status !== 'LUNAS')
+      .sort((a, b) => (a.date||'').localeCompare(b.date||''))
+    if (memberPiutangs.length === 0) { showToast('Tidak ada piutang untuk dibayar', 'error'); return }
+    if (!confirm('Bayar tunggakan ' + formatRp(amount) + ' atas nama ' + (members.find(m => m.id === mid)?.name||'') + '?')) return
+    let remaining = amount, paidCount = 0
+    for (const p of memberPiutangs) {
+      if (remaining <= 0) break
+      const sisa = Math.max(0, (p.total||0) - (p.totalBayar||0))
+      const bayar = Math.min(remaining, sisa)
+      await bayarPiutang(p, bayar)
+      remaining -= bayar
+      paidCount++
+    }
+    showToast('Pembayaran ' + formatRp(amount) + ' berhasil — ' + paidCount + ' piutang diupdate')
+    setBayarMid(null)
+    setBayarAmount('')
+  }
 
   const kompiList = [...new Set(members.map(m => m.kompi || 'LAINNYA'))].filter(Boolean).sort()
 
@@ -1375,17 +1399,33 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
           <div key={kompi} style={{ ...S.card, marginBottom: 16 }}>
             <h3 style={{ fontSize: 16, fontWeight: 700, color: '#1565c0', marginBottom: 12 }}>{kompi}</h3>
             <table style={S.table}>
-              <thead><tr>{['No', 'Pangkat', 'Nama', 'NRP', 'Tagihan Bln Ini', 'Tunggakan', 'Total Potong'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-              <tbody>{anggotaList.map((m, i) => (
-                <tr key={i} style={S.tr}>
+              <thead><tr>{['No', 'Pangkat', 'Nama', 'NRP', 'Tagihan Bln Ini', 'Tunggakan', 'Total Potong', 'Bayar'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <tbody>{anggotaList.map((m, i) => {
+                const mid = Object.keys(kompiData[kompi]).find(k => kompiData[kompi][k] === m)
+                const isBayar = bayarMid === mid
+                return (
+                <tr key={i} style={{ ...S.tr, background: isBayar ? '#fff3e0' : undefined }}>
                   <td style={S.td}>{i+1}</td><td style={S.td}>{m.pangkat}</td>
                   <td style={{ ...S.td, fontWeight: 600 }}>{m.name}</td>
                   <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{m.nrp}</td>
                   <td style={{ ...S.td, textAlign: 'right' }}>{formatRp(m.totalTagihan)}</td>
                   <td style={{ ...S.td, textAlign: 'right', color: m.totalTunggakan > 0 ? '#c62828' : '#6b7280', fontWeight: m.totalTunggakan > 0 ? 700 : 400 }}>{formatRp(m.totalTunggakan)}</td>
                   <td style={{ ...S.td, textAlign: 'right', fontWeight: 700 }}>{formatRp(m.totalTagihan + m.totalTunggakan)}</td>
+                  <td style={{ ...S.td, minWidth: isBayar ? 200 : 60 }}>
+                    {(m.totalTunggakan > 0 || m.totalTagihan > 0) && !isBayar && (
+                      <button style={{ fontSize: 11, padding: '4px 10px', background: '#2e7d32', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}
+                        onClick={() => { setBayarMid(mid); setBayarAmount('') }}>💰 Bayar</button>
+                    )}
+                    {isBayar && (
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <input style={{ ...S.input, width: 100, fontSize: 12, padding: '4px 8px', textAlign: 'right' }} type="number" value={bayarAmount} onChange={e => setBayarAmount(e.target.value)} placeholder="Jumlah..." autoFocus />
+                        <button style={{ fontSize: 11, padding: '4px 8px', background: '#2e7d32', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }} onClick={() => prosesBayarTunggakan(mid)}>✓</button>
+                        <button style={{ fontSize: 11, padding: '4px 8px', background: '#999', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }} onClick={() => setBayarMid(null)}>✕</button>
+                      </div>
+                    )}
+                  </td>
                 </tr>
-              ))}</tbody>
+              )})}</tbody>
             </table>
           </div>
         )

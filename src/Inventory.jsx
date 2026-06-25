@@ -1405,6 +1405,57 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
   const [txFilter, setTxFilter] = useState('all') // all | LUNAS | KREDIT
   const [txDateFrom, setTxDateFrom] = useState('')
   const [txDateTo, setTxDateTo] = useState('')
+  const [returnTx, setReturnTx] = useState(null) // transaksi yang sedang di-return
+  const [returnItems, setReturnItems] = useState({}) // { idx: qtyReturn }
+  const [returnAlasan, setReturnAlasan] = useState('')
+
+  // Proses return
+  async function processReturn() {
+    if (!returnTx) return
+    const itemsToReturn = Object.entries(returnItems).filter(([_, qty]) => qty > 0).map(([idx, qty]) => ({
+      ...returnTx.items[Number(idx)],
+      qtyReturn: qty
+    }))
+    if (itemsToReturn.length === 0) { showToast('Pilih minimal 1 barang untuk di-return', 'error'); return }
+
+    const totalReturn = itemsToReturn.reduce((a, it) => a + ((Number(it.price)||0) * it.qtyReturn * (1 - (it.diskon||0)/100)), 0)
+
+    if (!confirm('Proses RETURN?\n\n' + itemsToReturn.map(it => it.name + ' × ' + it.qtyReturn).join('\n') + '\n\nTotal refund: Rp ' + totalReturn.toLocaleString('id-ID') + '\nAlasan: ' + (returnAlasan || '-') + '\n\nStok akan dikembalikan.')) return
+
+    try {
+      // 1. Kembalikan stok
+      for (const item of itemsToReturn) {
+        const prod = products.find(p => p.id === item.productId)
+        if (prod) await updateProductStock(prod.id, (prod.stock||0) + item.qtyReturn)
+      }
+
+      // 2. Simpan record return sebagai transaksi dengan total negatif
+      const returnRecord = {
+        noNota: 'RTN-' + returnTx.noNota,
+        date: today(),
+        time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        memberId: returnTx.memberId,
+        customerName: returnTx.customerName || 'Umum',
+        items: itemsToReturn.map(it => ({ ...it, qty: it.qtyReturn, subtotal: -(Number(it.price)||0) * it.qtyReturn * (1 - (it.diskon||0)/100) })),
+        total: -totalReturn,
+        payment: -totalReturn,
+        change: 0,
+        caraBayar: 'RETURN',
+        cashier: 'user',
+        returnFrom: returnTx.noNota,
+        alasan: returnAlasan,
+      }
+      await saveTransaction(returnRecord)
+
+      setReturnTx(null)
+      setReturnItems({})
+      setReturnAlasan('')
+      showToast('Return berhasil! Stok dikembalikan. Refund: ' + formatRp(totalReturn))
+    } catch (err) {
+      console.error('Return error:', err)
+      showToast('Gagal proses return: ' + (err.message || 'Cek koneksi'), 'error')
+    }
+  }
 
   const filteredTx = sortedTx.filter(tx => {
     if (txFilter === 'LUNAS' && tx.caraBayar === 'KREDIT') return false
@@ -1698,16 +1749,11 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
                       <td style={{ ...S.td, fontWeight: 600 }}>{formatRp(tx.total)}</td>
                       <td style={S.td}>{formatRp(tx.payment)}</td>
                       <td style={{ ...S.td, color: isKredit ? '#e65100' : 'var(--g)', fontWeight: 600 }}>{isKredit ? formatRp(tx.total - (tx.payment || 0)) : formatRp(tx.change || 0)}</td>
-                      <td style={S.td}><span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600, background: isKredit ? '#fff3e0' : '#e8f5e9', color: isKredit ? '#e65100' : '#2e7d32' }}>{isKredit ? 'KREDIT' : 'LUNAS'}</span></td>
+                      <td style={S.td}><span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600, background: tx.caraBayar === 'RETURN' ? '#fce4ec' : isKredit ? '#fff3e0' : '#e8f5e9', color: tx.caraBayar === 'RETURN' ? '#c62828' : isKredit ? '#e65100' : '#2e7d32' }}>{tx.caraBayar === 'RETURN' ? '↩️ RETURN' : isKredit ? 'KREDIT' : 'LUNAS'}</span></td>
                       <td style={S.td}>
                         <div style={{ display: 'flex', gap: 4 }}>
                           <button style={{ ...S.smallBtn, color: '#1565c0', fontSize: 11, padding: '3px 8px', border: '1px solid #e0e0e0', borderRadius: 4 }} onClick={() => { try { cetakStruk(tx, settings, members) } catch(e) {} }} title="Print">🖨️</button>
-                          <button style={{ ...S.smallBtn, color: '#c62828', fontSize: 11, padding: '3px 8px', border: '1px solid #ffcdd2', borderRadius: 4 }} onClick={async () => {
-                            if (!confirm('Hapus transaksi ' + (tx.noNota||'') + '?\n\n' + (tx.items||[]).map(it => it.name + ' × ' + it.qty).join('\n') + '\nTotal: Rp ' + (tx.total||0).toLocaleString('id-ID') + '\n\nStok akan dikembalikan. Aksi ini tidak bisa dibatalkan!')) return
-                            const ok = await deleteTransaction(tx.id)
-                            if (ok) showToast('Transaksi ' + (tx.noNota||'') + ' dihapus — stok dikembalikan', 'error')
-                            else showToast('Gagal menghapus transaksi', 'error')
-                          }} title="Hapus">🗑️</button>
+                          {tx.caraBayar !== 'RETURN' && <button style={{ ...S.smallBtn, color: '#e65100', fontSize: 11, padding: '3px 8px', border: '1px solid #ffe0b2', borderRadius: 4 }} onClick={() => { setReturnTx(tx); setReturnItems({}); setReturnAlasan('') }} title="Return">↩️</button>}
                         </div>
                       </td>
                     </tr>
@@ -1734,6 +1780,83 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
             })()}</tbody>
           </table>
           </div>
+
+          {/* RETURN MODAL */}
+          {returnTx && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={() => setReturnTx(null)}>
+              <div style={{ background: '#fff', borderRadius: 16, padding: 24, width: '100%', maxWidth: 700, maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }} onClick={e => e.stopPropagation()}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                  <h3 style={{ fontSize: 18, fontWeight: 700, color: '#e65100' }}>↩️ Return Barang</h3>
+                  <button style={{ ...S.smallBtn, fontSize: 18 }} onClick={() => setReturnTx(null)}>✕</button>
+                </div>
+
+                <div style={{ background: '#f8f9fa', borderRadius: 10, padding: 14, marginBottom: 16 }}>
+                  <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', fontSize: 13 }}>
+                    <div><span style={{ color: '#666' }}>No Nota:</span> <strong>{returnTx.noNota}</strong></div>
+                    <div><span style={{ color: '#666' }}>Tanggal:</span> <strong>{fmtDate(returnTx.date)}</strong></div>
+                    <div><span style={{ color: '#666' }}>Pembeli:</span> <strong>{returnTx.customerName || 'Umum'}</strong></div>
+                    <div><span style={{ color: '#666' }}>Total:</span> <strong>{formatRp(returnTx.total)}</strong></div>
+                    <div><span style={{ color: '#666' }}>Status:</span> <strong style={{ color: returnTx.caraBayar === 'KREDIT' ? '#e65100' : '#2e7d32' }}>{returnTx.caraBayar}</strong></div>
+                  </div>
+                </div>
+
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Pilih barang yang di-return:</div>
+                <table style={{ ...S.table, marginBottom: 16 }}>
+                  <thead><tr>
+                    <th style={S.th}>Nama Barang</th>
+                    <th style={{ ...S.th, textAlign: 'center' }}>Qty Beli</th>
+                    <th style={{ ...S.th, textAlign: 'center' }}>Harga</th>
+                    <th style={{ ...S.th, textAlign: 'center', background: '#e65100', color: '#fff' }}>Qty Return</th>
+                    <th style={{ ...S.th, textAlign: 'right' }}>Refund</th>
+                  </tr></thead>
+                  <tbody>
+                    {(returnTx.items||[]).map((item, idx) => {
+                      const qtyRet = returnItems[idx] || 0
+                      const refund = (Number(item.price)||0) * qtyRet * (1 - (item.diskon||0)/100)
+                      return (
+                        <tr key={idx} style={{ ...S.tr, background: qtyRet > 0 ? '#fff3e0' : '#fff' }}>
+                          <td style={{ ...S.td, fontWeight: 600 }}>{item.name}</td>
+                          <td style={{ ...S.td, textAlign: 'center' }}>{item.qty}</td>
+                          <td style={{ ...S.td, textAlign: 'center' }}>{formatRp(Number(item.price)||0)}</td>
+                          <td style={{ ...S.td, textAlign: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                              <button style={{ ...S.smallBtn, width: 28, height: 28, borderRadius: 6, border: '1px solid #e0e0e0', fontSize: 16, fontWeight: 700 }} onClick={() => setReturnItems(prev => ({ ...prev, [idx]: Math.max(0, (prev[idx]||0) - 1) }))}>−</button>
+                              <span style={{ fontSize: 16, fontWeight: 700, minWidth: 24, textAlign: 'center', color: qtyRet > 0 ? '#e65100' : '#333' }}>{qtyRet}</span>
+                              <button style={{ ...S.smallBtn, width: 28, height: 28, borderRadius: 6, border: '1px solid #e0e0e0', fontSize: 16, fontWeight: 700 }} onClick={() => setReturnItems(prev => ({ ...prev, [idx]: Math.min(item.qty, (prev[idx]||0) + 1) }))}>+</button>
+                            </div>
+                          </td>
+                          <td style={{ ...S.td, textAlign: 'right', fontWeight: 600, color: qtyRet > 0 ? '#e65100' : '#999' }}>{qtyRet > 0 ? formatRp(refund) : '-'}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+
+                <label style={{ ...S.formLabel, marginBottom: 12 }}>Alasan Return
+                  <input style={S.input} value={returnAlasan} onChange={e => setReturnAlasan(e.target.value)} placeholder="Barang rusak / salah input / tukar barang..." />
+                </label>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px', background: '#fff3e0', borderRadius: 10, border: '2px solid #e65100' }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: '#666' }}>Total Refund</div>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: '#e65100' }}>
+                      {formatRp(Object.entries(returnItems).reduce((a, [idx, qty]) => {
+                        const it = returnTx.items[Number(idx)]
+                        return a + ((Number(it?.price)||0) * qty * (1 - (it?.diskon||0)/100))
+                      }, 0))}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button style={{ ...S.primaryBtn, background: '#666' }} onClick={() => setReturnTx(null)}>Batal</button>
+                    <button style={{ ...S.primaryBtn, background: '#e65100', fontSize: 14, padding: '12px 24px' }} onClick={processReturn}
+                      disabled={Object.values(returnItems).every(q => !q)}>
+                      ↩️ Proses Return
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
