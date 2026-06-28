@@ -301,6 +301,61 @@ export default function App() {
 
     await logAction('Barang Masuk', 'create', 'Invoice ' + (si.invoice||'') + ': ' + (si.items||[]).length + ' item, total ' + (si.total||0))
   }
+
+  async function deleteStockIn(siId) {
+    const si = stockInData.find(s => s.id === siId)
+    if (!si) return false
+    try {
+      // 1. Kembalikan stok
+      for (const item of (si.items||[])) {
+        const prod = products.find(p => p.id === item.productId)
+        if (prod) await updateProductStock(prod.id, Math.max(0, (prod.stock||0) - (item.qty||0)))
+      }
+      // 2. Hapus kas terkait
+      const ref = si.invoice || si.id
+      const relatedKas = kasData.filter(k => k.ref === ref)
+      for (const k of relatedKas) { try { await removeOne('kas', k.id) } catch {} }
+      // 3. Hapus jurnal terkait
+      const relatedJurnal = jurnalData.filter(j => j.ref === ref)
+      for (const j of relatedJurnal) { try { await removeOne('jurnal', j.id) } catch {} }
+      // 4. Hapus hutang terkait
+      const relatedHutang = hutangs.filter(h => h.ref === si.id || h.noFaktur === si.invoice)
+      for (const h of relatedHutang) { try { await removeOne('hutangs', h.id) } catch {} }
+      // 5. Hapus record stockIn
+      await removeOne('stockIn', siId)
+      await logAction('Barang Masuk', 'delete', 'Hapus invoice ' + (si.invoice||'') + ': ' + (si.items||[]).length + ' item, total Rp ' + (si.total||0).toLocaleString('id-ID'))
+      return true
+    } catch (err) { console.error('Delete stockIn error:', err); return false }
+  }
+
+  async function updateStockIn(siId, newData) {
+    const oldSi = stockInData.find(s => s.id === siId)
+    if (!oldSi) return false
+    try {
+      // 1. Kembalikan stok lama
+      for (const item of (oldSi.items||[])) {
+        const prod = products.find(p => p.id === item.productId)
+        if (prod) await updateProductStock(prod.id, Math.max(0, (prod.stock||0) - (item.qty||0)))
+      }
+      // 2. Tambah stok baru
+      for (const item of (newData.items||[])) {
+        const prod = products.find(p => p.id === item.productId)
+        if (prod) {
+          const newStock = (prod.stock||0) + (item.qty||0)
+          const updates = { ...prod, stock: newStock, updatedAt: today() }
+          if (item.buyPrice && item.buyPrice > 0) updates.buyPrice = item.buyPrice
+          if (item.sellPrice && item.sellPrice > 0) updates.sellPrice = item.sellPrice
+          if (item.sellPrice2 && item.sellPrice2 > 0) updates.sellPrice2 = item.sellPrice2
+          await saveProduct(updates, true)
+        }
+      }
+      // 3. Update record stockIn
+      await setOne('stockIn', siId, { ...newData, id: siId, editedAt: today() })
+      await logAction('Barang Masuk', 'update', 'Edit invoice ' + (newData.invoice||'') + ': ' + (newData.items||[]).length + ' item, total Rp ' + (newData.total||0).toLocaleString('id-ID'))
+      return true
+    } catch (err) { console.error('Update stockIn error:', err); return false }
+  }
+
   async function saveTransaction(tx) {
     tx.id = genId()
     await setOne('transactions', tx.id, tx)
@@ -644,7 +699,7 @@ export default function App() {
         {/* Neraca halaman dihapus */}
         {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, transactions, stockInData }} />}
         {page === 'stokhistori' && <StokHistori products={products} stockIn={stockInData} transactions={transactions} mutasis={mutasis} />}
-        {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, products, suppliers, updateProductStock, saveProduct, setModal, showToast }} />}
+        {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, deleteStockIn, updateStockIn, products, suppliers, updateProductStock, saveProduct, setModal, showToast }} />}
         {page === 'pos' && <POS {...{ products, transactions, saveTransaction, deleteTransaction, updateProductStock, members, showToast, savePiutang, settings }} />}
         {page === 'suppliers' && <Suppliers {...{ suppliers, saveSupplier, deleteSupplier, products, setModal, showToast }} />}
         {page === 'retur' && <ReturBarang {...{ returs, saveRetur, products, suppliers, updateProductStock, setModal, showToast }} />}

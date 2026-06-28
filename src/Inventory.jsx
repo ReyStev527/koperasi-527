@@ -539,7 +539,7 @@ function SupplierForm({ initial, onSave }) {
 // =============================================
 // BARANG MASUK (Stock In)
 // =============================================
-export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProductStock, saveProduct, setModal, showToast }) {
+export function StockIn({ stockIn, saveStockIn, deleteStockIn, updateStockIn, products, suppliers, updateProductStock, saveProduct, setModal, showToast }) {
   const [search, setSearch] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -681,6 +681,21 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
     win.document.write('<div class="footer">Dicetak: ' + new Date().toLocaleString('id-ID') + '</div>')
     win.document.write('<script>setTimeout(()=>{window.print()},500)<\/script></body></html>')
     win.document.close()
+  }
+
+  function openEdit(nota) {
+    setModal({
+      title: 'Edit Barang Masuk: ' + (nota.invoice||'-'),
+      content: <StockInForm products={products} suppliers={suppliers} initial={nota} onSave={async d => {
+        const ok = await updateStockIn(nota.id, d)
+        if (ok) {
+          setModal(null)
+          showToast('Barang masuk ' + (d.invoice||'') + ' berhasil diupdate')
+        } else {
+          showToast('Gagal update', 'error')
+        }
+      }} />,
+    })
   }
 
   function openDetail(nota) {
@@ -860,7 +875,19 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
                 <td style={S.td}>{formatRp(s.subtotal || s.total || 0)}</td>
                 <td style={S.td}>{(s.ppnPct||0) > 0 ? <span style={{ color: '#c62828' }}>{s.ppnPct}% (+{formatRp(s.ppnAmount||0)})</span> : '-'}</td>
                 <td style={{ ...S.td, fontWeight: 600, color: 'var(--b)' }}>{formatRp(s.total||0)}</td>
-                <td style={S.td}><button style={{ ...S.smallBtn, color: '#1565c0', fontWeight: 600, fontSize: 12 }} onClick={() => openDetail(s)}>Detail</button></td>
+                <td style={S.td}>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <button style={{ ...S.smallBtn, color: '#1565c0', fontWeight: 600, fontSize: 11, padding: '3px 8px', border: '1px solid #e0e0e0', borderRadius: 4 }} onClick={() => openDetail(s)}>Detail</button>
+                    <button style={{ ...S.smallBtn, color: '#e65100', fontSize: 11, padding: '3px 8px', border: '1px solid #ffe0b2', borderRadius: 4 }} onClick={() => openEdit(s)} title="Edit">✏️</button>
+                    <button style={{ ...S.smallBtn, color: '#c62828', fontSize: 11, padding: '3px 8px', border: '1px solid #ffcdd2', borderRadius: 4 }} onClick={async () => {
+                      const sup = getSupplier(s.supplierId)
+                      if (!confirm('Hapus barang masuk ' + (s.invoice||'') + '?\n\nSupplier: ' + (sup?.name||'-') + '\nTotal: Rp ' + (s.total||0).toLocaleString('id-ID') + '\n\nStok akan dikembalikan. Data kas, jurnal, hutang terkait juga dihapus.\n\nAKSI INI TIDAK BISA DIBATALKAN!')) return
+                      const ok = await deleteStockIn(s.id)
+                      if (ok) showToast('Barang masuk ' + (s.invoice||'') + ' dihapus — stok dikembalikan', 'error')
+                      else showToast('Gagal menghapus', 'error')
+                    }} title="Hapus">🗑️</button>
+                  </div>
+                </td>
               </tr>
             )
           })}{filtered.length === 0 && <tr><td colSpan={8} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Tidak ada data barang masuk</td></tr>}</tbody>
@@ -870,18 +897,34 @@ export function StockIn({ stockIn, saveStockIn, products, suppliers, updateProdu
   )
 }
 
-function StockInForm({ products, suppliers, onSave }) {
-  const [date, setDate] = useState(today())
-  const [supplierId, setSupplierId] = useState(suppliers[0]?.id || '')
-  const [invoice, setInvoice] = useState('T' + Date.now().toString().slice(-4))
-  const [note, setNote] = useState('')
-  const [ppnPct, setPpnPct] = useState(0)
-  const [jenisBayar, setJenisBayar] = useState('TUNAI')
-  const [jatuhTempo, setJatuhTempo] = useState('')
-  const [items, setItems] = useState([])
+function StockInForm({ products, suppliers, onSave, initial }) {
+  const [date, setDate] = useState(initial?.date || today())
+  const [supplierId, setSupplierId] = useState(initial?.supplierId || suppliers[0]?.id || '')
+  const [invoice, setInvoice] = useState(initial?.invoice || 'T' + Date.now().toString().slice(-4))
+  const [note, setNote] = useState(initial?.note || '')
+  const [ppnPct, setPpnPct] = useState(initial?.ppnPct || 0)
+  const [jenisBayar, setJenisBayar] = useState(initial?.jenisBayar || 'TUNAI')
+  const [jatuhTempo, setJatuhTempo] = useState(initial?.jatuhTempo || '')
+  const [items, setItems] = useState(() => {
+    if (initial?.items?.length > 0) {
+      return initial.items.map(it => {
+        const p = products.find(pr => pr.id === it.productId)
+        return {
+          productId: it.productId || '',
+          productName: p?.name || it.productName || '',
+          qty: it.qty || 1,
+          buyPrice: it.buyPrice || 0,
+          sellPrice: it.sellPrice || p?.sellPrice || 0,
+          sellPrice2: it.sellPrice2 || p?.sellPrice2 || 0,
+          isNew: false,
+        }
+      })
+    }
+    return []
+  })
   const [showScanIdx, setShowScanIdx] = useState(-1)
   const [scanInput, setScanInput] = useState('')
-  const [totalNota, setTotalNota] = useState('')
+  const [totalNota, setTotalNota] = useState(initial?.totalNota || '')
 
   const selectedSup = suppliers.find(s => s.id === supplierId)
 
