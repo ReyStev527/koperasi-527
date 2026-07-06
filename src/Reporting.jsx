@@ -624,12 +624,22 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   const [filterKompi, setFilterKompi] = useState('all')
   const [filterStatus, setFilterStatus] = useState('all') // all | LUNAS | KREDIT
   const [filterPlg, setFilterPlg] = useState('') // memberId filter
+  const [searchName, setSearchName] = useState('') // cari nama pelanggan
 
   // Filter transaksi berdasarkan periode
   const txFiltered = transactions.filter(t => {
     if (t.date < tgl1 || t.date > tgl2) return false
     if (filterStatus !== 'all' && (t.caraBayar||'LUNAS') !== filterStatus) return false
     if (filterPlg && t.memberId !== filterPlg) return false
+    if (searchName) {
+      const q = searchName.toLowerCase()
+      const memberName = (t.customerName || '').toLowerCase()
+      const member = members.find(m => m.id === t.memberId)
+      const fullName = (member?.name || '').toLowerCase()
+      const nrp = (member?.nrp || '').toLowerCase()
+      const noNota = (t.noNota || '').toLowerCase()
+      if (!memberName.includes(q) && !fullName.includes(q) && !nrp.includes(q) && !noNota.includes(q)) return false
+    }
     return true
   }).sort((a, b) => (b.date||'').localeCompare(a.date||''))
 
@@ -875,6 +885,11 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
           {members.filter(m => !m.status || m.status === 'active').map(m => <option key={m.id} value={m.id}>{m.no} - {m.name}</option>)}
         </select>
         {filterPlg && <button style={{ ...S.filterBtn, color: '#c62828', fontSize: 11 }} onClick={() => setFilterPlg('')}>× Reset</button>}
+        <div style={{ ...S.searchBox, flex: 1, minWidth: 180, maxWidth: 280 }}>
+          <svg width="16" height="16" fill="none" stroke="#999" strokeWidth="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          <input style={S.searchInput} placeholder="Cari nama / NRP / nota..." value={searchName} onChange={e => setSearchName(e.target.value)} />
+          {searchName && <button style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#999', fontSize: 14 }} onClick={() => setSearchName('')}>×</button>}
+        </div>
       </div>
 
       {/* Summary cards */}

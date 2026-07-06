@@ -700,7 +700,7 @@ export default function App() {
         {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, transactions, stockInData }} />}
         {page === 'stokhistori' && <StokHistori products={products} stockIn={stockInData} transactions={transactions} mutasis={mutasis} />}
         {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, deleteStockIn, updateStockIn, products, suppliers, updateProductStock, saveProduct, setModal, showToast }} />}
-        {page === 'pos' && <POS {...{ products, transactions, saveTransaction, deleteTransaction, updateProductStock, members, showToast, savePiutang, settings }} />}
+        {page === 'pos' && <POS {...{ products, transactions, saveTransaction, deleteTransaction, updateProductStock, members, showToast, savePiutang, piutangs, settings }} />}
         {page === 'suppliers' && <Suppliers {...{ suppliers, saveSupplier, deleteSupplier, products, setModal, showToast }} />}
         {page === 'retur' && <ReturBarang {...{ returs, saveRetur, products, suppliers, updateProductStock, setModal, showToast }} />}
         {page === 'harga' && <HargaBertingkat {...{ products, saveProduct, setModal, showToast }} />}

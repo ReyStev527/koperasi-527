@@ -1219,7 +1219,7 @@ function StockInForm({ products, suppliers, onSave, initial }) {
 // =============================================
 // KASIR / POS (Barang Keluar = Penjualan)
 // =============================================
-export function POS({ products, transactions, saveTransaction, deleteTransaction, updateProductStock, members, showToast, savePiutang, settings }) {
+export function POS({ products, transactions, saveTransaction, deleteTransaction, updateProductStock, members, showToast, savePiutang, piutangs, settings }) {
   const [cart, setCart] = useState([])
   const [search, setSearch] = useState('')
   const [memberId, setMemberId] = useState('')
@@ -1508,11 +1508,17 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
     return true
   })
 
-  const txLunas = sortedTx.filter(tx => tx.caraBayar !== 'KREDIT')
+  const txLunas = sortedTx.filter(tx => tx.caraBayar !== 'KREDIT' && tx.caraBayar !== 'RETURN')
   const txKredit = sortedTx.filter(tx => tx.caraBayar === 'KREDIT')
+  const txReturn = sortedTx.filter(tx => tx.caraBayar === 'RETURN')
   const totalLunas = txLunas.reduce((a, tx) => a + (tx.total||0), 0)
   const totalKredit = txKredit.reduce((a, tx) => a + (tx.total||0), 0)
+  const totalReturn = txReturn.reduce((a, tx) => a + Math.abs(tx.total||0), 0)
   const sisaKredit = txKredit.reduce((a, tx) => a + ((tx.total||0) - (tx.payment||0)), 0)
+
+  // Tunggakan: total pembayaran piutang & sisa piutang belum lunas
+  const totalTunggakanDibayar = (piutangs||[]).reduce((a, p) => a + (p.totalBayar||0), 0)
+  const sisaTunggakan = (piutangs||[]).filter(p => p.status !== 'LUNAS').reduce((a, p) => a + Math.max(0, (p.total||0) - (p.totalBayar||0)), 0)
 
   return (
     <div>
@@ -1736,21 +1742,33 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
 
             {/* Summary Cards */}
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-              <div style={{ flex: 1, minWidth: 160, padding: '10px 14px', background: '#e8f5e9', borderRadius: 8, borderLeft: '4px solid #2e7d32' }}>
+              <div style={{ flex: 1, minWidth: 140, padding: '10px 14px', background: '#e8f5e9', borderRadius: 8, borderLeft: '4px solid #2e7d32' }}>
                 <div style={{ fontSize: 11, color: '#666' }}>Total Lunas</div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: '#2e7d32' }}>{formatRp(totalLunas)}</div>
                 <div style={{ fontSize: 11, color: '#999' }}>{txLunas.length} transaksi</div>
               </div>
-              <div style={{ flex: 1, minWidth: 160, padding: '10px 14px', background: '#fff3e0', borderRadius: 8, borderLeft: '4px solid #e65100' }}>
+              <div style={{ flex: 1, minWidth: 140, padding: '10px 14px', background: '#fff3e0', borderRadius: 8, borderLeft: '4px solid #e65100' }}>
                 <div style={{ fontSize: 11, color: '#666' }}>Total Kredit</div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: '#e65100' }}>{formatRp(totalKredit)}</div>
                 <div style={{ fontSize: 11, color: '#999' }}>{txKredit.length} transaksi</div>
               </div>
-              <div style={{ flex: 1, minWidth: 160, padding: '10px 14px', background: '#ffebee', borderRadius: 8, borderLeft: '4px solid #c62828' }}>
-                <div style={{ fontSize: 11, color: '#666' }}>Sisa Piutang Kredit</div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: '#c62828' }}>{formatRp(sisaKredit)}</div>
+              <div style={{ flex: 1, minWidth: 140, padding: '10px 14px', background: '#e3f2fd', borderRadius: 8, borderLeft: '4px solid #1565c0' }}>
+                <div style={{ fontSize: 11, color: '#666' }}>Tunggakan Dibayar</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#1565c0' }}>{formatRp(totalTunggakanDibayar)}</div>
+                <div style={{ fontSize: 11, color: '#999' }}>total cicilan masuk</div>
+              </div>
+              <div style={{ flex: 1, minWidth: 140, padding: '10px 14px', background: '#ffebee', borderRadius: 8, borderLeft: '4px solid #c62828' }}>
+                <div style={{ fontSize: 11, color: '#666' }}>Sisa Tunggakan</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#c62828' }}>{formatRp(sisaTunggakan)}</div>
                 <div style={{ fontSize: 11, color: '#999' }}>belum terbayar</div>
               </div>
+              {txReturn.length > 0 && (
+                <div style={{ flex: 1, minWidth: 140, padding: '10px 14px', background: '#fce4ec', borderRadius: 8, borderLeft: '4px solid #880e4f' }}>
+                  <div style={{ fontSize: 11, color: '#666' }}>Return</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: '#880e4f' }}>{formatRp(totalReturn)}</div>
+                  <div style={{ fontSize: 11, color: '#999' }}>{txReturn.length} return</div>
+                </div>
+              )}
             </div>
           </div>
 
