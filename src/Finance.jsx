@@ -384,8 +384,8 @@ export function LabaRugi({ kasData, transactions, loans, products, settings }) {
   const monthLoans = loans.flatMap(l => (l.installments||[]).filter(i => i.date.startsWith(period)))
 
   // Split transaksi tunai vs kredit (EXCLUDE return)
-  const txTunai = monthTx.filter(t => t.caraBayar !== 'KREDIT' && t.caraBayar !== 'RETURN')
-  const txKredit = monthTx.filter(t => t.caraBayar === 'KREDIT')
+  const txTunai = monthTx.filter(t => t.caraBayar !== 'KREDIT' && t.caraBayar !== 'RETURN' && !t.returned)
+  const txKredit = monthTx.filter(t => t.caraBayar === 'KREDIT' && !t.returned)
   const txReturn = monthTx.filter(t => t.caraBayar === 'RETURN')
   const totalReturn = txReturn.reduce((a, t) => a + Math.abs(t.total||0), 0)
 
@@ -533,7 +533,7 @@ export function HitungSHU({ members, savings, loans, transactions, kasData, prod
   const yearInstallments = loans.flatMap(l => (l.installments||[]).filter(i => i.date.startsWith(yearStr)))
 
   // Pendapatan tahunan (EXCLUDE return)
-  const yearTxSales = yearTx.filter(t => t.caraBayar !== 'RETURN')
+  const yearTxSales = yearTx.filter(t => t.caraBayar !== 'RETURN' && !t.returned)
   const yearTxReturn = yearTx.filter(t => t.caraBayar === 'RETURN')
   const pendapatanToko = yearTxSales.reduce((a, t) => a + (t.total||0), 0)
   const hpp = yearTxSales.reduce((a, t) => a + (t.items||[]).reduce((s, it) => { const p = products.find(pr => pr.id === it.productId); return s + ((p?.buyPrice || 0) * (it.qty||0)) }, 0), 0)

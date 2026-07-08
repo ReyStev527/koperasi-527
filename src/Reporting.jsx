@@ -283,7 +283,7 @@ export function RekapBulanan({ members, savings, loans, transactions, kasData, p
 
   const totalSimpananMasuk = monthSavings.filter(s => (s.amount||0) > 0).reduce((a, s) => a + (s.amount||0), 0)
   const totalSimpananKeluar = monthSavings.filter(s => (s.amount||0) < 0).reduce((a, s) => a + Math.abs(s.amount||0), 0)
-  const totalPenjualan = monthTx.filter(t => t.caraBayar !== 'RETURN').reduce((a, t) => a + (t.total||0), 0)
+  const totalPenjualan = monthTx.filter(t => t.caraBayar !== 'RETURN' && !t.returned).reduce((a, t) => a + (t.total||0), 0)
   const totalAngsuran = monthInstallments.reduce((a, i) => a + (i.amount||0), 0)
   const totalAngsuranPokok = monthInstallments.reduce((a, i) => a + (i.principal||0), 0)
   const totalAngsuranBunga = monthInstallments.reduce((a, i) => a + (i.interest||0), 0)
@@ -653,7 +653,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   // === REKAP PER PELANGGAN ===
   function rekapPerPelanggan() {
     const map = {}
-    txFiltered.filter(t => t.caraBayar !== 'RETURN').forEach(tx => {
+    txFiltered.filter(t => t.caraBayar !== 'RETURN' && !t.returned).forEach(tx => {
       const key = tx.memberId || '_umum'
       if (!map[key]) {
         const m = getMember(tx.memberId)
@@ -671,7 +671,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   // === REKAP PER BARANG ===
   function rekapPerBarang() {
     const map = {}
-    txFiltered.filter(t => t.caraBayar !== 'RETURN').forEach(tx => {
+    txFiltered.filter(t => t.caraBayar !== 'RETURN' && !t.returned).forEach(tx => {
       ;(tx.items||[]).forEach(it => {
         const key = it.productId || it.name
         if (!map[key]) {
@@ -690,7 +690,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   // === REKAP PER JENIS ===
   function rekapPerJenis() {
     const map = {}
-    txFiltered.filter(t => t.caraBayar !== 'RETURN').forEach(tx => {
+    txFiltered.filter(t => t.caraBayar !== 'RETURN' && !t.returned).forEach(tx => {
       ;(tx.items||[]).forEach(it => {
         const prod = getProduct(it.productId)
         const cat = prod?.category || 'Lainnya'
@@ -706,7 +706,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   // === REKAP PER TANGGAL ===
   function rekapPerTanggal() {
     const map = {}
-    txFiltered.filter(t => t.caraBayar !== 'RETURN').forEach(tx => {
+    txFiltered.filter(t => t.caraBayar !== 'RETURN' && !t.returned).forEach(tx => {
       const d = tx.date
       if (!map[d]) map[d] = { date: d, count: 0, totalJual: 0, totalHpp: 0, kredit: 0, tunai: 0 }
       map[d].count++
@@ -724,7 +724,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   // === REKAP PER KOMPI ===
   function rekapPerKompi() {
     const map = {}
-    txFiltered.filter(t => t.caraBayar !== 'RETURN').forEach(tx => {
+    txFiltered.filter(t => t.caraBayar !== 'RETURN' && !t.returned).forEach(tx => {
       const m = getMember(tx.memberId)
       const kompi = m?.kompi || 'UMUM'
       if (!map[kompi]) map[kompi] = { kompi, count: 0, totalJual: 0, totalHpp: 0, kredit: 0, tunai: 0, members: new Set() }
@@ -758,7 +758,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   // === REKAP PER SUPPLIER (Penjualan) ===
   function rekapPerSupplier() {
     const map = {}
-    txFiltered.filter(t => t.caraBayar !== 'RETURN').forEach(tx => {
+    txFiltered.filter(t => t.caraBayar !== 'RETURN' && !t.returned).forEach(tx => {
       ;(tx.items||[]).forEach(it => {
         const prod = getProduct(it.productId)
         const sup = prod?.supplierId ? suppliers.find(s => s.id === prod.supplierId) : null
@@ -783,7 +783,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   }
 
   // Grand totals — EXCLUDE return transactions
-  const txSales = txFiltered.filter(t => t.caraBayar !== 'RETURN')
+  const txSales = txFiltered.filter(t => t.caraBayar !== 'RETURN' && !t.returned)
   const txReturns = txFiltered.filter(t => t.caraBayar === 'RETURN')
   const grandJual = txSales.reduce((a, t) => a + (t.total||0), 0)
   const grandHpp = txSales.reduce((a, t) => a + (t.items||[]).reduce((b, it) => b + ((getProduct(it.productId)?.buyPrice||0) * (it.qty||0)), 0), 0)

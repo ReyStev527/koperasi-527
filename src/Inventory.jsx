@@ -1490,6 +1490,11 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
       }
       await saveTransaction(returnRecord)
 
+      // 3. Tandai transaksi asli sebagai "returned" agar tidak dihitung lagi
+      if (returnTx.id) {
+        const { setOne } = await import('./db')
+        await setOne('transactions', returnTx.id, { returned: true }) // merge:true → hanya tambah field
+      }
       setReturnTx(null)
       setReturnItems({})
       setReturnAlasan('')
@@ -1508,8 +1513,8 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
     return true
   })
 
-  const txLunas = sortedTx.filter(tx => tx.caraBayar !== 'KREDIT' && tx.caraBayar !== 'RETURN')
-  const txKredit = sortedTx.filter(tx => tx.caraBayar === 'KREDIT')
+  const txLunas = sortedTx.filter(tx => tx.caraBayar !== 'KREDIT' && tx.caraBayar !== 'RETURN' && !tx.returned)
+  const txKredit = sortedTx.filter(tx => tx.caraBayar === 'KREDIT' && !tx.returned)
   const txReturn = sortedTx.filter(tx => tx.caraBayar === 'RETURN')
   const totalLunas = txLunas.reduce((a, tx) => a + (tx.total||0), 0)
   const totalKredit = txKredit.reduce((a, tx) => a + (tx.total||0), 0)
@@ -1788,8 +1793,8 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
 
               dates.forEach(date => {
                 const dayTx = grouped[date]
-                const dayLunas = dayTx.filter(t => t.caraBayar !== 'KREDIT' && t.caraBayar !== 'RETURN')
-                const dayKredit = dayTx.filter(t => t.caraBayar === 'KREDIT')
+                const dayLunas = dayTx.filter(t => t.caraBayar !== 'KREDIT' && t.caraBayar !== 'RETURN' && !t.returned)
+                const dayKredit = dayTx.filter(t => t.caraBayar === 'KREDIT' && !t.returned)
                 const dayReturn = dayTx.filter(t => t.caraBayar === 'RETURN')
                 const dayTotalLunas = dayLunas.reduce((a, t) => a + (t.total||0), 0)
                 const dayTotalKredit = dayKredit.reduce((a, t) => a + (t.total||0), 0)
@@ -1801,10 +1806,11 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
                   const m = members.find(mm => mm.id === tx.memberId)
                   const isKredit = tx.caraBayar === 'KREDIT'
                   rows.push(
-                    <tr key={tx.id} style={S.tr}>
+                    <tr key={tx.id} style={{ ...S.tr, opacity: tx.returned ? 0.5 : 1, textDecoration: tx.returned ? 'line-through' : 'none' }}>
                       <td style={S.td}>
                         <div>{fmtDate(tx.date)}</div>
                         <div style={{ fontSize: 11, color: '#1565c0', fontWeight: 600 }}>{tx.time || '-'}</div>
+                        {tx.returned && <div style={{ fontSize: 9, color: '#c62828', fontWeight: 700 }}>SUDAH DI-RETURN</div>}
                       </td>
                       <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{tx.noNota || '-'}</td>
                       <td style={S.td}>{m?.name || tx.customerName || 'Umum'}</td>
