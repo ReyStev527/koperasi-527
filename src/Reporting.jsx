@@ -396,17 +396,30 @@ export function GrafikTrend({ savings, loans, transactions, kasData, products })
   const yearStr = String(year)
 
   // Hitung data per bulan
+  const returnedNotas = new Set((transactions||[]).filter(t => t.caraBayar === 'RETURN' && t.returnFrom).map(t => t.returnFrom))
   const monthlyData = months.map(m => {
     const mm = String(m + 1).padStart(2, '0')
     const prefix = `${yearStr}-${mm}`
     const simpanan = savings.filter(s => s.date.startsWith(prefix) && (s.amount||0) > 0).reduce((a, s) => a + (s.amount||0), 0)
-    const penjualan = transactions.filter(t => t.date.startsWith(prefix)).reduce((a, t) => a + (t.total||0), 0)
+
+    // Transaksi bulan ini — buang RETURN & nota yang sudah di-return biar HPP tidak dobel
+    const monthTx = transactions.filter(t => t.date.startsWith(prefix) && t.caraBayar !== 'RETURN' && !t.returned && !returnedNotas.has(t.noNota))
+    const penjualan = monthTx.reduce((a, t) => a + (t.total||0), 0)
+    // HPP pakai harga beli SAAT transaksi (it.buyPrice); fallback ke harga master hanya untuk data lama
+    const hpp = monthTx.reduce((a, t) => a + (t.items||[]).reduce((s, it) => {
+      const p = products.find(pr => pr.id === it.productId)
+      return s + ((it.buyPrice != null ? it.buyPrice : (p?.buyPrice || 0)) * (it.qty||0))
+    }, 0), 0)
+
     const angsuran = loans.flatMap(l => (l.installments||[]).filter(i => i.date.startsWith(prefix))).reduce((a, i) => a + (i.amount||0), 0)
     const kasM = kasData.filter(k => k.date.startsWith(prefix) && k.type === 'masuk').reduce((a, k) => a + (k.amount||0), 0)
     const kasK = kasData.filter(k => k.date.startsWith(prefix) && k.type === 'keluar').reduce((a, k) => a + (k.amount||0), 0)
-    const hpp = transactions.filter(t => t.date.startsWith(prefix)).reduce((a, t) =>
-      a + (t.items||[]).reduce((s, it) => { const p = products.find(pr => pr.id === it.productId); return s + ((p?.buyPrice || 0) * (it.qty||0)) }, 0), 0)
-    return { month: m, simpanan, penjualan, angsuran, kasMasuk: kasM, kasKeluar: kasK, laba: penjualan - hpp + angsuran - kasK }
+    // Beban operasional saja — JANGAN kurangi Pembelian Barang / Pembayaran Hutang (biaya stok sudah dihitung di HPP)
+    const bebanOp = kasData.filter(k => k.date.startsWith(prefix) && k.type === 'keluar'
+      && !['Pembelian Barang', 'Pembayaran Hutang', 'Pembayaran Piutang'].includes(k.category))
+      .reduce((a, k) => a + (k.amount||0), 0)
+
+    return { month: m, simpanan, penjualan, angsuran, kasMasuk: kasM, kasKeluar: kasK, laba: penjualan - hpp + angsuran - bebanOp }
   })
 
   const datasets = [
