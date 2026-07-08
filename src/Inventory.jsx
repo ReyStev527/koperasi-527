@@ -1505,6 +1505,9 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
     }
   }
 
+  // Deteksi transaksi yang sudah di-return (cari RTN- yang cocok)
+  const returnedNotas = new Set(sortedTx.filter(tx => tx.caraBayar === 'RETURN' && tx.returnFrom).map(tx => tx.returnFrom))
+
   const filteredTx = sortedTx.filter(tx => {
     if (tx.returned || returnedNotas.has(tx.noNota)) return false
     if (txFilter === 'LUNAS' && (tx.caraBayar === 'KREDIT' || tx.caraBayar === 'RETURN')) return false
@@ -1513,8 +1516,6 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
     if (txDateTo && tx.date > txDateTo) return false
     return true
   })
-
-  // returnedNotas already defined above
 
   const txLunas = sortedTx.filter(tx => tx.caraBayar !== 'KREDIT' && tx.caraBayar !== 'RETURN' && !tx.returned && !returnedNotas.has(tx.noNota))
   const txKredit = sortedTx.filter(tx => tx.caraBayar === 'KREDIT' && !tx.returned && !returnedNotas.has(tx.noNota))

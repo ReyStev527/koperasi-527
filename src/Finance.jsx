@@ -530,7 +530,8 @@ export function HitungSHU({ members, savings, loans, transactions, kasData, prod
 
   const yearStr = String(year)
   const yearKas = kasData.filter(k => k.date.startsWith(yearStr))
-  const yearTx = transactions.filter(t => t.date.startsWith(yearStr) && !t.returned)
+  const returnedNotasSHU = new Set((transactions||[]).filter(t => t.caraBayar === 'RETURN' && t.returnFrom).map(t => t.returnFrom))
+  const yearTx = transactions.filter(t => t.date.startsWith(yearStr) && !t.returned && !returnedNotasSHU.has(t.noNota))
   const yearInstallments = loans.flatMap(l => (l.installments||[]).filter(i => i.date.startsWith(yearStr)))
 
   // Pendapatan tahunan (EXCLUDE return)
