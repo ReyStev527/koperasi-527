@@ -540,11 +540,15 @@ export function HitungSHU({ members, savings, loans, transactions, kasData, prod
   const pendapatanToko = yearTxSales.reduce((a, t) => a + (t.total||0), 0)
   const hpp = yearTxSales.reduce((a, t) => a + (t.items||[]).reduce((s, it) => { const p = products.find(pr => pr.id === it.productId); return s + ((it.buyPrice != null ? it.buyPrice : (p?.buyPrice || 0)) * (it.qty||0)) }, 0), 0)
   const totalReturnYear = yearTxReturn.reduce((a, t) => a + Math.abs(t.total||0), 0)
-  const labaKotorToko = pendapatanToko - hpp - totalReturnYear
+  // Nota yang diretur sudah dibuang dari pendapatanToko & hpp (filter !t.returned di atas) → jangan potong retur 2x
+  const labaKotorToko = pendapatanToko - hpp
   const pendapatanBunga = yearInstallments.reduce((a, i) => a + (i.interest||0), 0)
   const pendapatanLain = yearKas.filter(k => k.type === 'masuk' && k.category === 'Lain-lain').reduce((a, k) => a + (k.amount||0), 0)
 
-  const totalBeban = yearKas.filter(k => k.type === 'keluar').reduce((a, k) => a + (k.amount||0), 0)
+  // Beban operasional saja — JANGAN masukkan Pembelian Barang / Pembayaran Hutang (biaya stok sudah dihitung di HPP, bukan beban)
+  const totalBeban = yearKas.filter(k => k.type === 'keluar'
+    && !['Pembelian Barang', 'Pembayaran Hutang', 'Pembayaran Piutang'].includes(k.category))
+    .reduce((a, k) => a + (k.amount||0), 0)
   const shuTotal = labaKotorToko + pendapatanBunga + pendapatanLain - totalBeban
 
   // Distribusi SHU standar koperasi

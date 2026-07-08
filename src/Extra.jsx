@@ -1442,19 +1442,20 @@ export function LabaPerAnggota({ transactions, members, products, settings }) {
   const [year, setYear] = useState(new Date().getFullYear())
 
   const yearStr = String(year)
+  const returnedNotas = new Set((transactions||[]).filter(t => t.caraBayar === 'RETURN' && t.returnFrom).map(t => t.returnFrom))
 
-  // Hitung laba per anggota dari transaksi
+  // Hitung laba per anggota dari transaksi (buang RETURN & nota yang sudah diretur)
   const memberProfit = {}
-  transactions.filter(t => (t.date||'').startsWith(yearStr)).forEach(tx => {
+  transactions.filter(t => (t.date||'').startsWith(yearStr) && t.caraBayar !== 'RETURN' && !t.returned && !returnedNotas.has(t.noNota)).forEach(tx => {
     const mid = tx.memberId || '_umum'
     if (!memberProfit[mid]) memberProfit[mid] = { totalBeli: 0, totalLaba: 0, txCount: 0 }
     memberProfit[mid].txCount++
     memberProfit[mid].totalBeli += (tx.total||0)
 
-    // Hitung laba = harga jual - HPP (harga beli)
+    // Hitung laba = harga jual - HPP. HPP pakai harga beli SAAT transaksi (it.buyPrice), fallback ke master untuk data lama
     ;(tx.items||[]).forEach(it => {
       const prod = products.find(p => p.id === it.productId)
-      const hpp = (prod?.buyPrice||0) * (it.qty||0)
+      const hpp = (it.buyPrice != null ? it.buyPrice : (prod?.buyPrice||0)) * (it.qty||0)
       const revenue = (it.price||0) * (it.qty||0) * (1 - (it.diskon||0)/100)
       memberProfit[mid].totalLaba += (revenue - hpp)
     })
