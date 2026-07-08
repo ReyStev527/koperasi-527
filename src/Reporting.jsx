@@ -653,7 +653,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   // === REKAP PER PELANGGAN ===
   function rekapPerPelanggan() {
     const map = {}
-    txFiltered.forEach(tx => {
+    txFiltered.filter(t => t.caraBayar !== 'RETURN').forEach(tx => {
       const key = tx.memberId || '_umum'
       if (!map[key]) {
         const m = getMember(tx.memberId)
@@ -671,7 +671,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   // === REKAP PER BARANG ===
   function rekapPerBarang() {
     const map = {}
-    txFiltered.forEach(tx => {
+    txFiltered.filter(t => t.caraBayar !== 'RETURN').forEach(tx => {
       ;(tx.items||[]).forEach(it => {
         const key = it.productId || it.name
         if (!map[key]) {
@@ -690,7 +690,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   // === REKAP PER JENIS ===
   function rekapPerJenis() {
     const map = {}
-    txFiltered.forEach(tx => {
+    txFiltered.filter(t => t.caraBayar !== 'RETURN').forEach(tx => {
       ;(tx.items||[]).forEach(it => {
         const prod = getProduct(it.productId)
         const cat = prod?.category || 'Lainnya'
@@ -706,7 +706,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   // === REKAP PER TANGGAL ===
   function rekapPerTanggal() {
     const map = {}
-    txFiltered.forEach(tx => {
+    txFiltered.filter(t => t.caraBayar !== 'RETURN').forEach(tx => {
       const d = tx.date
       if (!map[d]) map[d] = { date: d, count: 0, totalJual: 0, totalHpp: 0, kredit: 0, tunai: 0 }
       map[d].count++
@@ -724,7 +724,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   // === REKAP PER KOMPI ===
   function rekapPerKompi() {
     const map = {}
-    txFiltered.forEach(tx => {
+    txFiltered.filter(t => t.caraBayar !== 'RETURN').forEach(tx => {
       const m = getMember(tx.memberId)
       const kompi = m?.kompi || 'UMUM'
       if (!map[kompi]) map[kompi] = { kompi, count: 0, totalJual: 0, totalHpp: 0, kredit: 0, tunai: 0, members: new Set() }
@@ -758,7 +758,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   // === REKAP PER SUPPLIER (Penjualan) ===
   function rekapPerSupplier() {
     const map = {}
-    txFiltered.forEach(tx => {
+    txFiltered.filter(t => t.caraBayar !== 'RETURN').forEach(tx => {
       ;(tx.items||[]).forEach(it => {
         const prod = getProduct(it.productId)
         const sup = prod?.supplierId ? suppliers.find(s => s.id === prod.supplierId) : null
@@ -782,11 +782,14 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
     return (returs||[]).filter(r => (r.date||'') >= tgl1 && (r.date||'') <= tgl2).sort((a, b) => (b.date||'').localeCompare(a.date||''))
   }
 
-  // Grand totals
-  const grandJual = txFiltered.reduce((a, t) => a + (t.total||0), 0)
-  const grandHpp = txFiltered.reduce((a, t) => a + (t.items||[]).reduce((b, it) => b + ((getProduct(it.productId)?.buyPrice||0) * (it.qty||0)), 0), 0)
-  const grandLaba = grandJual - grandHpp
-  const totalKredit = txFiltered.filter(t => t.caraBayar === 'KREDIT').reduce((a, t) => a + (t.total||0), 0)
+  // Grand totals — EXCLUDE return transactions
+  const txSales = txFiltered.filter(t => t.caraBayar !== 'RETURN')
+  const txReturns = txFiltered.filter(t => t.caraBayar === 'RETURN')
+  const grandJual = txSales.reduce((a, t) => a + (t.total||0), 0)
+  const grandHpp = txSales.reduce((a, t) => a + (t.items||[]).reduce((b, it) => b + ((getProduct(it.productId)?.buyPrice||0) * (it.qty||0)), 0), 0)
+  const grandReturn = txReturns.reduce((a, t) => a + Math.abs(t.total||0), 0)
+  const grandLaba = grandJual - grandHpp - grandReturn
+  const totalKredit = txSales.filter(t => t.caraBayar === 'KREDIT').reduce((a, t) => a + (t.total||0), 0)
   const totalTunai = grandJual - totalKredit
 
   const tabs = [
@@ -893,13 +896,14 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
       </div>
 
       {/* Summary cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 16 }}>
-        <div style={S.statCard}><div style={S.statLabel}>Total Nota</div><div style={S.statVal}>{txFiltered.length}</div></div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10, marginBottom: 16 }}>
+        <div style={S.statCard}><div style={S.statLabel}>Total Nota</div><div style={S.statVal}>{txSales.length}</div></div>
         <div style={S.statCard}><div style={S.statLabel}>Total Penjualan</div><div style={{ ...S.statVal, color: '#1565c0' }}>{formatRp(grandJual)}</div></div>
         <div style={S.statCard}><div style={S.statLabel}>Total HPP</div><div style={{ ...S.statVal, color: '#e65100' }}>{formatRp(grandHpp)}</div></div>
-        <div style={S.statCard}><div style={{ ...S.statLabel }}>Total Laba</div><div style={{ ...S.statVal, color: '#2e7d32' }}>{formatRp(grandLaba)}</div></div>
-        <div style={S.statCard}><div style={S.statLabel}>Tunai</div><div style={S.statVal}>{formatRp(totalTunai)}</div></div>
-        <div style={S.statCard}><div style={S.statLabel}>Kredit</div><div style={{ ...S.statVal, color: '#c62828' }}>{formatRp(totalKredit)}</div></div>
+        <div style={S.statCard}><div style={{ ...S.statLabel }}>Total Laba</div><div style={{ ...S.statVal, color: grandLaba >= 0 ? '#2e7d32' : '#c62828' }}>{formatRp(grandLaba)}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Tunai</div><div style={{ ...S.statVal, color: '#2e7d32' }}>{formatRp(totalTunai)}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Kredit</div><div style={{ ...S.statVal, color: '#e65100' }}>{formatRp(totalKredit)}</div></div>
+        {grandReturn > 0 && <div style={S.statCard}><div style={S.statLabel}>Return</div><div style={{ ...S.statVal, color: '#c62828' }}>-{formatRp(grandReturn)}</div></div>}
       </div>
 
       {/* Tabs */}

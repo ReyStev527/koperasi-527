@@ -1788,11 +1788,13 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
 
               dates.forEach(date => {
                 const dayTx = grouped[date]
-                const dayLunas = dayTx.filter(t => t.caraBayar !== 'KREDIT')
+                const dayLunas = dayTx.filter(t => t.caraBayar !== 'KREDIT' && t.caraBayar !== 'RETURN')
                 const dayKredit = dayTx.filter(t => t.caraBayar === 'KREDIT')
+                const dayReturn = dayTx.filter(t => t.caraBayar === 'RETURN')
                 const dayTotalLunas = dayLunas.reduce((a, t) => a + (t.total||0), 0)
                 const dayTotalKredit = dayKredit.reduce((a, t) => a + (t.total||0), 0)
-                const dayTotal = dayTx.reduce((a, t) => a + (t.total||0), 0)
+                const dayTotalReturn = dayReturn.reduce((a, t) => a + Math.abs(t.total||0), 0)
+                const dayTotal = dayTotalLunas + dayTotalKredit - dayTotalReturn
 
                 // Render each transaction in this date group
                 dayTx.forEach(tx => {
@@ -1831,6 +1833,7 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
                     <td colSpan={2} style={{ ...S.td, fontSize: 11, lineHeight: 1.6 }}>
                       {dayLunas.length > 0 && <div style={{ color: '#2e7d32', fontWeight: 600 }}>✅ Lunas: {formatRp(dayTotalLunas)} ({dayLunas.length})</div>}
                       {dayKredit.length > 0 && <div style={{ color: '#e65100', fontWeight: 600 }}>⏳ Kredit: {formatRp(dayTotalKredit)} ({dayKredit.length})</div>}
+                      {dayReturn.length > 0 && <div style={{ color: '#c62828', fontWeight: 600 }}>↩️ Return: -{formatRp(dayTotalReturn)} ({dayReturn.length})</div>}
                     </td>
                     <td colSpan={2} style={S.td}></td>
                   </tr>
