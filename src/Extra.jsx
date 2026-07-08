@@ -958,8 +958,8 @@ export function LaporanTutupBuku({ transactions, members, settings }) {
   const [endDate, setEndDate] = useState(toLocalDate(defaultEnd))
   const [filterKompi, setFilterKompi] = useState('all')
 
-  // Filter transaksi dalam periode
-  const periodTx = transactions.filter(t => t.date >= startDate && t.date <= endDate)
+  // Filter transaksi dalam periode (EXCLUDE return)
+  const periodTx = transactions.filter(t => t.date >= startDate && t.date <= endDate && t.caraBayar !== 'RETURN')
 
   // Daftar kompi dari members
   const kompiList = [...new Set(members.map(m => m.kompi || 'LAINNYA'))].filter(Boolean).sort()

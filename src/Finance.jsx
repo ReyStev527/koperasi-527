@@ -383,9 +383,11 @@ export function LabaRugi({ kasData, transactions, loans, products, settings }) {
   const monthTx = transactions.filter(t => t.date.startsWith(period))
   const monthLoans = loans.flatMap(l => (l.installments||[]).filter(i => i.date.startsWith(period)))
 
-  // Split transaksi tunai vs kredit
-  const txTunai = monthTx.filter(t => t.caraBayar !== 'KREDIT')
+  // Split transaksi tunai vs kredit (EXCLUDE return)
+  const txTunai = monthTx.filter(t => t.caraBayar !== 'KREDIT' && t.caraBayar !== 'RETURN')
   const txKredit = monthTx.filter(t => t.caraBayar === 'KREDIT')
+  const txReturn = monthTx.filter(t => t.caraBayar === 'RETURN')
+  const totalReturn = txReturn.reduce((a, t) => a + Math.abs(t.total||0), 0)
 
   // Fungsi hitung HPP per list transaksi
   function hitungHpp(txList) {
@@ -530,10 +532,13 @@ export function HitungSHU({ members, savings, loans, transactions, kasData, prod
   const yearTx = transactions.filter(t => t.date.startsWith(yearStr))
   const yearInstallments = loans.flatMap(l => (l.installments||[]).filter(i => i.date.startsWith(yearStr)))
 
-  // Pendapatan tahunan
-  const pendapatanToko = yearTx.reduce((a, t) => a + (t.total||0), 0)
-  const hpp = yearTx.reduce((a, t) => a + (t.items||[]).reduce((s, it) => { const p = products.find(pr => pr.id === it.productId); return s + ((p?.buyPrice || 0) * (it.qty||0)) }, 0), 0)
-  const labaKotorToko = pendapatanToko - hpp
+  // Pendapatan tahunan (EXCLUDE return)
+  const yearTxSales = yearTx.filter(t => t.caraBayar !== 'RETURN')
+  const yearTxReturn = yearTx.filter(t => t.caraBayar === 'RETURN')
+  const pendapatanToko = yearTxSales.reduce((a, t) => a + (t.total||0), 0)
+  const hpp = yearTxSales.reduce((a, t) => a + (t.items||[]).reduce((s, it) => { const p = products.find(pr => pr.id === it.productId); return s + ((p?.buyPrice || 0) * (it.qty||0)) }, 0), 0)
+  const totalReturnYear = yearTxReturn.reduce((a, t) => a + Math.abs(t.total||0), 0)
+  const labaKotorToko = pendapatanToko - hpp - totalReturnYear
   const pendapatanBunga = yearInstallments.reduce((a, i) => a + (i.interest||0), 0)
   const pendapatanLain = yearKas.filter(k => k.type === 'masuk' && k.category === 'Lain-lain').reduce((a, k) => a + (k.amount||0), 0)
 
@@ -554,14 +559,14 @@ export function HitungSHU({ members, savings, loans, transactions, kasData, prod
   // Hitung SHU per anggota
   const activeMembers = members.filter(m => m.status === 'active')
   const totalSimpananAll = activeMembers.reduce((a, m) => a + savings.filter(s => s.memberId === m.id).reduce((s, sv) => s + (sv.amount||0), 0), 0)
-  const totalTxAll = activeMembers.reduce((a, m) => a + yearTx.filter(t => t.memberId === m.id).reduce((s, t) => s + (t.total||0), 0), 0)
+  const totalTxAll = activeMembers.reduce((a, m) => a + yearTxSales.filter(t => t.memberId === m.id).reduce((s, t) => s + (t.total||0), 0), 0)
 
   const shuJasaSimpanan = shuTotal * 0.25
   const shuJasaTx = shuTotal * 0.25
 
   const perMember = activeMembers.map(m => {
     const simpananM = savings.filter(s => s.memberId === m.id).reduce((a, s) => a + (s.amount||0), 0)
-    const txM = yearTx.filter(t => t.memberId === m.id).reduce((a, t) => a + (t.total||0), 0)
+    const txM = yearTxSales.filter(t => t.memberId === m.id).reduce((a, t) => a + (t.total||0), 0)
     const jasaSimpanan = totalSimpananAll > 0 ? (simpananM / totalSimpananAll) * shuJasaSimpanan : 0
     const jasaTx = totalTxAll > 0 ? (txM / totalTxAll) * shuJasaTx : 0
     return { ...m, simpanan: simpananM, transaksi: txM, jasaSimpanan, jasaTx, totalSHU: jasaSimpanan + jasaTx }

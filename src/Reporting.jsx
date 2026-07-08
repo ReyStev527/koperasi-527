@@ -283,7 +283,7 @@ export function RekapBulanan({ members, savings, loans, transactions, kasData, p
 
   const totalSimpananMasuk = monthSavings.filter(s => (s.amount||0) > 0).reduce((a, s) => a + (s.amount||0), 0)
   const totalSimpananKeluar = monthSavings.filter(s => (s.amount||0) < 0).reduce((a, s) => a + Math.abs(s.amount||0), 0)
-  const totalPenjualan = monthTx.reduce((a, t) => a + (t.total||0), 0)
+  const totalPenjualan = monthTx.filter(t => t.caraBayar !== 'RETURN').reduce((a, t) => a + (t.total||0), 0)
   const totalAngsuran = monthInstallments.reduce((a, i) => a + (i.amount||0), 0)
   const totalAngsuranPokok = monthInstallments.reduce((a, i) => a + (i.principal||0), 0)
   const totalAngsuranBunga = monthInstallments.reduce((a, i) => a + (i.interest||0), 0)
