@@ -1402,7 +1402,10 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
         time: timeStr,
         memberId: memberId || null,
         customerName: members.find(m => m.id === memberId)?.name || 'Umum',
-        items: cart.map(c => ({ productId: c.productId, name: c.name, qty: c.qty, price: Number(c.price)||0, diskon: c.diskon || 0, subtotal: (Number(c.price)||0) * c.qty * (1 - (c.diskon || 0) / 100) })),
+        items: cart.map(c => {
+          const prod = products.find(p => p.id === c.productId)
+          return { productId: c.productId, name: c.name, qty: c.qty, price: Number(c.price)||0, buyPrice: Number(prod?.buyPrice)||0, diskon: c.diskon || 0, subtotal: (Number(c.price)||0) * c.qty * (1 - (c.diskon || 0) / 100) }
+        }),
         totalSebelumDiskon,
         totalDiskon,
         total,

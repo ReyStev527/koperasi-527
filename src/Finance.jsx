@@ -395,7 +395,7 @@ export function LabaRugi({ kasData, transactions, loans, products, settings }) {
     return txList.reduce((a, t) => {
       return a + (t.items||[]).reduce((s, it) => {
         const prod = products.find(p => p.id === it.productId)
-        return s + ((prod?.buyPrice || 0) * (it.qty||0))
+        return s + ((it.buyPrice != null ? it.buyPrice : (prod?.buyPrice || 0)) * (it.qty||0))
       }, 0)
     }, 0)
   }
@@ -538,7 +538,7 @@ export function HitungSHU({ members, savings, loans, transactions, kasData, prod
   const yearTxSales = yearTx.filter(t => t.caraBayar !== 'RETURN' && !t.returned)
   const yearTxReturn = yearTx.filter(t => t.caraBayar === 'RETURN')
   const pendapatanToko = yearTxSales.reduce((a, t) => a + (t.total||0), 0)
-  const hpp = yearTxSales.reduce((a, t) => a + (t.items||[]).reduce((s, it) => { const p = products.find(pr => pr.id === it.productId); return s + ((p?.buyPrice || 0) * (it.qty||0)) }, 0), 0)
+  const hpp = yearTxSales.reduce((a, t) => a + (t.items||[]).reduce((s, it) => { const p = products.find(pr => pr.id === it.productId); return s + ((it.buyPrice != null ? it.buyPrice : (p?.buyPrice || 0)) * (it.qty||0)) }, 0), 0)
   const totalReturnYear = yearTxReturn.reduce((a, t) => a + Math.abs(t.total||0), 0)
   const labaKotorToko = pendapatanToko - hpp - totalReturnYear
   const pendapatanBunga = yearInstallments.reduce((a, i) => a + (i.interest||0), 0)

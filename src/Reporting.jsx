@@ -664,7 +664,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
       map[key].totalJual += tx.total || 0
       ;(tx.items||[]).forEach(it => {
         const prod = getProduct(it.productId)
-        map[key].totalHpp += (prod?.buyPrice || 0) * (it.qty || 0)
+        map[key].totalHpp += (it.buyPrice != null ? it.buyPrice : (prod?.buyPrice || 0)) * (it.qty || 0)
       })
     })
     return Object.values(map).sort((a, b) => b.totalJual - a.totalJual)
@@ -683,7 +683,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
         map[key].qty += it.qty || 0
         map[key].totalJual += it.subtotal || (it.price * it.qty) || 0
         const prod = getProduct(it.productId)
-        map[key].totalHpp += (prod?.buyPrice || 0) * (it.qty || 0)
+        map[key].totalHpp += (it.buyPrice != null ? it.buyPrice : (prod?.buyPrice || 0)) * (it.qty || 0)
       })
     })
     return Object.values(map).sort((a, b) => b.totalJual - a.totalJual)
@@ -699,7 +699,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
         if (!map[cat]) map[cat] = { category: cat, qty: 0, totalJual: 0, totalHpp: 0 }
         map[cat].qty += it.qty || 0
         map[cat].totalJual += it.subtotal || (it.price * it.qty) || 0
-        map[cat].totalHpp += (prod?.buyPrice || 0) * (it.qty || 0)
+        map[cat].totalHpp += (it.buyPrice != null ? it.buyPrice : (prod?.buyPrice || 0)) * (it.qty || 0)
       })
     })
     return Object.values(map).sort((a, b) => b.totalJual - a.totalJual)
@@ -717,7 +717,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
       else map[d].tunai += tx.total || 0
       ;(tx.items||[]).forEach(it => {
         const prod = getProduct(it.productId)
-        map[d].totalHpp += (prod?.buyPrice || 0) * (it.qty || 0)
+        map[d].totalHpp += (it.buyPrice != null ? it.buyPrice : (prod?.buyPrice || 0)) * (it.qty || 0)
       })
     })
     return Object.values(map).sort((a, b) => b.date.localeCompare(a.date))
@@ -737,7 +737,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
       if (tx.memberId) map[kompi].members.add(tx.memberId)
       ;(tx.items||[]).forEach(it => {
         const prod = getProduct(it.productId)
-        map[kompi].totalHpp += (prod?.buyPrice || 0) * (it.qty || 0)
+        map[kompi].totalHpp += (it.buyPrice != null ? it.buyPrice : (prod?.buyPrice || 0)) * (it.qty || 0)
       })
     })
     return Object.values(map).map(r => ({ ...r, memberCount: r.members.size })).sort((a, b) => b.totalJual - a.totalJual)
@@ -768,7 +768,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
         if (!map[key]) map[key] = { name: sup?.name || 'Tanpa Supplier', qty: 0, totalJual: 0, totalHpp: 0 }
         map[key].qty += it.qty || 0
         map[key].totalJual += it.subtotal || (it.price * it.qty) || 0
-        map[key].totalHpp += (prod?.buyPrice || 0) * (it.qty || 0)
+        map[key].totalHpp += (it.buyPrice != null ? it.buyPrice : (prod?.buyPrice || 0)) * (it.qty || 0)
       })
     })
     return Object.values(map).sort((a, b) => b.totalJual - a.totalJual)
@@ -788,7 +788,7 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   const txSales = txFiltered.filter(t => t.caraBayar !== 'RETURN' && !t.returned)
   const txReturns = txFiltered.filter(t => t.caraBayar === 'RETURN')
   const grandJual = txSales.reduce((a, t) => a + (t.total||0), 0)
-  const grandHpp = txSales.reduce((a, t) => a + (t.items||[]).reduce((b, it) => b + ((getProduct(it.productId)?.buyPrice||0) * (it.qty||0)), 0), 0)
+  const grandHpp = txSales.reduce((a, t) => a + (t.items||[]).reduce((b, it) => b + ((it.buyPrice != null ? it.buyPrice : (getProduct(it.productId)?.buyPrice||0)) * (it.qty||0)), 0), 0)
   const grandReturn = txReturns.reduce((a, t) => a + Math.abs(t.total||0), 0)
   const grandLaba = grandJual - grandHpp - grandReturn
   const totalKredit = txSales.filter(t => t.caraBayar === 'KREDIT').reduce((a, t) => a + (t.total||0), 0)
