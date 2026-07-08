@@ -803,7 +803,10 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   const grandJual = txSales.reduce((a, t) => a + (t.total||0), 0)
   const grandHpp = txSales.reduce((a, t) => a + (t.items||[]).reduce((b, it) => b + ((it.buyPrice != null ? it.buyPrice : (getProduct(it.productId)?.buyPrice||0)) * (it.qty||0)), 0), 0)
   const grandReturn = txReturns.reduce((a, t) => a + Math.abs(t.total||0), 0)
-  const grandLaba = grandJual - grandHpp - grandReturn
+  // Nota yang di-retur sudah dibuang dari grandJual & grandHpp (filter !t.returned di atas),
+  // jadi retur JANGAN dikurangi lagi di sini — kalau tidak, retur kepotong dua kali → laba minus palsu.
+  // grandReturn tetap dihitung hanya untuk kartu info "Return".
+  const grandLaba = grandJual - grandHpp
   const totalKredit = txSales.filter(t => t.caraBayar === 'KREDIT').reduce((a, t) => a + (t.total||0), 0)
   const totalTunai = grandJual - totalKredit
 
