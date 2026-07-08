@@ -380,7 +380,8 @@ export function LabaRugi({ kasData, transactions, loans, products, settings }) {
   const [period, setPeriod] = useState(today().slice(0, 7)) // YYYY-MM
 
   const monthKas = kasData.filter(k => k.date.startsWith(period))
-  const monthTx = transactions.filter(t => t.date.startsWith(period))
+  const returnedNotas = new Set((transactions||[]).filter(t => t.caraBayar === "RETURN" && t.returnFrom).map(t => t.returnFrom))
+  const monthTx = transactions.filter(t => t.date.startsWith(period) && !t.returned && !returnedNotas.has(t.noNota))
   const monthLoans = loans.flatMap(l => (l.installments||[]).filter(i => i.date.startsWith(period)))
 
   // Split transaksi tunai vs kredit (EXCLUDE return)
@@ -529,7 +530,7 @@ export function HitungSHU({ members, savings, loans, transactions, kasData, prod
 
   const yearStr = String(year)
   const yearKas = kasData.filter(k => k.date.startsWith(yearStr))
-  const yearTx = transactions.filter(t => t.date.startsWith(yearStr))
+  const yearTx = transactions.filter(t => t.date.startsWith(yearStr) && !t.returned)
   const yearInstallments = loans.flatMap(l => (l.installments||[]).filter(i => i.date.startsWith(yearStr)))
 
   // Pendapatan tahunan (EXCLUDE return)

@@ -627,7 +627,9 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   const [searchName, setSearchName] = useState('') // cari nama pelanggan
 
   // Filter transaksi berdasarkan periode
+  const returnedNotas = new Set((transactions||[]).filter(t => t.caraBayar === "RETURN" && t.returnFrom).map(t => t.returnFrom))
   const txFiltered = transactions.filter(t => {
+    if (t.returned || returnedNotas.has(t.noNota)) return false
     if (t.date < tgl1 || t.date > tgl2) return false
     if (filterStatus !== 'all' && (t.caraBayar||'LUNAS') !== filterStatus) return false
     if (filterPlg && t.memberId !== filterPlg) return false

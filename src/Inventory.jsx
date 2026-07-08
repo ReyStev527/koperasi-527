@@ -1506,15 +1506,18 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
   }
 
   const filteredTx = sortedTx.filter(tx => {
-    if (txFilter === 'LUNAS' && tx.caraBayar === 'KREDIT') return false
+    if (tx.returned || returnedNotas.has(tx.noNota)) return false
+    if (txFilter === 'LUNAS' && (tx.caraBayar === 'KREDIT' || tx.caraBayar === 'RETURN')) return false
     if (txFilter === 'KREDIT' && tx.caraBayar !== 'KREDIT') return false
     if (txDateFrom && tx.date < txDateFrom) return false
     if (txDateTo && tx.date > txDateTo) return false
     return true
   })
 
-  const txLunas = sortedTx.filter(tx => tx.caraBayar !== 'KREDIT' && tx.caraBayar !== 'RETURN' && !tx.returned)
-  const txKredit = sortedTx.filter(tx => tx.caraBayar === 'KREDIT' && !tx.returned)
+  // returnedNotas already defined above
+
+  const txLunas = sortedTx.filter(tx => tx.caraBayar !== 'KREDIT' && tx.caraBayar !== 'RETURN' && !tx.returned && !returnedNotas.has(tx.noNota))
+  const txKredit = sortedTx.filter(tx => tx.caraBayar === 'KREDIT' && !tx.returned && !returnedNotas.has(tx.noNota))
   const txReturn = sortedTx.filter(tx => tx.caraBayar === 'RETURN')
   const totalLunas = txLunas.reduce((a, tx) => a + (tx.total||0), 0)
   const totalKredit = txKredit.reduce((a, tx) => a + (tx.total||0), 0)
