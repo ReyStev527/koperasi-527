@@ -14,6 +14,19 @@ function today() {
 }
 function monthName(m) { return ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'][m] }
 
+// Pisahkan pangkat dari nama. Kalau field pangkat kosong (data lama), ambil dari kata pertama nama bila cocok daftar pangkat TNI.
+const RANKS_TNI = ['Jenderal','Letjen','Mayjen','Brigjen','Kolonel','Letkol','Mayor','Kapten','Lettu','Letda','Peltu','Pelda','Serma','Serka','Sertu','Serda','Kopka','Koptu','Kopda','Praka','Prakka','Prada','Tamtama','PNS','Honorer']
+function splitPangkat(m) {
+  const pkt = (m.pangkat || '').trim()
+  const full = (m.name || '').trim()
+  if (pkt) return { pangkat: pkt, nama: full }
+  const parts = full.split(/\s+/)
+  if (parts.length > 1 && RANKS_TNI.some(r => r.toLowerCase() === parts[0].toLowerCase())) {
+    return { pangkat: parts[0], nama: parts.slice(1).join(' ') }
+  }
+  return { pangkat: '-', nama: full }
+}
+
 const IC = {
   plus: <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>,
   trash: <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>,
@@ -575,8 +588,61 @@ export function HitungSHU({ members, savings, loans, transactions, kasData, prod
     const txM = yearTxSales.filter(t => t.memberId === m.id).reduce((a, t) => a + (t.total||0), 0)
     const jasaSimpanan = totalSimpananAll > 0 ? (simpananM / totalSimpananAll) * shuJasaSimpanan : 0
     const jasaTx = totalTxAll > 0 ? (txM / totalTxAll) * shuJasaTx : 0
-    return { ...m, simpanan: simpananM, transaksi: txM, jasaSimpanan, jasaTx, totalSHU: jasaSimpanan + jasaTx }
+    const sp = splitPangkat(m)
+    return { ...m, pkt: sp.pangkat, nm: sp.nama, simpanan: simpananM, transaksi: txM, jasaSimpanan, jasaTx, totalSHU: jasaSimpanan + jasaTx }
   }).sort((a, b) => b.totalSHU - a.totalSHU)
+
+  // Anggota yang dapat SHU (untuk daftar pembagian ke Juru Bayar)
+  const penerimaSHU = perMember.filter(m => Math.round(m.totalSHU) > 0)
+  const totalDibagi = penerimaSHU.reduce((a, m) => a + Math.round(m.totalSHU), 0)
+
+  function cetakDaftarSHU() {
+    if (penerimaSHU.length === 0) {
+      alert('Belum ada anggota dengan SHU untuk dibagikan.\nTotal SHU tahun ' + year + ': ' + formatRp(Math.round(shuTotal)) + (shuTotal <= 0 ? '\n(SHU tidak positif — tidak ada yang dibagikan)' : ''))
+      return
+    }
+    // Kelompokkan per kompi
+    const byKompi = {}
+    penerimaSHU.forEach(m => { const k = (m.kompi || 'LAINNYA'); (byKompi[k] = byKompi[k] || []).push(m) })
+    const kompiOrder = Object.keys(byKompi).sort()
+    const win = window.open('', '_blank')
+    win.document.write(`<!DOCTYPE html><html><head><style>
+      @page{margin:12mm;size:A4 landscape}body{font-family:Arial;font-size:11px;color:#000}
+      h1{font-size:16px;text-align:center;margin:0}
+      h2{font-size:13px;text-align:center;color:#444;margin:4px 0 2px}
+      h3{font-size:12px;margin:14px 0 6px;padding:4px 8px;background:#1565c0;color:#fff;border-radius:4px}
+      table{width:100%;border-collapse:collapse;margin-bottom:8px}
+      th{background:#f0f2f5;padding:5px 6px;border:1px solid #999;font-size:10px}
+      td{padding:4px 6px;border:1px solid #999;font-size:10px}
+      .r{text-align:right}.c{text-align:center}.b{font-weight:bold}
+      .sub td{background:#f5f6fa;font-weight:bold}
+      .grand td{background:#1565c0;color:#fff;font-weight:bold;font-size:11px}
+      .sign{display:flex;justify-content:space-around;margin-top:30px;font-size:11px;text-align:center}
+      .sign div{width:30%}.sign .sp{height:52px}
+      .foot{text-align:center;font-size:9px;color:#888;margin-top:14px}
+      @media print{button{display:none}}
+    </style></head><body>
+      <h1>${settings?.name || 'KOPERASI YONIF 527/BY'}</h1>
+      <h2>DAFTAR PEMBAGIAN SISA HASIL USAHA (SHU) TAHUN ${year}</h2>
+      <div class="c" style="font-size:10px;margin-bottom:8px">Total dibagikan: <b>${formatRp(totalDibagi)}</b> untuk ${penerimaSHU.length} anggota</div>
+      ${kompiOrder.map(kompi => {
+        const list = byKompi[kompi].slice().sort((a,b) => (a.nm||'').localeCompare(b.nm||''))
+        const subtotal = list.reduce((a, m) => a + Math.round(m.totalSHU), 0)
+        return '<h3>' + kompi + ' (' + list.length + ' anggota)</h3>' +
+          '<table><tr><th style="width:26px">No</th><th style="width:58px">Pangkat</th><th>Nama</th><th style="width:120px">NRP</th><th class="r" style="width:88px">SHU Simpanan</th><th class="r" style="width:80px">SHU Usaha</th><th class="r" style="width:96px">Total SHU</th><th class="c" style="width:200px">Tanda Tangan</th></tr>' +
+          list.map((m, i) => '<tr><td class="c">'+(i+1)+'</td><td>'+m.pkt+'</td><td class="b">'+m.nm+'</td><td>'+(m.nrp||'-')+'</td><td class="r">'+Number(Math.round(m.jasaSimpanan)).toLocaleString('id-ID')+'</td><td class="r">'+Number(Math.round(m.jasaTx)).toLocaleString('id-ID')+'</td><td class="r b">'+Number(Math.round(m.totalSHU)).toLocaleString('id-ID')+'</td><td></td></tr>').join('') +
+          '<tr class="sub"><td colspan="6" class="r">Subtotal '+kompi+'</td><td class="r">'+Number(subtotal).toLocaleString('id-ID')+'</td><td></td></tr></table>'
+      }).join('')}
+      <table><tr class="grand"><td colspan="6" class="r">GRAND TOTAL SHU DIBAGIKAN</td><td class="r">Rp ${Number(totalDibagi).toLocaleString('id-ID')}</td><td></td></tr></table>
+      <div class="sign">
+        <div>Mengetahui,<br>Ketua Koperasi<div class="sp"></div>(______________________)</div>
+        <div>Bendahara<div class="sp"></div>(______________________)</div>
+        <div>Juru Bayar<div class="sp"></div>(______________________)</div>
+      </div>
+      <div class="foot">Dicetak: ${new Date().toLocaleString('id-ID')} — Kolom Tanda Tangan diisi saat SHU diterima anggota</div>
+      <script>setTimeout(()=>{window.print()},500)<\/script></body></html>`)
+    win.document.close()
+  }
 
   return (
     <div>
@@ -621,10 +687,11 @@ export function HitungSHU({ members, savings, loans, transactions, kasData, prod
         <div style={S.card}>
           <h3 style={{ ...S.cardTitle, marginBottom: 16 }}>SHU Per Anggota</h3>
           <table style={S.table}>
-            <thead><tr>{['Anggota', 'Simpanan', 'Belanja', 'Jasa Simp.', 'Jasa Tx', 'Total SHU'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <thead><tr>{['Pangkat', 'Nama', 'Simpanan', 'Belanja', 'Jasa Simp.', 'Jasa Tx', 'Total SHU'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
             <tbody>{perMember.map(m => (
               <tr key={m.id} style={S.tr}>
-                <td style={{ ...S.td, fontWeight: 600 }}>{m.name}</td>
+                <td style={{ ...S.td, color: 'var(--muted)', whiteSpace: 'nowrap' }}>{m.pkt}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{m.nm}</td>
                 <td style={S.td}>{formatRp(m.simpanan)}</td>
                 <td style={S.td}>{formatRp(m.transaksi)}</td>
                 <td style={{ ...S.td, color: 'var(--b)' }}>{formatRp(Math.round(m.jasaSimpanan))}</td>
@@ -633,8 +700,11 @@ export function HitungSHU({ members, savings, loans, transactions, kasData, prod
               </tr>
             ))}</tbody>
           </table>
-          <button style={{ ...S.primaryBtn, width: '100%', marginTop: 12, justifyContent: 'center' }} onClick={() => window.print()}>
-            {IC.print} Cetak Laporan SHU
+          <button style={{ ...S.primaryBtn, width: '100%', marginTop: 12, justifyContent: 'center' }} onClick={cetakDaftarSHU}>
+            {IC.print} Cetak Daftar Pembagian SHU (Juyar) — {penerimaSHU.length} anggota
+          </button>
+          <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8, justifyContent: 'center', background: '#6b7280' }} onClick={() => window.print()}>
+            {IC.print} Cetak Halaman Ini
           </button>
         </div>
       </div>
