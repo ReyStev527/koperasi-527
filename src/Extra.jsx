@@ -13,6 +13,19 @@ function today() {
 }
 function toLocalDate(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') }
 
+// Pisahkan pangkat dari nama. Kalau field pangkat kosong (data lama), ambil kata pertama nama bila cocok daftar pangkat.
+const RANKS_TNI = ['Jenderal','Letjen','Mayjen','Brigjen','Kolonel','Letkol','Mayor','Kapten','Lettu','Letda','Peltu','Pelda','Serma','Serka','Sertu','Serda','Kopka','Koptu','Kopda','Praka','Pratu','Prada','Prajurit','Tamtama','PNS','Honorer']
+function splitPangkat(member, fallbackName) {
+  const pkt = (member?.pangkat || '').trim()
+  const full = (member?.name || fallbackName || '').trim()
+  if (pkt) return { pangkat: pkt, nama: full }
+  const parts = full.split(/\s+/)
+  if (parts.length > 1 && RANKS_TNI.some(r => r.toLowerCase() === parts[0].toLowerCase())) {
+    return { pangkat: parts[0], nama: parts.slice(1).join(' ') }
+  }
+  return { pangkat: '-', nama: full }
+}
+
 
 // =============================================
 // 1. CETAK STRUK THERMAL (browser print - 58mm/80mm)
@@ -1261,6 +1274,52 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   const [bayarMid, setBayarMid] = useState(null)
   const [bayarAmount, setBayarAmount] = useState('')
 
+  // --- Penyesuaian tunggakan manual (per periode, tersimpan di browser) ---
+  const adjustKey = 'juyar_adj_' + startDate + '_' + endDate
+  const [adjust, setAdjust] = useState({})
+  const [editMid, setEditMid] = useState(null)
+  const [editVal, setEditVal] = useState('')
+
+  // Muat penyesuaian saat periode berubah
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(adjustKey)
+      setAdjust(raw ? JSON.parse(raw) : {})
+    } catch { setAdjust({}) }
+    setEditMid(null)
+  }, [adjustKey])
+
+  function simpanAdjust(next) {
+    setAdjust(next)
+    try { localStorage.setItem(adjustKey, JSON.stringify(next)) } catch {}
+  }
+  function mulaiEdit(mid, nilaiSekarang) {
+    setEditMid(mid)
+    setEditVal(String(Math.round(nilaiSekarang || 0)))
+  }
+  function simpanEdit(mid) {
+    const v = Number(editVal)
+    if (isNaN(v) || v < 0) { showToast('Nilai tunggakan tidak valid', 'error'); return }
+    simpanAdjust({ ...adjust, [mid]: Math.round(v) })
+    setEditMid(null)
+    showToast('Tunggakan disesuaikan — total potong ikut berubah')
+  }
+  function resetAdjust(mid) {
+    const next = { ...adjust }
+    delete next[mid]
+    simpanAdjust(next)
+    setEditMid(null)
+  }
+  function resetSemuaAdjust() {
+    if (!confirm('Kembalikan SEMUA tunggakan ke nilai asli (hasil hitung sistem)?')) return
+    simpanAdjust({})
+    showToast('Semua penyesuaian tunggakan direset')
+  }
+  // Tunggakan efektif: pakai nilai manual bila ada, kalau tidak pakai hasil hitung
+  function tunggakanEfektif(m) {
+    return adjust[m.mid] != null ? adjust[m.mid] : m.totalTunggakan
+  }
+
   async function prosesBayarTunggakan(mid) {
     const amount = Number(bayarAmount)
     if (!amount || amount <= 0) { showToast('Masukkan jumlah pembayaran', 'error'); return }
@@ -1328,9 +1387,12 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
     if (filterKompi !== 'all' && kompi !== filterKompi) return
     if (!kompiData[kompi]) kompiData[kompi] = {}
     const mid = record.memberId || 'umum'
-    if (!kompiData[kompi][mid]) kompiData[kompi][mid] = {
-      member, pangkat: member?.pangkat || '-', nrp: member?.nrp || '-',
-      name: member?.name || record.customerName || 'Umum', items: [], totalTagihan: 0, totalTunggakan: 0, tunggakanItems: []
+    if (!kompiData[kompi][mid]) {
+      const sp = splitPangkat(member, record.customerName)
+      kompiData[kompi][mid] = {
+        member, mid, pangkat: sp.pangkat, nrp: member?.nrp || '-',
+        name: sp.nama || 'Umum', items: [], totalTagihan: 0, totalTunggakan: 0, tunggakanItems: []
+      }
     }
     if (isTunggakan) {
       kompiData[kompi][mid].totalTunggakan += (record.sisa||0)
@@ -1345,7 +1407,12 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   tunggakanList.forEach(k => addToKompi(k, true))
 
   const sortedKompi = Object.keys(kompiData).sort()
-  const grandTotal = Object.values(kompiData).reduce((a, members_) => a + Object.values(members_).reduce((b, m) => b + m.totalTagihan + m.totalTunggakan, 0), 0)
+  // Total-total memakai tunggakan EFEKTIF (sudah termasuk penyesuaian manual)
+  const semuaAnggota = Object.values(kompiData).flatMap(m => Object.values(m))
+  const totalTagihanAll = semuaAnggota.reduce((a, m) => a + m.totalTagihan, 0)
+  const totalTunggakanAll = semuaAnggota.reduce((a, m) => a + tunggakanEfektif(m), 0)
+  const grandTotal = totalTagihanAll + totalTunggakanAll
+  const jumlahDisesuaikan = semuaAnggota.filter(m => adjust[m.mid] != null).length
 
   const endD = new Date(endDate)
   const bulanNama = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember']
@@ -1365,11 +1432,13 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
       <h2>TAGIHAN JUYAR (POTONG GAJI) — ${filterKompi === 'all' ? 'SEMUA KOMPI' : filterKompi}<br>${bulanNama[endD.getMonth()]} ${endD.getFullYear()} | ${fmtDate(startDate)} s/d ${fmtDate(endDate)}</h2>
       ${sortedKompi.map(kompi => {
         const anggotaList = Object.values(kompiData[kompi]).sort((a,b) => (a.name||'').localeCompare(b.name||''))
-        const totalKompi = anggotaList.reduce((a, m) => a + m.totalTagihan + m.totalTunggakan, 0)
+        const totalKompi = anggotaList.reduce((a, m) => a + m.totalTagihan + tunggakanEfektif(m), 0)
         return '<h3>' + kompi + '</h3><table><tr><th>No</th><th>Pangkat</th><th>Nama</th><th>NRP</th><th class="r">Tagihan Bln Ini</th><th class="r">Tunggakan</th><th class="r">Total Potong</th></tr>' +
-          anggotaList.map((m, i) => '<tr><td>'+(i+1)+'</td><td>'+m.pangkat+'</td><td class="b">'+m.name+'</td><td>'+m.nrp+'</td><td class="r">'+Number(m.totalTagihan).toLocaleString('id-ID')+'</td><td class="r tunggakan">'+Number(m.totalTunggakan).toLocaleString('id-ID')+'</td><td class="r b">'+Number(m.totalTagihan+m.totalTunggakan).toLocaleString('id-ID')+'</td></tr>').join('') +
+          anggotaList.map((m, i) => { const tg = tunggakanEfektif(m); const adj = adjust[m.mid] != null
+            return '<tr><td>'+(i+1)+'</td><td>'+m.pangkat+'</td><td class="b">'+m.name+'</td><td>'+m.nrp+'</td><td class="r">'+Number(m.totalTagihan).toLocaleString('id-ID')+'</td><td class="r tunggakan">'+Number(tg).toLocaleString('id-ID')+(adj ? ' *' : '')+'</td><td class="r b">'+Number(m.totalTagihan+tg).toLocaleString('id-ID')+'</td></tr>' }).join('') +
           '<tr class="total"><td colspan="6" class="r">Total '+kompi+'</td><td class="r">'+Number(totalKompi).toLocaleString('id-ID')+'</td></tr></table>'
       }).join('')}
+      ${jumlahDisesuaikan > 0 ? '<div style="font-size:9px;color:#c62828;margin-top:6px">* Tunggakan disesuaikan manual ('+jumlahDisesuaikan+' anggota)</div>' : ''}
       <table><tr class="grand"><td colspan="6" class="r">GRAND TOTAL</td><td class="r">Rp ${Number(grandTotal).toLocaleString('id-ID')}</td></tr></table>
       <div class="footer">Dicetak: ${new Date().toLocaleString('id-ID')}</div>
       <script>setTimeout(()=>{window.print()},500)<\/script></body></html>`)
@@ -1389,10 +1458,16 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
         </div>
       </div>
       <div style={S.grid3}>
-        <div style={S.statCard}><div style={S.statLabel}>Tagihan Bulan Ini</div><div style={{ ...S.statVal, color: '#1565c0' }}>{formatRp(Object.values(kompiData).reduce((a, m) => a + Object.values(m).reduce((b, x) => b + x.totalTagihan, 0), 0))}</div></div>
-        <div style={S.statCard}><div style={S.statLabel}>Tunggakan Bulan Lalu</div><div style={{ ...S.statVal, color: '#c62828' }}>{formatRp(Object.values(kompiData).reduce((a, m) => a + Object.values(m).reduce((b, x) => b + x.totalTunggakan, 0), 0))}</div></div>
-        <div style={S.statCard}><div style={S.statLabel}>Grand Total Potong</div><div style={{ ...S.statVal, color: '#2e7d32' }}>{formatRp(grandTotal)}</div><div style={{ fontSize: 11, color: '#999' }}>{Object.values(kompiData).reduce((a, m) => a + Object.keys(m).length, 0)} anggota</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Tagihan Bulan Ini</div><div style={{ ...S.statVal, color: '#1565c0' }}>{formatRp(totalTagihanAll)}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Tunggakan Bulan Lalu</div><div style={{ ...S.statVal, color: '#c62828' }}>{formatRp(totalTunggakanAll)}</div>{jumlahDisesuaikan > 0 && <div style={{ fontSize: 11, color: '#e65100' }}>{jumlahDisesuaikan} disesuaikan manual</div>}</div>
+        <div style={S.statCard}><div style={S.statLabel}>Grand Total Potong</div><div style={{ ...S.statVal, color: '#2e7d32' }}>{formatRp(grandTotal)}</div><div style={{ fontSize: 11, color: '#999' }}>{semuaAnggota.length} anggota</div></div>
       </div>
+      {jumlahDisesuaikan > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff8e1', border: '1px solid #ffe082', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 12 }}>
+          <span style={{ color: '#e65100' }}>{jumlahDisesuaikan} anggota tunggakannya disesuaikan manual (ditandai • pada tabel &amp; * pada cetakan)</span>
+          <button style={{ fontSize: 11, padding: '4px 10px', background: '#e65100', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }} onClick={resetSemuaAdjust}>Reset Semua</button>
+        </div>
+      )}
       {sortedKompi.map(kompi => {
         const anggotaList = Object.values(kompiData[kompi]).sort((a,b) => (a.name||'').localeCompare(b.name||''))
         return (
@@ -1401,16 +1476,38 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
             <table style={S.table}>
               <thead><tr>{['No', 'Pangkat', 'Nama', 'NRP', 'Tagihan Bln Ini', 'Tunggakan', 'Total Potong', 'Bayar'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
               <tbody>{anggotaList.map((m, i) => {
-                const mid = Object.keys(kompiData[kompi]).find(k => kompiData[kompi][k] === m)
+                const mid = m.mid
                 const isBayar = bayarMid === mid
+                const tg = tunggakanEfektif(m)
+                const isAdj = adjust[mid] != null
+                const isEdit = editMid === mid
                 return (
-                <tr key={i} style={{ ...S.tr, background: isBayar ? '#fff3e0' : undefined }}>
+                <tr key={i} style={{ ...S.tr, background: isBayar ? '#fff3e0' : (isAdj ? '#fffdf5' : undefined) }}>
                   <td style={S.td}>{i+1}</td><td style={S.td}>{m.pangkat}</td>
                   <td style={{ ...S.td, fontWeight: 600 }}>{m.name}</td>
                   <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{m.nrp}</td>
                   <td style={{ ...S.td, textAlign: 'right' }}>{formatRp(m.totalTagihan)}</td>
-                  <td style={{ ...S.td, textAlign: 'right', color: m.totalTunggakan > 0 ? '#c62828' : '#6b7280', fontWeight: m.totalTunggakan > 0 ? 700 : 400 }}>{formatRp(m.totalTunggakan)}</td>
-                  <td style={{ ...S.td, textAlign: 'right', fontWeight: 700 }}>{formatRp(m.totalTagihan + m.totalTunggakan)}</td>
+                  <td style={{ ...S.td, textAlign: 'right' }}>
+                    {isEdit ? (
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center', justifyContent: 'flex-end' }}>
+                        <input style={{ ...S.input, width: 110, fontSize: 12, padding: '4px 8px', textAlign: 'right' }} type="number" min="0" value={editVal} autoFocus
+                          onChange={e => setEditVal(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') simpanEdit(mid); if (e.key === 'Escape') setEditMid(null) }} />
+                        <button title="Simpan" style={{ fontSize: 11, padding: '4px 8px', background: '#2e7d32', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }} onClick={() => simpanEdit(mid)}>✓</button>
+                        <button title="Batal" style={{ fontSize: 11, padding: '4px 8px', background: '#999', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }} onClick={() => setEditMid(null)}>✕</button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end' }}>
+                        {isAdj && <span title={'Nilai asli: ' + formatRp(m.totalTunggakan)} style={{ fontSize: 10, color: '#9e9e9e', textDecoration: 'line-through' }}>{formatRp(m.totalTunggakan)}</span>}
+                        <span onClick={() => mulaiEdit(mid, tg)} title="Klik untuk ubah tunggakan"
+                          style={{ cursor: 'pointer', borderBottom: '1px dashed #c62828', color: tg > 0 ? '#c62828' : '#6b7280', fontWeight: tg > 0 ? 700 : 400 }}>
+                          {formatRp(tg)}{isAdj ? ' •' : ''}
+                        </span>
+                        {isAdj && <button title="Kembalikan ke nilai asli" style={{ fontSize: 10, padding: '2px 6px', background: '#eee', color: '#666', border: 'none', borderRadius: 4, cursor: 'pointer' }} onClick={() => resetAdjust(mid)}>↺</button>}
+                      </div>
+                    )}
+                  </td>
+                  <td style={{ ...S.td, textAlign: 'right', fontWeight: 700 }}>{formatRp(m.totalTagihan + tg)}</td>
                   <td style={{ ...S.td, minWidth: isBayar ? 200 : 60 }}>
                     {(m.totalTunggakan > 0 || m.totalTagihan > 0) && !isBayar && (
                       <button style={{ fontSize: 11, padding: '4px 10px', background: '#2e7d32', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}
@@ -1425,7 +1522,15 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
                     )}
                   </td>
                 </tr>
-              )})}</tbody>
+              )})}
+              <tr style={{ background: '#f5f6fa', fontWeight: 700 }}>
+                <td style={S.td} colSpan={4}>Subtotal {kompi} ({anggotaList.length} anggota)</td>
+                <td style={{ ...S.td, textAlign: 'right' }}>{formatRp(anggotaList.reduce((a, m) => a + m.totalTagihan, 0))}</td>
+                <td style={{ ...S.td, textAlign: 'right', color: '#c62828' }}>{formatRp(anggotaList.reduce((a, m) => a + tunggakanEfektif(m), 0))}</td>
+                <td style={{ ...S.td, textAlign: 'right', color: '#2e7d32' }}>{formatRp(anggotaList.reduce((a, m) => a + m.totalTagihan + tunggakanEfektif(m), 0))}</td>
+                <td style={S.td}></td>
+              </tr>
+              </tbody>
             </table>
           </div>
         )
