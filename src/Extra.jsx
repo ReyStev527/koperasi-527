@@ -972,7 +972,7 @@ export function LaporanTutupBuku({ transactions, members, settings }) {
   const [filterKompi, setFilterKompi] = useState('all')
 
   // Filter transaksi dalam periode (EXCLUDE return)
-  const periodTx = transactions.filter(t => t.date >= startDate && t.date <= endDate && t.caraBayar !== 'RETURN' && !t.returned && !(transactions||[]).some(r => r.caraBayar === 'RETURN' && r.returnFrom === t.noNota))
+  const periodTx = transactions.filter(t => t.date >= startDate && t.date <= endDate && t.caraBayar !== 'RETURN' && !t.returned)
 
   // Daftar kompi dari members
   const kompiList = [...new Set(members.map(m => m.kompi || 'LAINNYA'))].filter(Boolean).sort()
@@ -1168,8 +1168,9 @@ export function StokHistori({ products, stockIn, transactions, mutasis }) {
 
     // Tambahkan kembali stok dari penjualan SETELAH tanggal target
     ;(transactions||[]).filter(tx => tx.date > targetDate).forEach(tx => {
-      (tx.items||[]).forEach(it => {
-        if (it.productId === p.id) stok += (it.qty||0)
+      const isReturn = tx.caraBayar === 'RETURN' // retur MENAMBAH stok saat terjadi → reverse-nya MENGURANGI
+      ;(tx.items||[]).forEach(it => {
+        if (it.productId === p.id) stok += isReturn ? -(it.qty||0) : (it.qty||0)
       })
     })
 
@@ -1362,6 +1363,7 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   const piutangMemberDates = new Set(piutangs.map(p => (p.memberId||'') + '_' + (p.date||'')))
   const orphanKredit = (transactions||[]).filter(t => {
     if (t.caraBayar !== 'KREDIT') return false
+    if (t.returned) return false // nota yang sudah diretur penuh jangan ditagih
     if (t.noNota && piutangNotas.has(t.noNota)) return false // sudah ada piutang
     if (piutangMemberDates.has((t.memberId||'') + '_' + (t.date||''))) return false
     const sisa = (t.total||0) - (t.payment||0)
@@ -1547,11 +1549,9 @@ export function LabaPerAnggota({ transactions, members, products, settings }) {
   const [year, setYear] = useState(new Date().getFullYear())
 
   const yearStr = String(year)
-  const returnedNotas = new Set((transactions||[]).filter(t => t.caraBayar === 'RETURN' && t.returnFrom).map(t => t.returnFrom))
-
-  // Hitung laba per anggota dari transaksi (buang RETURN & nota yang sudah diretur)
+  // Hitung laba per anggota (buang record RETURN & nota retur penuh; retur sebagian sudah mengecilkan nota)
   const memberProfit = {}
-  transactions.filter(t => (t.date||'').startsWith(yearStr) && t.caraBayar !== 'RETURN' && !t.returned && !returnedNotas.has(t.noNota)).forEach(tx => {
+  transactions.filter(t => (t.date||'').startsWith(yearStr) && t.caraBayar !== 'RETURN' && !t.returned).forEach(tx => {
     const mid = tx.memberId || '_umum'
     if (!memberProfit[mid]) memberProfit[mid] = { totalBeli: 0, totalLaba: 0, txCount: 0 }
     memberProfit[mid].txCount++
