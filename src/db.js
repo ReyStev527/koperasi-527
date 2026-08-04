@@ -1,6 +1,6 @@
 import {
   collection, doc, getDocs, getDoc, setDoc, updateDoc,
-  deleteDoc, query, where, orderBy, onSnapshot, writeBatch
+  deleteDoc, query, where, orderBy, onSnapshot, writeBatch, increment
 } from 'firebase/firestore'
 import { db } from './firebase'
 
@@ -29,6 +29,12 @@ export async function addOne(col, data) {
 
 export async function removeOne(col, id) {
   await deleteDoc(doc(db, col, id))
+}
+
+// Tambah/kurangi field angka secara ATOMIK di server (kebal race condition & data basi).
+// delta positif = tambah, negatif = kurangi. Aman dipakai walau 2 kasir jualan bersamaan.
+export async function incField(col, id, field, delta, extra) {
+  await setDoc(doc(db, col, id), { [field]: increment(delta), ...(extra || {}) }, { merge: true })
 }
 
 // =============================================

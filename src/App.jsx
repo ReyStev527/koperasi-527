@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { db } from './firebase'
 import {
-  getAll, getOne, setOne, addOne, removeOne, listenCollection, seedIfEmpty, seedInventoryIfEmpty, batchSet, deleteCollection
+  getAll, getOne, setOne, addOne, removeOne, incField, listenCollection, seedIfEmpty, seedInventoryIfEmpty, batchSet, deleteCollection
 } from './db'
 import { Products, Suppliers, StockIn, POS } from './Inventory'
 import { KasMasukKeluar, JurnalUmum, LabaRugi, HitungSHU, CetakKwitansi } from './Finance'
@@ -128,8 +128,11 @@ export default function App() {
           if (s) setSettings(s)
         } catch {}
 
-        // Cek session di localStorage
-        const session = localStorage.getItem('koperasi_session')
+        // WAJIB LOGIN setiap aplikasi dibuka:
+        // session sekarang di sessionStorage (hilang saat tab/aplikasi ditutup).
+        // Refresh halaman di tab yang sama tetap login — buka baru harus login lagi.
+        localStorage.removeItem('koperasi_session') // hapus session permanen lama
+        const session = sessionStorage.getItem('koperasi_session')
         if (session) setUser(JSON.parse(session))
       } catch (err) {
         console.error('Init error:', err)
@@ -154,7 +157,7 @@ export default function App() {
     if (found) {
       const session = { id: found.id, username: found.username, name: found.name, role: found.role }
       setUser(session)
-      localStorage.setItem('koperasi_session', JSON.stringify(session))
+      sessionStorage.setItem('koperasi_session', JSON.stringify(session))
       // Simpan user ke Firestore kalau belum ada
       if (users.length === 0) {
         defaultUsers.forEach(u => { try { setOne('users', u.id, u) } catch {} })
@@ -169,6 +172,7 @@ export default function App() {
   function handleLogout() {
     setUser(null)
     setPage('dashboard')
+    sessionStorage.removeItem('koperasi_session')
     localStorage.removeItem('koperasi_session')
   }
 
@@ -223,6 +227,14 @@ export default function App() {
     const p = products.find(pr => pr.id === id)
     if (p) await setOne('products', id, { ...p, stock: newStock })
   }
+  // FIX STOK: tambah/kurangi stok secara ATOMIK di server (increment Firestore).
+  // Cara lama (baca stok di memori → tulis balik angka absolut) bisa menimpa
+  // penjualan lain kalau data di layar basi / 2 device jualan bersamaan —
+  // itulah kenapa stok kadang "tidak berkurang" saat jual.
+  async function adjustProductStock(id, delta) {
+    if (!id || !delta) return
+    await incField('products', id, 'stock', delta, { updatedAt: today() })
+  }
   async function saveSupplier(s, isEdit) {
     if (isEdit) await setOne('suppliers', s.id, s)
     else { s.id = genId(); await setOne('suppliers', s.id, s) }
@@ -236,7 +248,8 @@ export default function App() {
     // PENTING: hanya kirim field harga, JANGAN spread ...prod (akan timpa stok!)
     for (const item of (si.items||[])) {
       const prod = products.find(p => p.id === item.productId)
-      if (prod && (item.buyPrice||0) > (prod.buyPrice||0)) {
+      // Auto-margin hanya bila user TIDAK mengisi harga jual sendiri di form barang masuk
+      if (prod && (item.buyPrice||0) > (prod.buyPrice||0) && !(item.sellPrice > 0) && !(item.sellPrice2 > 0)) {
         const priceUpdate = { buyPrice: item.buyPrice, updatedAt: today() }
         if (prod.buyPrice > 0 && prod.sellPrice > 0) {
           const oldMargin = (prod.sellPrice - prod.buyPrice) / prod.buyPrice
@@ -306,10 +319,10 @@ export default function App() {
     const si = stockInData.find(s => s.id === siId)
     if (!si) return false
     try {
-      // 1. Kembalikan stok
+      // 1. Kembalikan stok (atomik — tidak menimpa transaksi lain)
       for (const item of (si.items||[])) {
         const prod = products.find(p => p.id === item.productId)
-        if (prod) await updateProductStock(prod.id, Math.max(0, (prod.stock||0) - (item.qty||0)))
+        if (prod) await adjustProductStock(prod.id, -(item.qty||0))
       }
       // 2. Hapus kas terkait
       const ref = si.invoice || si.id
@@ -332,21 +345,23 @@ export default function App() {
     const oldSi = stockInData.find(s => s.id === siId)
     if (!oldSi) return false
     try {
-      // 1. Kembalikan stok lama
+      // 1. Kembalikan stok lama (atomik)
+      // BUG LAMA: langkah 1 tulis "stok - lama", lalu langkah 2 tulis "stok + baru"
+      // dari data basi yang sama → pengurangan langkah 1 TERTIMPA. Increment memperbaikinya.
       for (const item of (oldSi.items||[])) {
         const prod = products.find(p => p.id === item.productId)
-        if (prod) await updateProductStock(prod.id, Math.max(0, (prod.stock||0) - (item.qty||0)))
+        if (prod) await adjustProductStock(prod.id, -(item.qty||0))
       }
-      // 2. Tambah stok baru
+      // 2. Tambah stok baru (atomik) + update harga saja (JANGAN spread ...prod — menimpa stok!)
       for (const item of (newData.items||[])) {
         const prod = products.find(p => p.id === item.productId)
         if (prod) {
-          const newStock = (prod.stock||0) + (item.qty||0)
-          const updates = { ...prod, stock: newStock, updatedAt: today() }
+          await adjustProductStock(prod.id, item.qty||0)
+          const updates = { id: prod.id }
           if (item.buyPrice && item.buyPrice > 0) updates.buyPrice = item.buyPrice
           if (item.sellPrice && item.sellPrice > 0) updates.sellPrice = item.sellPrice
           if (item.sellPrice2 && item.sellPrice2 > 0) updates.sellPrice2 = item.sellPrice2
-          await saveProduct(updates, true)
+          if (Object.keys(updates).length > 1) await saveProduct(updates, true) // merge → hanya field harga
         }
       }
       // 3. Update record stockIn
@@ -360,6 +375,9 @@ export default function App() {
     tx.id = genId()
     await setOne('transactions', tx.id, tx)
 
+    // Kas & jurnal dibungkus try/catch sendiri: kalau gagal, JANGAN batalkan
+    // alur checkout (dulu error di sini bikin pengurangan stok ikut batal).
+    try {
     // BUG #7 FIX: Auto-create Kas Masuk + Jurnal saat penjualan
     // Hitung HPP (modal) untuk jurnal
     const hpp = (tx.items || []).reduce((sum, item) => {
@@ -430,12 +448,20 @@ export default function App() {
       }
       await setOne('jurnal', jurnalEntry.id, jurnalEntry)
     }
+    } catch (err) {
+      console.error('Kas/jurnal gagal (nota tetap tersimpan):', err)
+      showToast('Nota tersimpan, tapi kas/jurnal gagal dicatat — cek koneksi lalu ulangi dari menu Kas', 'error')
+    }
   }
 
   // ---- Legacy CRUD ----
   async function deleteTransaction(txId) {
     const tx = transactions.find(t => t.id === txId)
     if (!tx) return false
+    // Proteksi: record RETURN & nota yang sudah diretur penuh tidak boleh dihapus.
+    // (Menghapusnya membuat stok bertambah 2x dan laporan kehilangan pembalik retur.)
+    if (tx.caraBayar === 'RETURN') { alert('Record RETURN adalah arsip pembalik retur — tidak bisa dihapus.'); return false }
+    if (tx.returned) { alert('Nota ini sudah di-RETUR penuh (arsip) — tidak bisa dihapus agar stok & laporan tetap konsisten.'); return false }
     try {
       // Hapus transaksi
       await removeOne('transactions', txId)
@@ -453,10 +479,10 @@ export default function App() {
         if (relatedPiutang) { try { await removeOne('piutangs', relatedPiutang.id) } catch {} }
       }
 
-      // Kembalikan stok
+      // Kembalikan stok (atomik)
       for (const item of (tx.items || [])) {
         const prod = products.find(p => p.id === item.productId)
-        if (prod) await updateProductStock(prod.id, (prod.stock || 0) + (item.qty || 0))
+        if (prod) await adjustProductStock(prod.id, item.qty || 0)
       }
 
       await logAction('Transaksi', 'delete', 'Hapus transaksi ' + (tx.noNota || txId) + ' — ' + (tx.customerName || 'Umum') + ' Rp ' + (tx.total || 0).toLocaleString('id-ID'))
@@ -699,12 +725,12 @@ export default function App() {
         {/* Neraca halaman dihapus */}
         {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, transactions, stockInData }} />}
         {page === 'stokhistori' && <StokHistori products={products} stockIn={stockInData} transactions={transactions} mutasis={mutasis} />}
-        {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, deleteStockIn, updateStockIn, products, suppliers, updateProductStock, saveProduct, setModal, showToast }} />}
-        {page === 'pos' && <POS {...{ products, transactions, saveTransaction, deleteTransaction, updateProductStock, members, showToast, savePiutang, piutangs, settings }} />}
+        {page === 'stockin' && <StockIn {...{ stockIn: stockInData, saveStockIn, deleteStockIn, updateStockIn, products, suppliers, updateProductStock, adjustProductStock, saveProduct, setModal, showToast }} />}
+        {page === 'pos' && <POS {...{ products, transactions, saveTransaction, deleteTransaction, updateProductStock, adjustProductStock, members, showToast, savePiutang, piutangs, settings }} />}
         {page === 'suppliers' && <Suppliers {...{ suppliers, saveSupplier, deleteSupplier, products, setModal, showToast }} />}
-        {page === 'retur' && <ReturBarang {...{ returs, saveRetur, products, suppliers, updateProductStock, setModal, showToast }} />}
+        {page === 'retur' && <ReturBarang {...{ returs, saveRetur, products, suppliers, updateProductStock, adjustProductStock, setModal, showToast }} />}
         {page === 'harga' && <HargaBertingkat {...{ products, saveProduct, setModal, showToast }} />}
-        {page === 'mutasi' && <MutasiStok {...{ mutasis, saveMutasi, products, updateProductStock, setModal, showToast }} />}
+        {page === 'mutasi' && <MutasiStok {...{ mutasis, saveMutasi, products, updateProductStock, adjustProductStock, setModal, showToast }} />}
         {page === 'kas' && <KasMasukKeluar {...{ kasData, saveKas, deleteKas, setModal, showToast, settings, user }} />}
         {page === 'jurnal' && <JurnalUmum {...{ jurnalData, saveJurnal, deleteJurnal, setModal, showToast }} />}
         {page === 'piutang' && <PiutangPage {...{ piutangs, savePiutang, bayarPiutang, members, getMember, setModal, showToast }} />}

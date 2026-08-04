@@ -539,7 +539,7 @@ function SupplierForm({ initial, onSave }) {
 // =============================================
 // BARANG MASUK (Stock In)
 // =============================================
-export function StockIn({ stockIn, saveStockIn, deleteStockIn, updateStockIn, products, suppliers, updateProductStock, saveProduct, setModal, showToast }) {
+export function StockIn({ stockIn, saveStockIn, deleteStockIn, updateStockIn, products, suppliers, updateProductStock, adjustProductStock, saveProduct, setModal, showToast }) {
   const [search, setSearch] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -764,14 +764,16 @@ export function StockIn({ stockIn, saveStockIn, deleteStockIn, updateStockIn, pr
           }
 
           if (prod) {
-            // PRODUK EXISTING — update stok & harga langsung via setOne
+            // PRODUK EXISTING — tambah stok ATOMIK + update harga saja.
+            // JANGAN tulis {...prod, stock: angka} — data prod di layar bisa basi
+            // dan menimpa pengurangan stok dari kasir (bug stok tidak berkurang).
             prodId = prod.id
-            const newStock = (prod.stock||0) + (item.qty||0)
-            const updatedProd = { ...prod, stock: newStock, updatedAt: today() }
-            if (item.buyPrice && item.buyPrice > 0) updatedProd.buyPrice = item.buyPrice
-            if (item.sellPrice && item.sellPrice > 0) updatedProd.sellPrice = item.sellPrice
-            if (item.sellPrice2 && item.sellPrice2 > 0) updatedProd.sellPrice2 = item.sellPrice2
-            await saveProduct(updatedProd, true) // isEdit=true → langsung overwrite
+            await adjustProductStock(prod.id, item.qty || 0)
+            const priceUpdate = { id: prod.id }
+            if (item.buyPrice && item.buyPrice > 0) priceUpdate.buyPrice = item.buyPrice
+            if (item.sellPrice && item.sellPrice > 0) priceUpdate.sellPrice = item.sellPrice
+            if (item.sellPrice2 && item.sellPrice2 > 0) priceUpdate.sellPrice2 = item.sellPrice2
+            if (Object.keys(priceUpdate).length > 1) await saveProduct(priceUpdate, true) // merge → hanya harga
           } else if (item.productName) {
             // PRODUK BARU — buat dengan stok sudah terisi
             const newProd = {
@@ -1219,7 +1221,7 @@ function StockInForm({ products, suppliers, onSave, initial }) {
 // =============================================
 // KASIR / POS (Barang Keluar = Penjualan)
 // =============================================
-export function POS({ products, transactions, saveTransaction, deleteTransaction, updateProductStock, members, showToast, savePiutang, piutangs, settings }) {
+export function POS({ products, transactions, saveTransaction, deleteTransaction, updateProductStock, adjustProductStock, members, showToast, savePiutang, piutangs, settings }) {
   const [cart, setCart] = useState([])
   const [search, setSearch] = useState('')
   const [memberId, setMemberId] = useState('')
@@ -1349,6 +1351,9 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
     const useHarga2 = caraBayar === 'KREDIT' || member?.tingkatHrg === '2'
     const price = Number(useHarga2 && product.sellPrice2 ? product.sellPrice2 : product.sellPrice) || 0
 
+    // Blokir produk stok habis — sebelumnya stok 0 masih bisa masuk keranjang 1x
+    if ((product.stock||0) <= 0) { showToast('Stok "' + product.name + '" habis', 'error'); return }
+
     setCart(prev => {
       const existing = prev.find(c => c.productId === product.id)
       if (existing) {
@@ -1392,6 +1397,13 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
     if (caraBayar === 'LUNAS' && Number(payment) < total) { showToast('Pembayaran kurang', 'error'); return }
     if (total <= 0) { showToast('Total harus lebih dari 0', 'error'); return }
 
+    // Validasi stok terkini sebelum simpan — cegah oversell
+    for (const c of cart) {
+      const prod = products.find(p => p.id === c.productId)
+      if (!prod) { showToast('Produk "' + c.name + '" sudah dihapus dari master', 'error'); return }
+      if (c.qty > (prod.stock||0)) { showToast('Stok "' + c.name + '" tinggal ' + (prod.stock||0) + ' — kurangi qty', 'error'); return }
+    }
+
     try {
       const noNota = 'N' + Date.now().toString().slice(-7)
       const now = new Date()
@@ -1416,6 +1428,14 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
       }
       await saveTransaction(tx)
 
+      // KURANGI STOK — langsung setelah nota tersimpan, pakai increment ATOMIK.
+      // Fix bug "stok tidak berkurang": cara lama menulis angka absolut dari data
+      // di layar (bisa basi) sehingga bisa menimpa/mengembalikan stok; dan kalau
+      // pencatatan piutang error, pengurangan stok ikut batal karena urutannya di belakang.
+      for (const item of cart) {
+        await adjustProductStock(item.productId, -(Number(item.qty) || 0))
+      }
+
       // Kalau KREDIT, catat piutang
       if (caraBayar === 'KREDIT' && savePiutang) {
         await savePiutang({
@@ -1424,12 +1444,6 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
           total, dp: Number(dp) || 0, totalBayar: Number(dp) || 0,
           sisa: total - (Number(dp) || 0), status: 'KREDIT', payments: Number(dp) > 0 ? [{ date: today(), amount: Number(dp) }] : []
         })
-      }
-
-      // Kurangi stok
-      for (const item of cart) {
-        const prod = products.find(p => p.id === item.productId)
-        if (prod) await updateProductStock(prod.id, Math.max(0, (prod.stock||0) - item.qty))
       }
 
       // Cetak struk otomatis
@@ -1468,14 +1482,17 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
 
     if (!confirm('Proses RETURN?\n\n' + itemsToReturn.map(it => it.name + ' × ' + it.qtyReturn).join('\n') + '\n\nTotal refund: Rp ' + totalReturn.toLocaleString('id-ID') + '\nAlasan: ' + (returnAlasan || '-') + '\n\nStok akan dikembalikan.')) return
 
+    if (returnTx.caraBayar === 'RETURN') { showToast('Record RETURN tidak bisa diretur lagi', 'error'); return }
+
     try {
-      // 1. Kembalikan stok
+      const { setOne } = await import('./db')
+
+      // 1. Kembalikan stok (atomik)
       for (const item of itemsToReturn) {
-        const prod = products.find(p => p.id === item.productId)
-        if (prod) await updateProductStock(prod.id, (prod.stock||0) + item.qtyReturn)
+        await adjustProductStock(item.productId, Number(item.qtyReturn) || 0)
       }
 
-      // 2. Simpan record return sebagai transaksi dengan total negatif
+      // 2. Simpan record return sebagai ARSIP (total negatif) — semua laporan meng-exclude caraBayar RETURN
       const returnRecord = {
         noNota: 'RTN-' + returnTx.noNota,
         date: today(),
@@ -1493,26 +1510,89 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
       }
       await saveTransaction(returnRecord)
 
-      // 3. Tandai transaksi asli sebagai "returned" agar tidak dihitung lagi
+      // 3. HPP barang yang kembali (untuk jurnal pembalik) — pakai harga beli saat transaksi
+      const hppReturn = itemsToReturn.reduce((a, it) => {
+        const prod = products.find(p => p.id === it.productId)
+        const buy = it.buyPrice != null ? Number(it.buyPrice) : (prod?.buyPrice || 0)
+        return a + buy * it.qtyReturn
+      }, 0)
+
+      // 4. FULL vs SEBAGIAN
+      const origItems = returnTx.items || []
+      const newItems = origItems.map((it, idx) => {
+        const q = Number(returnItems[idx] || 0)
+        if (q <= 0) return it
+        const newQty = Math.max(0, (it.qty||0) - q)
+        return { ...it, qty: newQty, subtotal: (Number(it.price)||0) * newQty * (1 - (it.diskon||0)/100) }
+      })
+      const isFull = newItems.every(it => (it.qty||0) === 0)
+
+      // 5. Update nota asli
       if (returnTx.id) {
-        const { setOne } = await import('./db')
-        await setOne('transactions', returnTx.id, { returned: true }) // merge:true → hanya tambah field
+        if (isFull) {
+          // Retur PENUH → nota jadi arsip, dibuang dari semua laporan
+          await setOne('transactions', returnTx.id, { returned: true })
+        } else {
+          // Retur SEBAGIAN → KECILKAN nota asli, supaya laporan/tagihan otomatis benar
+          const kurangBruto = itemsToReturn.reduce((a, it) => a + (Number(it.price)||0) * it.qtyReturn, 0)
+          const kurangDiskon = itemsToReturn.reduce((a, it) => a + (Number(it.price)||0) * it.qtyReturn * ((it.diskon||0)/100), 0)
+          await setOne('transactions', returnTx.id, {
+            items: newItems,
+            total: Math.max(0, (returnTx.total||0) - totalReturn),
+            totalSebelumDiskon: Math.max(0, (returnTx.totalSebelumDiskon||0) - kurangBruto),
+            totalDiskon: Math.max(0, (returnTx.totalDiskon||0) - kurangDiskon),
+            editedByReturn: true,
+          })
+        }
       }
-      setReturnTx(null)
-      setReturnItems({})
-      setReturnAlasan('')
-      showToast('Return berhasil! Stok dikembalikan. Refund: ' + formatRp(totalReturn))
+
+      // 6. Posting keuangan refund
+      const wasLunas = (returnTx.caraBayar||'LUNAS') !== 'KREDIT'
+      let refundTunai = 0
+      if (wasLunas) {
+        refundTunai = totalReturn // nota tunai → uang keluar dari kas
+      } else {
+        // KREDIT → kurangi piutang dulu; kelebihan bayar direfund tunai
+        const piu = (piutangs||[]).find(p => p.noNota === returnTx.noNota)
+        if (piu) {
+          const newTotalP = Math.max(0, (piu.total||0) - totalReturn)
+          const sisaBaru = newTotalP - (piu.totalBayar||0)
+          refundTunai = sisaBaru < 0 ? -sisaBaru : 0
+          await setOne('piutangs', piu.id, { ...piu, total: newTotalP, sisa: Math.max(0, sisaBaru), status: sisaBaru <= 0 ? 'LUNAS' : 'KREDIT' })
+        }
+        // Kredit lama tanpa record piutang: nota asli sudah dikecilkan → tagihan juyar otomatis ikut turun
+      }
+      if (refundTunai > 0) {
+        const kasEntry = { id: genId(), date: today(), type: 'keluar', amount: refundTunai, category: 'Refund Penjualan',
+          description: 'Refund retur ' + returnTx.noNota + ' (' + (returnTx.customerName||'Umum') + ')', ref: 'RTN-' + returnTx.noNota }
+        await setOne('kas', kasEntry.id, kasEntry)
+      }
+
+      // 7. Jurnal pembalik (Retur Penjualan ↔ Kas/Piutang, Persediaan ↔ HPP)
+      const reduksiPiutang = wasLunas ? 0 : Math.max(0, totalReturn - refundTunai)
+      const jurnalEntry = { id: genId(), date: today(),
+        description: 'Retur penjualan ' + returnTx.noNota + ' (' + (returnTx.customerName||'Umum') + ')',
+        entries: [
+          { account: 'Retur Penjualan', type: 'debit', amount: totalReturn },
+          ...(refundTunai > 0 ? [{ account: 'Kas/Bank', type: 'kredit', amount: refundTunai }] : []),
+          ...(reduksiPiutang > 0 ? [{ account: 'Piutang Anggota', type: 'kredit', amount: reduksiPiutang }] : []),
+          ...(hppReturn > 0 ? [
+            { account: 'Persediaan Barang', type: 'debit', amount: hppReturn },
+            { account: 'HPP (Harga Pokok Penjualan)', type: 'kredit', amount: hppReturn },
+          ] : []),
+        ], ref: 'RTN-' + returnTx.noNota }
+      await setOne('jurnal', jurnalEntry.id, jurnalEntry)
+
+      const refundMsg = refundTunai > 0 ? ' Refund tunai ' + formatRp(refundTunai) + '.' : (!wasLunas ? ' Piutang dikurangi ' + formatRp(reduksiPiutang) + '.' : '')
+      showToast((isFull ? 'Return PENUH berhasil.' : 'Return sebagian berhasil — nota dikecilkan.') + ' Stok kembali.' + refundMsg)
     } catch (err) {
       console.error('Return error:', err)
       showToast('Gagal proses return: ' + (err.message || 'Cek koneksi'), 'error')
     }
   }
 
-  // Deteksi transaksi yang sudah di-return (cari RTN- yang cocok)
-  const returnedNotas = new Set(sortedTx.filter(tx => tx.caraBayar === 'RETURN' && tx.returnFrom).map(tx => tx.returnFrom))
-
   const filteredTx = sortedTx.filter(tx => {
-    if (tx.returned || returnedNotas.has(tx.noNota)) return false
+    if (tx.returned) return false // hanya nota retur PENUH yang disembunyikan; retur sebagian tetap tampil (sudah dikecilkan)
     if (txFilter === 'LUNAS' && (tx.caraBayar === 'KREDIT' || tx.caraBayar === 'RETURN')) return false
     if (txFilter === 'KREDIT' && tx.caraBayar !== 'KREDIT') return false
     if (txDateFrom && tx.date < txDateFrom) return false
@@ -1520,8 +1600,8 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
     return true
   })
 
-  const txLunas = sortedTx.filter(tx => tx.caraBayar !== 'KREDIT' && tx.caraBayar !== 'RETURN' && !tx.returned && !returnedNotas.has(tx.noNota))
-  const txKredit = sortedTx.filter(tx => tx.caraBayar === 'KREDIT' && !tx.returned && !returnedNotas.has(tx.noNota))
+  const txLunas = sortedTx.filter(tx => tx.caraBayar !== 'KREDIT' && tx.caraBayar !== 'RETURN' && !tx.returned)
+  const txKredit = sortedTx.filter(tx => tx.caraBayar === 'KREDIT' && !tx.returned)
   const txReturn = sortedTx.filter(tx => tx.caraBayar === 'RETURN')
   const totalLunas = txLunas.reduce((a, tx) => a + (tx.total||0), 0)
   const totalKredit = txKredit.reduce((a, tx) => a + (tx.total||0), 0)
@@ -1806,7 +1886,7 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
                 const dayTotalLunas = dayLunas.reduce((a, t) => a + (t.total||0), 0)
                 const dayTotalKredit = dayKredit.reduce((a, t) => a + (t.total||0), 0)
                 const dayTotalReturn = dayReturn.reduce((a, t) => a + Math.abs(t.total||0), 0)
-                const dayTotal = dayTotalLunas + dayTotalKredit - dayTotalReturn
+                const dayTotal = dayTotalLunas + dayTotalKredit // retur TIDAK dikurangi lagi: nota full-retur sudah dibuang, retur sebagian sudah mengecilkan nota
 
                 // Render each transaction in this date group
                 dayTx.forEach(tx => {

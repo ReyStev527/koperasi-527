@@ -22,7 +22,7 @@ const IC = {
 // =============================================
 // 1. RETUR BARANG
 // =============================================
-export function ReturBarang({ returs, saveRetur, products, suppliers, updateProductStock, setModal, showToast }) {
+export function ReturBarang({ returs, saveRetur, products, suppliers, updateProductStock, adjustProductStock, setModal, showToast }) {
   const sorted = [...returs].sort((a, b) => b.date.localeCompare(a.date))
 
   const totalRetur = returs.reduce((a, r) => a + (r.totalHarga||0), 0)
@@ -32,11 +32,11 @@ export function ReturBarang({ returs, saveRetur, products, suppliers, updateProd
       title: 'Catat Retur Barang',
       content: <ReturForm products={products} suppliers={suppliers} onSave={async d => {
         await saveRetur(d)
-        // Kembalikan stok
+        // Barang KELUAR ke supplier → stok berkurang (atomik)
         const prod = products.find(p => p.id === d.productId)
-        if (prod) await updateProductStock(prod.id, prod.stock + d.qty)
+        if (prod) await adjustProductStock(prod.id, -(d.qty||0))
         setModal(null)
-        showToast('Retur berhasil dicatat, stok dikembalikan')
+        showToast('Retur ke supplier dicatat — stok dikurangi ' + d.qty)
       }} />,
     })
   }
@@ -283,7 +283,7 @@ function HargaForm({ product, onSave }) {
 // =============================================
 // 6. MUTASI STOK
 // =============================================
-export function MutasiStok({ mutasis, saveMutasi, products, updateProductStock, setModal, showToast }) {
+export function MutasiStok({ mutasis, saveMutasi, products, updateProductStock, adjustProductStock, setModal, showToast }) {
   const sorted = [...mutasis].sort((a, b) => b.date.localeCompare(a.date))
 
   function openForm() {
@@ -293,8 +293,8 @@ export function MutasiStok({ mutasis, saveMutasi, products, updateProductStock, 
         await saveMutasi(d)
         const prod = products.find(p => p.id === d.productId)
         if (prod) {
-          const newStock = d.tipe === 'tambah' ? prod.stock + d.qty : prod.stock - d.qty
-          await updateProductStock(prod.id, Math.max(0, newStock))
+          // Atomik: tambah/kurang stok via increment
+          await adjustProductStock(prod.id, d.tipe === 'tambah' ? (d.qty||0) : -(d.qty||0))
         }
         setModal(null)
         showToast('Mutasi stok berhasil dicatat')
@@ -386,9 +386,13 @@ export function SetoranHarian({ setorans, saveSetoran, transactions, kasData, lo
   function openForm() {
     // Hitung otomatis dari data hari ini
     const tgl = today()
-    const penjualanCash = transactions.filter(t => t.date === tgl).reduce((a, t) => a + (t.total||0), 0)
+    // Penjualan CASH = nota LUNAS + DP kredit hari ini (kredit penuh & retur TIDAK ikut — bukan uang tunai masuk)
+    const txHariIni = transactions.filter(t => t.date === tgl && t.caraBayar !== 'RETURN' && !t.returned)
+    const penjualanCash = txHariIni.filter(t => (t.caraBayar||'LUNAS') !== 'KREDIT').reduce((a, t) => a + (t.total||0), 0)
+      + txHariIni.filter(t => t.caraBayar === 'KREDIT').reduce((a, t) => a + (Number(t.payment)||0), 0)
     const angsuran = loans.flatMap(l => (l.installments||[]).filter(i => i.date === tgl)).reduce((a, i) => a + (i.amount||0), 0)
-    const kasMasuk = kasData.filter(k => k.date === tgl && k.type === 'masuk').reduce((a, k) => a + (k.amount||0), 0)
+    // Pendapatan lain = kas masuk SELAIN penjualan/DP (sudah dihitung di atas — hindari dobel)
+    const kasMasuk = kasData.filter(k => k.date === tgl && k.type === 'masuk' && !['Penjualan Tunai','DP Penjualan Kredit'].includes(k.category)).reduce((a, k) => a + (k.amount||0), 0)
     const kasKeluar = kasData.filter(k => k.date === tgl && k.type === 'keluar').reduce((a, k) => a + (k.amount||0), 0)
 
     setModal({

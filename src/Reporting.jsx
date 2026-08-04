@@ -396,14 +396,14 @@ export function GrafikTrend({ savings, loans, transactions, kasData, products })
   const yearStr = String(year)
 
   // Hitung data per bulan
-  const returnedNotas = new Set((transactions||[]).filter(t => t.caraBayar === 'RETURN' && t.returnFrom).map(t => t.returnFrom))
+
   const monthlyData = months.map(m => {
     const mm = String(m + 1).padStart(2, '0')
     const prefix = `${yearStr}-${mm}`
     const simpanan = savings.filter(s => s.date.startsWith(prefix) && (s.amount||0) > 0).reduce((a, s) => a + (s.amount||0), 0)
 
     // Transaksi bulan ini — buang RETURN & nota yang sudah di-return biar HPP tidak dobel
-    const monthTx = transactions.filter(t => t.date.startsWith(prefix) && t.caraBayar !== 'RETURN' && !t.returned && !returnedNotas.has(t.noNota))
+    const monthTx = transactions.filter(t => t.date.startsWith(prefix) && t.caraBayar !== 'RETURN' && !t.returned)
     const penjualan = monthTx.reduce((a, t) => a + (t.total||0), 0)
     // HPP pakai harga beli SAAT transaksi (it.buyPrice); fallback ke harga master hanya untuk data lama
     const hpp = monthTx.reduce((a, t) => a + (t.items||[]).reduce((s, it) => {
@@ -640,9 +640,8 @@ export function LaporanPenjualan({ transactions, products, members, suppliers, s
   const [searchName, setSearchName] = useState('') // cari nama pelanggan
 
   // Filter transaksi berdasarkan periode
-  const returnedNotas = new Set((transactions||[]).filter(t => t.caraBayar === "RETURN" && t.returnFrom).map(t => t.returnFrom))
   const txFiltered = transactions.filter(t => {
-    if (t.returned || returnedNotas.has(t.noNota)) return false
+    if (t.returned) return false // hanya retur PENUH yang dibuang; retur sebagian sudah mengecilkan nota
     if (t.date < tgl1 || t.date > tgl2) return false
     if (filterStatus !== 'all' && (t.caraBayar||'LUNAS') !== filterStatus) return false
     if (filterPlg && t.memberId !== filterPlg) return false
