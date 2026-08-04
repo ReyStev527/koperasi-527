@@ -1,4 +1,4 @@
-const CACHE_NAME = 'koperasi527-v1'
+const CACHE_NAME = 'koperasi527-v2' // naik versi → paksa semua device ambil aplikasi terbaru
 const STATIC_ASSETS = [
   '/',
   '/index.html',

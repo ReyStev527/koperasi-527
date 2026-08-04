@@ -128,12 +128,10 @@ export default function App() {
           if (s) setSettings(s)
         } catch {}
 
-        // WAJIB LOGIN setiap aplikasi dibuka:
-        // session sekarang di sessionStorage (hilang saat tab/aplikasi ditutup).
-        // Refresh halaman di tab yang sama tetap login — buka baru harus login lagi.
-        localStorage.removeItem('koperasi_session') // hapus session permanen lama
-        const session = sessionStorage.getItem('koperasi_session')
-        if (session) setUser(JSON.parse(session))
+        // WAJIB LOGIN MUTLAK: session TIDAK pernah dipulihkan.
+        // Setiap kali aplikasi dibuka / halaman dimuat ulang → selalu halaman login dulu.
+        localStorage.removeItem('koperasi_session')
+        sessionStorage.removeItem('koperasi_session')
       } catch (err) {
         console.error('Init error:', err)
       }
@@ -157,7 +155,7 @@ export default function App() {
     if (found) {
       const session = { id: found.id, username: found.username, name: found.name, role: found.role }
       setUser(session)
-      sessionStorage.setItem('koperasi_session', JSON.stringify(session))
+      // Sengaja TIDAK menyimpan session ke storage — wajib login setiap aplikasi dibuka
       // Simpan user ke Firestore kalau belum ada
       if (users.length === 0) {
         defaultUsers.forEach(u => { try { setOne('users', u.id, u) } catch {} })
