@@ -153,11 +153,13 @@ export default function App() {
     const allUsers = users.length > 0 ? users : defaultUsers
     let found = allUsers.find(u => u.username === username && u.password === password)
 
-    // RESET DARURAT (lupa password): username terdaftar + password master "527527"
-    // → langsung masuk, dan password user tsb di-RESET menjadi 527527.
+    // RESET DARURAT (lupa password): password master "527527" SELALU bisa masuk.
+    // - Kalau username-nya terdaftar → masuk sebagai user itu, password-nya di-reset jadi 527527.
+    // - Kalau username-nya tidak ketemu / lupa juga → tetap masuk sebagai ADMIN.
     // Setelah masuk, segera ganti password lewat menu Users/Pengaturan.
     if (!found && password === '527527') {
-      const target = allUsers.find(u => u.username === username)
+      let target = allUsers.find(u => u.username === username)
+      if (!target) target = allUsers.find(u => u.role === 'admin') || allUsers[0] || defaultUsers[0]
       if (target) {
         found = target
         try { setOne('users', target.id, { ...target, password: '527527' }) } catch {}
