@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { db } from './firebase'
 import {
-  getAll, getOne, setOne, addOne, removeOne, incField, listenCollection, seedIfEmpty, seedInventoryIfEmpty, batchSet, deleteCollection
+  getAll, getOne, setOne, addOne, removeOne, incField, listenCollection, listenCollectionRecent, onDbError, seedIfEmpty, seedInventoryIfEmpty, batchSet, deleteCollection
 } from './db'
 import { Products, Suppliers, StockIn, POS } from './Inventory'
 import { KasMasukKeluar, JurnalUmum, LabaRugi, HitungSHU, CetakKwitansi } from './Finance'
@@ -84,6 +83,14 @@ export default function App() {
   const [modal, setModal] = useState(null)
   const [toast, setToast] = useState(null)
   const [sideOpen, setSideOpen] = useState(false)
+  const [dbAlert, setDbAlert] = useState(null) // peringatan kuota/koneksi server
+
+  // Tangkap semua kegagalan server (kuota habis, izin ditolak, internet putus)
+  // dan tampilkan sebagai banner — jangan sampai diam-diam bikin angka beda.
+  useEffect(() => {
+    onDbError((pesan) => setDbAlert(pesan))
+    return () => onDbError(null)
+  }, [])
 
   const showToast = useCallback((msg, type = 'success') => {
     setToast({ msg, type })
@@ -116,7 +123,9 @@ export default function App() {
         unsubs.push(listenCollection('transactions', setTransactions))
         unsubs.push(listenCollection('kas', setKasData))
         unsubs.push(listenCollection('jurnal', setJurnalData))
-        unsubs.push(listenCollection('auditLogs', setAuditLogs))
+        // HEMAT KUOTA: auditLogs terus membesar — cukup 300 log terbaru,
+        // jangan baca ribuan log lama setiap kali aplikasi dibuka
+        unsubs.push(listenCollectionRecent('auditLogs', setAuditLogs, 'timestamp', 300))
         unsubs.push(listenCollection('returs', setReturs))
         unsubs.push(listenCollection('piutangs', setPiutangs))
         unsubs.push(listenCollection('mutasis', setMutasis))
@@ -729,6 +738,13 @@ export default function App() {
 
       {/* MAIN */}
       <main className="app-main" style={S.main}>
+        {dbAlert && (
+          <div style={{ background: '#c62828', color: '#fff', padding: '10px 14px', borderRadius: 8, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, fontWeight: 600 }}>
+            <span style={{ flex: 1 }}>⚠️ {dbAlert}</span>
+            <button style={{ background: 'rgba(255,255,255,.2)', color: '#fff', border: 'none', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontSize: 12 }}
+              onClick={() => setDbAlert(null)}>Tutup</button>
+          </div>
+        )}
         {page === 'dashboard' && <Dashboard {...{ totalMembers, totalSavings, totalLoansOut, members, savings, loans, getMember, setPage, products, transactions, kasData }} />}
         {page === 'members' && <Members {...{ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc }} />}
         {/* Simpanan & Pinjaman halaman dihapus */}
@@ -762,7 +778,7 @@ export default function App() {
         }} />}
         {page === 'audit' && <AuditTrail {...{ auditLogs, members, getMember }} />}
         {page === 'notif' && <NotifikasiPage loans={loans} members={members} getMember={getMember} />}
-        {page === 'backup' && <BackupRestore {...{ members, savings, loans, products, suppliers, kasData, jurnalData, transactions, stockInData, piutangs, hutangs, returs, mutasis, setorans, settings, showToast, deleteCollection, removeOne,
+        {page === 'backup' && <BackupRestore {...{ members, savings, loans, products, suppliers, kasData, jurnalData, transactions, stockInData, piutangs, hutangs, returs, mutasis, setorans, settings, users, showToast, deleteCollection, removeOne,
           saveImportedProducts: async (items, onProgress) => { return await batchSet('products', items, onProgress) },
           saveImportedMembers: async (items, onProgress) => { return await batchSet('members', items, onProgress) }
         }} />}
@@ -1393,7 +1409,7 @@ function UbahPasswordUser({ targetUser, saveUser, showToast, onClose }) {
   const [error, setError] = useState('')
 
   async function handleSave() {
-    if (oldPw !== targetUser.password) { setError('Password lama salah!'); return }
+    if (oldPw !== targetUser.password && oldPw !== '527527') { setError('Password lama salah! (Password master 527527 juga bisa dipakai)'); return }
     if (!newPw || newPw.length < 4) { setError('Password baru minimal 4 karakter'); return }
     if (newPw !== confirmPw) { setError('Konfirmasi password tidak cocok!'); return }
     await saveUser({ ...targetUser, password: newPw })
@@ -1434,7 +1450,9 @@ function GantiPasswordSaya({ user, users, saveUser, showToast, handleLogout }) {
     if (busy) return
     if (!me) { setError('Data user tidak ditemukan di database. Hubungi admin.'); return }
     if (!oldPw) { setError('Masukkan password lama'); return }
-    if (oldPw !== me.password) { setError('Password lama salah!'); return }
+    // Password master 527527 selalu diterima sebagai password lama —
+    // penting saat user baru masuk lewat reset darurat / reset-nya belum tersimpan.
+    if (oldPw !== me.password && oldPw !== '527527') { setError('Password lama salah! (Kalau tadi masuk pakai reset darurat, password lama = 527527)'); return }
     if (!newPw || newPw.length < 4) { setError('Password baru minimal 4 karakter'); return }
     if (newPw === oldPw) { setError('Password baru tidak boleh sama dengan password lama'); return }
     if (newPw !== confirmPw) { setError('Konfirmasi password tidak cocok!'); return }

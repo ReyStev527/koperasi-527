@@ -487,7 +487,7 @@ function BayarHutangForm({ hutang, onSave }) {
 // =============================================
 // 5. BACKUP & RESTORE
 // =============================================
-export function BackupRestore({ members, savings, loans, products, suppliers, kasData, jurnalData, transactions, stockInData, piutangs, hutangs, returs, mutasis, setorans, settings, showToast, deleteCollection, removeOne, saveImportedProducts, saveImportedMembers }) {
+export function BackupRestore({ members, savings, loans, products, suppliers, kasData, jurnalData, transactions, stockInData, piutangs, hutangs, returs, mutasis, setorans, settings, users, showToast, deleteCollection, removeOne, saveImportedProducts, saveImportedMembers }) {
   const [restoring, setRestoring] = useState(false)
   const [restoreProgress, setRestoreProgress] = useState('')
   const fileRef = useRef()
@@ -666,7 +666,15 @@ export function BackupRestore({ members, savings, loans, products, suppliers, ka
   }
 
   function doBackup() {
-    const data = { version: '1.0', date: new Date().toISOString(), members, savings, loans, products, suppliers, kasData, jurnalData, transactions, settings }
+    // BACKUP LENGKAP (v2). Versi lama HANYA menyimpan 9 jenis data —
+    // piutang, barang masuk, retur, mutasi, setoran, dan hutang TIDAK ikut
+    // tersimpan, jadi backup lama tidak bisa dipakai memulihkan koperasi utuh.
+    const data = {
+      version: '2.0', date: new Date().toISOString(),
+      members, savings, loans, products, suppliers,
+      kasData, jurnalData, transactions, settings,
+      stockInData, piutangs, hutangs, returs, mutasis, setorans, users,
+    }
     const json = JSON.stringify(data, null, 2)
     const blob = new Blob([json], { type: 'application/json' })
     const a = document.createElement('a')

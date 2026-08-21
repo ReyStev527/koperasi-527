@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app'
-import { getFirestore } from 'firebase/firestore'
+import { initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -17,5 +17,21 @@ if (!firebaseConfig.apiKey || firebaseConfig.apiKey === 'undefined') {
 console.log('Firebase project:', firebaseConfig.projectId)
 
 const app = initializeApp(firebaseConfig)
-export const db = getFirestore(app)
+
+// HEMAT KUOTA: cache permanen di browser (IndexedDB).
+// Tanpa cache ini, SETIAP kali aplikasi dibuka Firestore membaca ulang SEMUA
+// dokumen di 16 koleksi → kuota gratis 50rb baca/hari cepat habis
+// ("You have gone over your daily usage limits").
+// Dengan cache: buka ulang aplikasi hanya mengambil dokumen yang BERUBAH.
+let db
+try {
+  db = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+  })
+} catch (err) {
+  console.warn('Cache permanen tidak didukung browser ini, pakai mode biasa:', err)
+  db = getFirestore(app)
+}
+
+export { db }
 export default app
