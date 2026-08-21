@@ -1,6 +1,6 @@
 import {
   collection, doc, getDocs, getDoc, setDoc, updateDoc,
-  deleteDoc, query, where, orderBy, onSnapshot, writeBatch, increment
+  deleteDoc, query, where, orderBy, limit, onSnapshot, writeBatch, increment
 } from 'firebase/firestore'
 import { db } from './firebase'
 
@@ -18,7 +18,9 @@ export async function getOne(col, id) {
 }
 
 export async function setOne(col, id, data) {
-  await setDoc(doc(db, col, id), data, { merge: true })
+  try {
+    await setDoc(doc(db, col, id), data, { merge: true })
+  } catch (err) { reportDbError(err, 'simpan ' + col); throw err }
 }
 
 export async function addOne(col, data) {
@@ -31,10 +33,28 @@ export async function removeOne(col, id) {
   await deleteDoc(doc(db, col, id))
 }
 
+// =============================================
+// STATUS KONEKSI / KUOTA
+// Supaya kegagalan server TIDAK diam-diam bikin angka beda.
+// =============================================
+let dbErrorHandler = null
+export function onDbError(fn) { dbErrorHandler = fn }
+export function reportDbError(err, konteks) {
+  const code = err?.code || ''
+  let pesan = 'Gangguan koneksi ke server (' + (konteks || 'data') + ')'
+  if (code === 'resource-exhausted') pesan = 'KUOTA HARIAN FIREBASE HABIS — data TIDAK tersimpan ke server. Hentikan transaksi sampai kuota pulih.'
+  else if (code === 'permission-denied') pesan = 'Ditolak server (izin/kuota) — data TIDAK tersimpan.'
+  else if (code === 'unavailable') pesan = 'Server tidak terjangkau — periksa koneksi internet. Data belum tersimpan.'
+  console.error('[DB ERROR]', konteks, code, err)
+  if (dbErrorHandler) dbErrorHandler(pesan, code)
+}
+
 // Tambah/kurangi field angka secara ATOMIK di server (kebal race condition & data basi).
 // delta positif = tambah, negatif = kurangi. Aman dipakai walau 2 kasir jualan bersamaan.
 export async function incField(col, id, field, delta, extra) {
-  await setDoc(doc(db, col, id), { [field]: increment(delta), ...(extra || {}) }, { merge: true })
+  try {
+    await setDoc(doc(db, col, id), { [field]: increment(delta), ...(extra || {}) }, { merge: true })
+  } catch (err) { reportDbError(err, 'update stok'); throw err }
 }
 
 // =============================================
@@ -73,7 +93,7 @@ export function listenCollection(col, callback) {
         callback(snap.docs.map(d => ({ id: d.id, ...d.data() })))
       },
       (error) => {
-        console.error('Listener error [' + col + ']:', error)
+        reportDbError(error, 'baca ' + col)
         // Jangan clear data saat error — biarkan data lama tetap tampil
         // Auto-reconnect setelah delay
         if (retryCount < 5) {
@@ -87,13 +107,44 @@ export function listenCollection(col, callback) {
   return startListener()
 }
 
+// Listener hemat kuota: hanya ambil N dokumen terbaru (untuk koleksi yang
+// terus membesar seperti auditLogs — tidak perlu baca ribuan log lama tiap buka).
+export function listenCollectionRecent(col, callback, orderField, n) {
+  let retryCount = 0
+  function startListener() {
+    return onSnapshot(
+      query(collection(db, col), orderBy(orderField, 'desc'), limit(n)),
+      (snap) => {
+        retryCount = 0
+        callback(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+      },
+      (error) => {
+        reportDbError(error, 'baca ' + col)
+        if (retryCount < 5) {
+          retryCount++
+          setTimeout(() => startListener(), 2000 * retryCount)
+        }
+      }
+    )
+  }
+  return startListener()
+}
+
 // =============================================
 // SEED DATA (jalankan sekali untuk setup awal)
 // =============================================
 export async function seedIfEmpty() {
-  // Cek apakah sudah ada data
-  const usersSnap = await getDocs(collection(db, 'users'))
-  if (usersSnap.size > 0) return false // sudah ada data
+  // HEMAT KUOTA: kalau database sudah pernah terisi, JANGAN cek ulang.
+  // Dulu fungsi ini membaca SELURUH koleksi users setiap aplikasi dibuka,
+  // padahal datanya sudah pasti ada — murni pemborosan kuota.
+  try { if (localStorage.getItem('koperasi_seeded') === '1') return false } catch {}
+
+  // Cek apakah sudah ada data (pakai limit 1 — cukup tahu "kosong atau tidak")
+  const usersSnap = await getDocs(query(collection(db, 'users'), limit(1)))
+  if (usersSnap.size > 0) {
+    try { localStorage.setItem('koperasi_seeded', '1') } catch {}
+    return false // sudah ada data
+  }
 
   const batch = writeBatch(db)
 
@@ -195,8 +246,15 @@ export async function seedIfEmpty() {
 
 // Seed inventaris untuk user yang sudah punya data lama
 export async function seedInventoryIfEmpty() {
-  const prodSnap = await getDocs(collection(db, 'products'))
-  if (prodSnap.size > 0) return false
+  // HEMAT KUOTA: dulu membaca SEMUA produk (bisa ratusan dokumen) setiap
+  // aplikasi dibuka, cuma untuk tahu "sudah ada isinya atau belum".
+  try { if (localStorage.getItem('koperasi_seeded_inv') === '1') return false } catch {}
+
+  const prodSnap = await getDocs(query(collection(db, 'products'), limit(1)))
+  if (prodSnap.size > 0) {
+    try { localStorage.setItem('koperasi_seeded_inv', '1') } catch {}
+    return false
+  }
   // Re-run full seed won't work, so seed inventory only
   const batch = writeBatch(db)
   const suppliers = [
