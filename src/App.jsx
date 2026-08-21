@@ -649,7 +649,8 @@ export default function App() {
     { id: 'export', label: 'Import/Export', icon: I.home, roles: ['admin','bendahara'] },
     { id: 'audit', label: 'Audit Trail', icon: I.gear, roles: ['admin'] },
     { id: 'notif', label: 'Notifikasi', icon: I.home, roles: ['admin','bendahara','ketua'] },
-    { id: '_sep4', label: 'SISTEM', sep: true, roles: ['admin'] },
+    { id: '_sep4', label: 'SISTEM', sep: true, roles: ['admin','bendahara','ketua','staff'] },
+    { id: 'gantipw', label: 'Ganti Password', icon: I.gear, roles: ['admin','bendahara','ketua','staff'] },
     { id: 'backup', label: 'Backup & Restore', icon: I.gear, roles: ['admin'] },
     { id: 'settings', label: 'Pengaturan', icon: I.gear, roles: ['admin'] },
   ]
@@ -766,6 +767,7 @@ export default function App() {
           saveImportedMembers: async (items, onProgress) => { return await batchSet('members', items, onProgress) }
         }} />}
         {page === 'settings' && <SettingsPage {...{ settings, saveSettings, showToast, users, saveUser, deleteUser, user }} />}
+        {page === 'gantipw' && <GantiPasswordSaya {...{ user, users, saveUser, showToast, handleLogout }} />}
       </main>
 
       {/* MODAL */}
@@ -1407,9 +1409,71 @@ function UbahPasswordUser({ targetUser, saveUser, showToast, onClose }) {
       </div>
       {error && <div style={{ padding: '6px 10px', background: '#ffebee', color: '#c62828', borderRadius: 6, marginBottom: 8, fontSize: 12 }}>{error}</div>}
       <label style={S.formLabel}>Password Lama<input style={S.input} type="password" value={oldPw} onChange={e => { setOldPw(e.target.value); setError('') }} placeholder="Masukkan password saat ini" /></label>
-      <label style={S.formLabel}>Password Baru<input style={S.input} value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Minimal 4 karakter" /></label>
+      {/* FIX: sebelumnya field ini tanpa type="password" → password baru terlihat di layar */}
+      <label style={S.formLabel}>Password Baru<input style={S.input} type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Minimal 4 karakter" /></label>
       <label style={S.formLabel}>Konfirmasi Password Baru<input style={S.input} type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} placeholder="Ulangi password baru" /></label>
       <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={handleSave}>Simpan Password Baru</button>
+    </div>
+  )
+}
+
+// =============================================
+// GANTI PASSWORD SENDIRI (semua role)
+// =============================================
+function GantiPasswordSaya({ user, users, saveUser, showToast, handleLogout }) {
+  const [oldPw, setOldPw] = useState('')
+  const [newPw, setNewPw] = useState('')
+  const [confirmPw, setConfirmPw] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  // Ambil data user lengkap dari Firestore (session hanya berisi id/username/role)
+  const me = users.find(u => u.id === user.id) || users.find(u => u.username === user.username)
+
+  async function handleSave() {
+    if (busy) return
+    if (!me) { setError('Data user tidak ditemukan di database. Hubungi admin.'); return }
+    if (!oldPw) { setError('Masukkan password lama'); return }
+    if (oldPw !== me.password) { setError('Password lama salah!'); return }
+    if (!newPw || newPw.length < 4) { setError('Password baru minimal 4 karakter'); return }
+    if (newPw === oldPw) { setError('Password baru tidak boleh sama dengan password lama'); return }
+    if (newPw !== confirmPw) { setError('Konfirmasi password tidak cocok!'); return }
+    setBusy(true)
+    try {
+      await saveUser({ ...me, password: newPw })
+      showToast('Password berhasil diubah — silakan login ulang dengan password baru')
+      handleLogout() // keluar supaya login ulang pakai password baru
+    } catch (err) {
+      console.error('Ganti password error:', err)
+      setError('Gagal menyimpan: ' + (err.message || 'cek koneksi internet'))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div>
+      <div style={S.pageHead}><h2 style={S.title}>Ganti Password</h2></div>
+      <div style={{ ...S.card, maxWidth: 420 }}>
+        <div style={{ fontSize: 13, marginBottom: 12, color: '#64748b' }}>
+          Akun: <b>{user.name}</b> ({user.username} — {user.role})
+        </div>
+        {error && <div style={{ padding: '8px 12px', background: '#ffebee', color: '#c62828', borderRadius: 6, marginBottom: 10, fontSize: 13 }}>{error}</div>}
+        <label style={S.formLabel}>Password Lama
+          <input style={S.input} type="password" value={oldPw} onChange={e => { setOldPw(e.target.value); setError('') }} placeholder="Password saat ini" autoComplete="current-password" />
+        </label>
+        <label style={S.formLabel}>Password Baru
+          <input style={S.input} type="password" value={newPw} onChange={e => { setNewPw(e.target.value); setError('') }} placeholder="Minimal 4 karakter" autoComplete="new-password" />
+        </label>
+        <label style={S.formLabel}>Konfirmasi Password Baru
+          <input style={S.input} type="password" value={confirmPw} onChange={e => { setConfirmPw(e.target.value); setError('') }} placeholder="Ulangi password baru" autoComplete="new-password" />
+        </label>
+        <button style={{ ...S.primaryBtn, width: '100%', marginTop: 10, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={handleSave}>
+          {busy ? 'Menyimpan...' : 'Simpan & Login Ulang'}
+        </button>
+        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 10 }}>
+          Setelah tersimpan, sampean otomatis keluar dan harus login dengan password baru.
+        </div>
+      </div>
     </div>
   )
 }

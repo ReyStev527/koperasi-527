@@ -1275,7 +1275,9 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   const [bayarMid, setBayarMid] = useState(null)
   const [bayarAmount, setBayarAmount] = useState('')
 
-  // --- Penyesuaian tunggakan manual (per periode, tersimpan di browser) ---
+  // --- Penyesuaian tunggakan manual (per periode) ---
+  // FIX: dulu tersimpan di localStorage browser → tiap komputer/HP angkanya beda.
+  // Sekarang tersimpan di Firestore (koleksi 'juyarAdjust') → sama di semua device.
   const adjustKey = 'juyar_adj_' + startDate + '_' + endDate
   const [adjust, setAdjust] = useState({})
   const [editMid, setEditMid] = useState(null)
@@ -1283,16 +1285,40 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
 
   // Muat penyesuaian saat periode berubah
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(adjustKey)
-      setAdjust(raw ? JSON.parse(raw) : {})
-    } catch { setAdjust({}) }
+    let alive = true
+    ;(async () => {
+      try {
+        const { getOne } = await import('./db')
+        const remote = await getOne('juyarAdjust', adjustKey)
+        if (!alive) return
+        if (remote && remote.json) {
+          setAdjust(JSON.parse(remote.json) || {})
+        } else {
+          // Migrasi satu kali: angkat data lama dari browser ini ke Firestore
+          let local = {}
+          try { local = JSON.parse(localStorage.getItem(adjustKey) || '{}') || {} } catch {}
+          setAdjust(local)
+          if (Object.keys(local).length > 0) {
+            const { setOne } = await import('./db')
+            await setOne('juyarAdjust', adjustKey, { id: adjustKey, json: JSON.stringify(local) })
+          }
+        }
+      } catch (err) {
+        console.error('Muat penyesuaian tunggakan gagal:', err)
+        if (alive) setAdjust({})
+      }
+    })()
     setEditMid(null)
+    return () => { alive = false }
   }, [adjustKey])
 
   function simpanAdjust(next) {
     setAdjust(next)
-    try { localStorage.setItem(adjustKey, JSON.stringify(next)) } catch {}
+    // json string utuh (bukan object) supaya penghapusan key ikut tersimpan (merge Firestore tidak menghapus key)
+    import('./db')
+      .then(({ setOne }) => setOne('juyarAdjust', adjustKey, { id: adjustKey, json: JSON.stringify(next) }))
+      .catch(err => { console.error('Simpan penyesuaian gagal:', err); showToast('Penyesuaian gagal tersimpan ke server — cek koneksi', 'error') })
+    try { localStorage.setItem(adjustKey, JSON.stringify(next)) } catch {} // cadangan offline
   }
   function mulaiEdit(mid, nilaiSekarang) {
     setEditMid(mid)
@@ -1326,33 +1352,67 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   async function prosesBayarTunggakan(mid) {
     const amount = Number(bayarAmount)
     if (!amount || amount <= 0) { showToast('Masukkan jumlah pembayaran', 'error'); return }
+
+    // 1. Piutang resmi yang belum lunas
     const memberPiutangs = piutangs
       .filter(p => p.memberId === mid && (Math.max(0, (p.total||0) - (p.totalBayar||0))) > 0 && p.status !== 'LUNAS')
+      .map(p => ({ ...p }))
+
+    // 2. FIX BUG: nota KREDIT lama TANPA catatan piutang (orphan) ikut tampil di
+    // tunggakan, tapi dulu TIDAK PERNAH bisa dibayar dari sini → tunggakannya
+    // macet selamanya. Sekarang: didaftarkan sebagai piutang dulu, lalu dibayar.
+    const memberOrphans = orphanKredit
+      .filter(t => t.memberId === mid)
+      .map(t => ({
+        noNota: t.noNota || ('TX-' + (t.id || '')),
+        date: t.date || '',
+        memberId: t.memberId,
+        customerName: t.customerName || (members.find(m => m.id === mid)?.name || 'Umum'),
+        total: t.total || 0,
+        dp: t.payment || 0,
+        totalBayar: t.payment || 0,
+        sisa: Math.max(0, (t.total||0) - (t.payment||0)),
+        status: 'KREDIT',
+        payments: [],
+        fromTxId: t.id || null, // jejak: piutang ini dibuat dari nota lama
+      }))
+
+    // 3. Gabung & urutkan: yang paling lama dibayar duluan
+    const payables = [...memberPiutangs, ...memberOrphans]
       .sort((a, b) => (a.date||'').localeCompare(b.date||''))
-    if (memberPiutangs.length === 0) { showToast('Tidak ada piutang untuk dibayar', 'error'); return }
+    if (payables.length === 0) { showToast('Tidak ada piutang/tunggakan untuk dibayar', 'error'); return }
+
     if (!confirm('Bayar tunggakan ' + formatRp(amount) + ' atas nama ' + (members.find(m => m.id === mid)?.name||'') + '?')) return
-    let remaining = amount, paidCount = 0
-    for (const p of memberPiutangs) {
-      if (remaining <= 0) break
-      const sisa = Math.max(0, (p.total||0) - (p.totalBayar||0))
-      const bayar = Math.min(remaining, sisa)
-      await bayarPiutang(p, bayar)
-      remaining -= bayar
-      paidCount++
+
+    let remaining = amount, paidCount = 0, paidTunggakan = 0
+    try {
+      for (const p of payables) {
+        if (remaining <= 0) break
+        const sisa = Math.max(0, (p.total||0) - (p.totalBayar||0))
+        if (sisa <= 0) continue
+        const bayar = Math.min(remaining, sisa)
+        if (!p.id) await savePiutang(p) // orphan → daftarkan dulu (savePiutang mengisi p.id)
+        await bayarPiutang(p, bayar)
+        remaining -= bayar
+        if ((p.date||'') < startDate) paidTunggakan += bayar // porsi yang membayar TUNGGAKAN (bukan tagihan bulan ini)
+        paidCount++
+      }
+    } catch (err) {
+      console.error('Bayar tunggakan error:', err)
+      showToast('Sebagian pembayaran gagal tersimpan — cek koneksi lalu periksa menu Piutang', 'error')
     }
 
-    // TUNGGAKAN OTOMATIS TERHITUNG: kalau anggota ini punya penyesuaian manual,
-    // kurangi otomatis sebesar yang dibayar (dulu angka manual macet tidak berubah).
-    // Kalau hasilnya <= 0, hapus penyesuaian → kembali ke hitungan sistem.
-    if (adjust[mid] != null) {
-      const sisaAdj = Math.max(0, adjust[mid] - (amount - remaining))
+    // 4. TUNGGAKAN OTOMATIS TERHITUNG: penyesuaian manual dikurangi HANYA sebesar
+    // porsi yang membayar tunggakan (bukan seluruh pembayaran). Habis → hapus.
+    if (adjust[mid] != null && paidTunggakan > 0) {
+      const sisaAdj = Math.max(0, adjust[mid] - paidTunggakan)
       const next = { ...adjust }
       if (sisaAdj <= 0) delete next[mid]
       else next[mid] = sisaAdj
       simpanAdjust(next)
     }
 
-    showToast('Pembayaran ' + formatRp(amount) + ' berhasil — ' + paidCount + ' piutang diupdate')
+    showToast('Pembayaran ' + formatRp(amount - remaining) + ' berhasil — ' + paidCount + ' piutang diupdate' + (remaining > 0 ? ' (sisa ' + formatRp(remaining) + ' tidak terpakai, semua piutang lunas)' : ''))
     setBayarMid(null)
     setBayarAmount('')
   }
