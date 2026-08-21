@@ -1316,9 +1316,11 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
     simpanAdjust({})
     showToast('Semua penyesuaian tunggakan direset')
   }
-  // Tunggakan efektif: pakai nilai manual bila ada, kalau tidak pakai hasil hitung
+  // Tunggakan efektif: pakai nilai manual bila ada, kalau tidak pakai hasil hitung.
+  // Nilai manual TIDAK BOLEH melebihi hitungan sistem — jadi kalau piutang sudah
+  // dibayar (dari menu mana pun), tunggakan otomatis ikut turun.
   function tunggakanEfektif(m) {
-    return adjust[m.mid] != null ? adjust[m.mid] : m.totalTunggakan
+    return adjust[m.mid] != null ? Math.min(adjust[m.mid], m.totalTunggakan) : m.totalTunggakan
   }
 
   async function prosesBayarTunggakan(mid) {
@@ -1338,6 +1340,18 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
       remaining -= bayar
       paidCount++
     }
+
+    // TUNGGAKAN OTOMATIS TERHITUNG: kalau anggota ini punya penyesuaian manual,
+    // kurangi otomatis sebesar yang dibayar (dulu angka manual macet tidak berubah).
+    // Kalau hasilnya <= 0, hapus penyesuaian → kembali ke hitungan sistem.
+    if (adjust[mid] != null) {
+      const sisaAdj = Math.max(0, adjust[mid] - (amount - remaining))
+      const next = { ...adjust }
+      if (sisaAdj <= 0) delete next[mid]
+      else next[mid] = sisaAdj
+      simpanAdjust(next)
+    }
+
     showToast('Pembayaran ' + formatRp(amount) + ' berhasil — ' + paidCount + ' piutang diupdate')
     setBayarMid(null)
     setBayarAmount('')
