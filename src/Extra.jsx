@@ -1752,51 +1752,62 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
     setTanpaBayar(prev => { const n = new Set(prev); n.has(mid) ? n.delete(mid) : n.add(mid); return n })
   }
 
-  // Penanda yang ditinggalkan proses penutupan periode — dipakai untuk MEMBATALKAN
-  const refTutup = 'JUYAR-' + startDate + '_' + endDate
-  const ketTutup = 'Potong gaji ' + startDate + ' s/d ' + endDate
-
-  // Catatan piutang yang dilunasi oleh penutupan periode ini
-  const piutangDitutup = (piutangs || []).filter(p =>
-    (p.payments || []).some(x => x && x.ket === ketTutup))
-  const sudahDitutup = piutangDitutup.length > 0
-  const nilaiDitutup = piutangDitutup.reduce((a, p) =>
-    a + (p.payments || []).filter(x => x && x.ket === ketTutup).reduce((b, x) => b + (Number(x.amount) || 0), 0), 0)
-
   // =====================================================================
-  // BATALKAN PENUTUPAN PERIODE
-  // Mengembalikan seluruh tagihan yang telanjur ditandai lunas, beserta
-  // catatan kas dan jurnalnya. Aman: hanya menyentuh data yang dibuat oleh
-  // penutupan periode ini (dikenali dari penanda "Potong gaji <periode>").
+  // RIWAYAT PENUTUPAN PERIODE + PEMBATALAN
+  //
+  // Dicari dari SELURUH catatan piutang, bukan hanya periode yang sedang
+  // dibuka. Ini penting: kalau tombol tertekan saat tanggalnya salah,
+  // penutupannya tetap bisa ditemukan dan dibatalkan.
   // =====================================================================
-  const [sedangBatal, setSedangBatal] = useState(false)
+  const [sedangBatal, setSedangBatal] = useState('')
 
-  async function batalkanPenutupan() {
+  const riwayatTutup = (() => {
+    const peta = new Map()
+    for (const p of (piutangs || [])) {
+      for (const x of (p.payments || [])) {
+        const ket = x && x.ket
+        if (!ket || !String(ket).startsWith('Potong gaji ')) continue
+        if (!peta.has(ket)) peta.set(ket, { ket, jumlah: 0, nilai: 0, records: [] })
+        const g = peta.get(ket)
+        g.jumlah++
+        g.nilai += Number(x.amount) || 0
+        if (!g.records.includes(p)) g.records.push(p)
+      }
+    }
+    return [...peta.values()].sort((a, b) => b.ket.localeCompare(a.ket))
+  })()
+
+  async function batalkanPenutupan(grup) {
     if (sedangBatal) return
-    if (!sudahDitutup) { showToast('Periode ini belum pernah ditandai lunas', 'error'); return }
+    const ket = grup.ket
+    const m = ket.match(/^Potong gaji (\S+) s\/d (\S+)$/)
+    const pMulai = m ? m[1] : ''
+    const pAkhir = m ? m[2] : ''
+    const ref = 'JUYAR-' + pMulai + '_' + pAkhir
+
     if (!confirm(
-      'BATALKAN penutupan periode ' + startDate + ' s/d ' + endDate + '?\n\n' +
-      piutangDitutup.length + ' tagihan senilai ' + formatRp(nilaiDitutup) + ' akan dikembalikan\n' +
-      'menjadi BELUM LUNAS, dan catatan kas serta jurnalnya dihapus.\n\n' +
+      'BATALKAN penutupan periode ' + pMulai + ' s/d ' + pAkhir + '?\n\n' +
+      grup.records.length + ' tagihan senilai ' + formatRp(grup.nilai) + ' akan\n' +
+      'dikembalikan menjadi BELUM LUNAS, dan catatan kas serta\n' +
+      'jurnalnya dihapus.\n\n' +
       'Pakai ini kalau tombol "Tandai Sudah Dipotong" tertekan tidak sengaja.'
     )) return
 
-    setSedangBatal(true)
+    setSedangBatal(ket)
     let balik = 0, gagal = 0
     try {
       const { setOne, removeOne, getOne } = await import('./db')
 
-      for (const p of piutangDitutup) {
+      for (const p of grup.records) {
         try {
-          const sisaPay = (p.payments || []).filter(x => !(x && x.ket === ketTutup))
-          const dibalik = (p.payments || []).filter(x => x && x.ket === ketTutup)
+          const sisaPay = (p.payments || []).filter(x => !(x && x.ket === ket))
+          const dibalik = (p.payments || []).filter(x => x && x.ket === ket)
             .reduce((a, x) => a + (Number(x.amount) || 0), 0)
 
           if (p.fromTxId && sisaPay.length === 0) {
-            // Catatan ini DIBUAT oleh penutupan (dari nota kredit lama) → hapus
+            // Catatan ini DIBUAT oleh penutupan (dari nota kredit lama) -> hapus
             await removeOne('piutangs', p.id)
           } else {
-            // Catatan lama yang diperbarui → kembalikan angkanya
             const tb = Math.max(0, (p.totalBayar || 0) - dibalik)
             await setOne('piutangs', p.id, {
               ...p, totalBayar: tb, sisa: Math.max(0, (p.total || 0) - tb),
@@ -1807,34 +1818,39 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
         } catch (err) { gagal++; console.error('Batal piutang gagal:', p.id, err) }
       }
 
-      // Hapus kas & jurnal bawaan penutupan
-      for (const k of (kasData || []).filter(x => x.ref === refTutup)) {
+      for (const k of (kasData || []).filter(x => x.ref === ref)) {
         try { await removeOne('kas', k.id) } catch (err) { console.error(err) }
       }
-      for (const j of (jurnalData || []).filter(x => x.ref === refTutup)) {
+      for (const j of (jurnalData || []).filter(x => x.ref === ref)) {
         try { await removeOne('jurnal', j.id) } catch (err) { console.error(err) }
       }
 
-      // Kembalikan penyesuaian manual dari cadangan yang disimpan saat menutup
+      // Kembalikan penyesuaian manual dari cadangan (kalau penutupannya
+      // dilakukan oleh versi aplikasi yang sudah menyimpan cadangan)
       try {
-        const snap = await getOne('juyarAdjust', 'juyar_tutup_' + startDate + '_' + endDate)
+        const idSnap = 'juyar_tutup_' + pMulai + '_' + pAkhir
+        const snap = await getOne('juyarAdjust', idSnap)
         if (snap && snap.json) {
           const isi = JSON.parse(snap.json)
-          if (isi && isi.adjust) { simpanAdjust(isi.adjust); }
-          await removeOne('juyarAdjust', 'juyar_tutup_' + startDate + '_' + endDate)
+          if (isi && isi.adjust) {
+            await setOne('juyarAdjust', 'juyar_adj_' + pMulai + '_' + pAkhir, {
+              id: 'juyar_adj_' + pMulai + '_' + pAkhir, json: JSON.stringify(isi.adjust),
+            })
+          }
+          await removeOne('juyarAdjust', idSnap)
         }
       } catch (err) { console.error('Kembalikan penyesuaian gagal:', err) }
 
       if (logAction) await logAction('Tagihan Juyar', 'batal-tutup',
-        'Penutupan periode ' + startDate + ' s/d ' + endDate + ' DIBATALKAN: ' +
-        balik + ' tagihan dikembalikan, ' + formatRp(nilaiDitutup) + (gagal ? ', ' + gagal + ' gagal' : ''))
+        'Penutupan periode ' + pMulai + ' s/d ' + pAkhir + ' DIBATALKAN: ' +
+        balik + ' tagihan dikembalikan, ' + formatRp(grup.nilai) + (gagal ? ', ' + gagal + ' gagal' : ''))
 
       showToast('Penutupan dibatalkan — ' + balik + ' tagihan kembali' + (gagal ? ' (' + gagal + ' gagal)' : ''))
     } catch (err) {
       console.error('Batal penutupan error:', err)
       showToast('Gagal membatalkan: ' + (err.message || 'cek koneksi'), 'error')
     }
-    setSedangBatal(false)
+    setSedangBatal('')
   }
 
   async function tandaiSudahDipotong() {
@@ -2097,16 +2113,31 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
         </div>
       </div>
 
-      {sudahDitutup && (
-        <div style={{ background: '#e8f5e9', border: '1px solid #81c784', borderRadius: 8, padding: '12px 16px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 13, lineHeight: 1.7, color: '#1b5e20' }}>
-            <b>Periode ini sudah ditandai dipotong gaji.</b> {piutangDitutup.length} tagihan senilai {formatRp(nilaiDitutup)} tercatat lunas.
-            <div style={{ fontSize: 12, color: '#33691e' }}>Kalau tombolnya tertekan tidak sengaja, tekan Batalkan untuk mengembalikan semuanya.</div>
+      {riwayatTutup.length > 0 && (
+        <div style={{ background: '#e8f5e9', border: '1px solid #81c784', borderRadius: 10, padding: '14px 16px', marginBottom: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#1b5e20', marginBottom: 4 }}>
+            Riwayat Penutupan Periode ({riwayatTutup.length})
           </div>
-          <button style={{ background: '#c62828', color: '#fff', border: 'none', borderRadius: 7, padding: '8px 16px', cursor: 'pointer', fontWeight: 600, fontSize: 13, opacity: sedangBatal ? 0.6 : 1 }}
-            disabled={sedangBatal} onClick={batalkanPenutupan}>
-            {sedangBatal ? 'Mengembalikan...' : 'Batalkan Penutupan'}
-          </button>
+          <div style={{ fontSize: 12, color: '#33691e', marginBottom: 10, lineHeight: 1.6 }}>
+            Daftar periode yang pernah ditandai sudah dipotong gaji. Kalau tombolnya tertekan
+            tidak sengaja, tekan <b>Batalkan</b> — seluruh tagihannya kembali menjadi belum lunas,
+            catatan kas dan jurnalnya ikut dihapus.
+          </div>
+          {riwayatTutup.map(g => {
+            const m = g.ket.match(/^Potong gaji (\S+) s\/d (\S+)$/)
+            return (
+              <div key={g.ket} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', background: '#fff', border: '1px solid #c8e6c9', borderRadius: 8, padding: '9px 12px', marginBottom: 7 }}>
+                <div style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+                  <b>Periode {m ? m[1] + ' s/d ' + m[2] : g.ket}</b>
+                  <div style={{ color: '#607d8b' }}>{g.records.length} tagihan &middot; {formatRp(g.nilai)}</div>
+                </div>
+                <button style={{ background: '#c62828', color: '#fff', border: 'none', borderRadius: 7, padding: '7px 15px', cursor: 'pointer', fontWeight: 600, fontSize: 12.5, opacity: sedangBatal === g.ket ? 0.6 : 1 }}
+                  disabled={sedangBatal === g.ket} onClick={() => batalkanPenutupan(g)}>
+                  {sedangBatal === g.ket ? 'Mengembalikan...' : 'Batalkan'}
+                </button>
+              </div>
+            )
+          })}
         </div>
       )}
 
