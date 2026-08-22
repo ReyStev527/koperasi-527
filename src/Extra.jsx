@@ -487,7 +487,7 @@ function BayarHutangForm({ hutang, onSave }) {
 // =============================================
 // 5. BACKUP & RESTORE
 // =============================================
-export function BackupRestore({ members, savings, loans, products, suppliers, kasData, jurnalData, transactions, stockInData, piutangs, hutangs, returs, mutasis, setorans, settings, users, showToast, deleteCollection, removeOne, saveImportedProducts, saveImportedMembers }) {
+export function BackupRestore({ members, savings, loans, products, suppliers, kasData, jurnalData, transactions, stockInData, piutangs, hutangs, returs, mutasis, setorans, settings, users, opnames, showToast, deleteCollection, removeOne, saveImportedProducts, saveImportedMembers, saveSettings, logAction }) {
   const [restoring, setRestoring] = useState(false)
   const [restoreProgress, setRestoreProgress] = useState('')
   const fileRef = useRef()
@@ -665,7 +665,18 @@ export function BackupRestore({ members, savings, loans, products, suppliers, ka
     showToast(totalDeleted + ' data berhasil dihapus', 'error')
   }
 
-  function doBackup() {
+  // --- PENGINGAT BACKUP OTOMATIS ---
+  // Browser tidak bisa menjalankan tugas terjadwal saat aplikasi tertutup,
+  // jadi yang bisa diandalkan adalah: begitu aplikasi dibuka, periksa kapan
+  // backup terakhir. Kalau sudah lewat batas, ingatkan dan tawarkan sekali klik.
+  const BATAS_HARI = 3
+  const terakhir = settings?.lastBackupAt || ''
+  const selisihHari = terakhir
+    ? Math.floor((Date.now() - new Date(terakhir).getTime()) / 86400000)
+    : null
+  const perluBackup = selisihHari === null || selisihHari >= BATAS_HARI
+
+  function doBackup(otomatis) {
     // BACKUP LENGKAP (v2). Versi lama HANYA menyimpan 9 jenis data —
     // piutang, barang masuk, retur, mutasi, setoran, dan hutang TIDAK ikut
     // tersimpan, jadi backup lama tidak bisa dipakai memulihkan koperasi utuh.
@@ -673,7 +684,7 @@ export function BackupRestore({ members, savings, loans, products, suppliers, ka
       version: '2.0', date: new Date().toISOString(),
       members, savings, loans, products, suppliers,
       kasData, jurnalData, transactions, settings,
-      stockInData, piutangs, hutangs, returs, mutasis, setorans, users,
+      stockInData, piutangs, hutangs, returs, mutasis, setorans, users, opnames,
     }
     const json = JSON.stringify(data, null, 2)
     const blob = new Blob([json], { type: 'application/json' })
@@ -681,7 +692,16 @@ export function BackupRestore({ members, savings, loans, products, suppliers, ka
     a.href = URL.createObjectURL(blob)
     a.download = 'backup_koperasi_' + today() + '.json'
     a.click()
-    showToast('Backup berhasil di-download')
+
+    // Catat waktu backup supaya pengingat tahu kapan terakhir dilakukan
+    try {
+      if (saveSettings) saveSettings({ ...settings, lastBackupAt: new Date().toISOString() })
+      if (logAction) logAction('Backup', 'download',
+        'Backup ' + (otomatis ? 'terjadwal' : 'manual') + ': ' +
+        members.length + ' anggota, ' + transactions.length + ' transaksi, ' + products.length + ' produk')
+    } catch (err) { console.error('Catat waktu backup gagal:', err) }
+
+    showToast('Backup berhasil di-download' + (otomatis ? ' (pengingat terjadwal)' : ''))
   }
 
   async function doRestore(e) {
@@ -728,6 +748,32 @@ export function BackupRestore({ members, savings, loans, products, suppliers, ka
   return (
     <div>
       <h2 style={S.title}>Backup & Restore Data</h2>
+
+      {/* Status backup — menggantikan "backup terjadwal" yang tidak bisa dijalankan browser */}
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+        background: perluBackup ? '#fff3e0' : '#e8f5e9',
+        border: '1px solid ' + (perluBackup ? '#ffb74d' : '#a5d6a7'),
+        borderRadius: 10, padding: '12px 16px', marginBottom: 16, fontSize: 13,
+      }}>
+        <div>
+          <div style={{ fontWeight: 700, color: perluBackup ? '#e65100' : '#2e7d32', marginBottom: 3 }}>
+            {perluBackup ? 'Waktunya backup' : 'Backup terkini'}
+          </div>
+          <div style={{ color: '#5d6d66' }}>
+            {terakhir
+              ? 'Backup terakhir: ' + new Date(terakhir).toLocaleString('id-ID') +
+                (selisihHari === 0 ? ' (hari ini)' : ' — ' + selisihHari + ' hari lalu')
+              : 'Belum pernah backup dari perangkat ini.'}
+            {perluBackup && ' Disarankan setiap ' + BATAS_HARI + ' hari sekali.'}
+          </div>
+        </div>
+        {perluBackup && (
+          <button style={{ ...S.primaryBtn, background: '#e65100' }} onClick={() => doBackup(true)}>
+            Backup Sekarang
+          </button>
+        )}
+      </div>
       <div style={S.grid2}>
         <div style={{ ...S.card, padding: 24 }}>
           <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 12, color: '#2e7d32' }}>Backup Data</h3>
@@ -740,7 +786,7 @@ export function BackupRestore({ members, savings, loans, products, suppliers, ka
               </div>
             ))}
           </div>
-          <button style={{ ...S.primaryBtn, width: '100%', justifyContent: 'center', background: '#2e7d32' }} onClick={doBackup}>
+          <button style={{ ...S.primaryBtn, width: '100%', justifyContent: 'center', background: '#2e7d32' }} onClick={() => doBackup(false)}>
             <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
             Download Backup
           </button>
@@ -1376,29 +1422,63 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   const [editMid, setEditMid] = useState(null)
   const [editVal, setEditVal] = useState('')
 
+  // Penanda mana yang nilainya DIWARISI dari periode sebelumnya (bukan diketik di periode ini)
+  const [warisan, setWarisan] = useState({})
+
   // Muat penyesuaian saat periode berubah
   useEffect(() => {
     let alive = true
     ;(async () => {
       try {
-        const { getOne } = await import('./db')
+        const { getAll, getOne } = await import('./db')
+
+        // 1. Penyesuaian milik periode ini
+        let milikPeriode = {}
         const remote = await getOne('juyarAdjust', adjustKey)
-        if (!alive) return
         if (remote && remote.json) {
-          setAdjust(JSON.parse(remote.json) || {})
+          milikPeriode = JSON.parse(remote.json) || {}
         } else {
-          // Migrasi satu kali: angkat data lama dari browser ini ke Firestore
-          let local = {}
-          try { local = JSON.parse(localStorage.getItem(adjustKey) || '{}') || {} } catch {}
-          setAdjust(local)
-          if (Object.keys(local).length > 0) {
+          // Migrasi satu kali: angkat data lama dari browser ini ke server
+          try { milikPeriode = JSON.parse(localStorage.getItem(adjustKey) || '{}') || {} } catch {}
+          if (Object.keys(milikPeriode).length > 0) {
             const { setOne } = await import('./db')
-            await setOne('juyarAdjust', adjustKey, { id: adjustKey, json: JSON.stringify(local) })
+            await setOne('juyarAdjust', adjustKey, { id: adjustKey, json: JSON.stringify(milikPeriode) })
           }
         }
+
+        // 2. WARISAN DARI PERIODE SEBELUMNYA — inilah perbaikan bug utama.
+        //    Dulu penyesuaian hanya berlaku di periodenya sendiri, sehingga
+        //    tunggakan yang diisi manual bulan lalu HILANG begitu ganti ke
+        //    bulan ini. Padahal utang yang belum dibayar memang harus terbawa.
+        //    Diambil dari periode terakhir yang berakhir SEBELUM periode ini dimulai.
+        const semua = await getAll('juyarAdjust')
+        const sebelumnya = (semua || [])
+          .map(d => {
+            const m = String(d.id || '').match(/^juyar_adj_(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/)
+            return m ? { mulai: m[1], selesai: m[2], json: d.json } : null
+          })
+          .filter(d => d && d.selesai < startDate)
+          .sort((a, b) => b.selesai.localeCompare(a.selesai))[0]
+
+        const diwarisi = {}
+        if (sebelumnya && sebelumnya.json) {
+          try {
+            const lama = JSON.parse(sebelumnya.json) || {}
+            for (const [mid, nilai] of Object.entries(lama)) {
+              // Hanya yang BELUM disentuh di periode ini, dan nilainya masih ada
+              if (!(mid in milikPeriode) && nilai != null && Number(nilai) > 0) {
+                diwarisi[mid] = Number(nilai)
+              }
+            }
+          } catch {}
+        }
+
+        if (!alive) return
+        setAdjust({ ...diwarisi, ...milikPeriode })
+        setWarisan(diwarisi)
       } catch (err) {
         console.error('Muat penyesuaian tunggakan gagal:', err)
-        if (alive) setAdjust({})
+        if (alive) { setAdjust({}); setWarisan({}) }
       }
     })()
     setEditMid(null)
@@ -1417,10 +1497,28 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
     let alive = true
     ;(async () => {
       try {
-        const { getOne } = await import('./db')
+        const { getAll, getOne } = await import('./db')
         const r = await getOne('juyarAdjust', manualKey)
-        if (!alive) return
-        setManualMids(r && r.json ? (JSON.parse(r.json) || []) : [])
+        if (r && r.json) {
+          if (alive) setManualMids(JSON.parse(r.json) || [])
+          return
+        }
+        // Belum ada daftar untuk periode ini → WARISI dari periode sebelumnya.
+        // Anggota yang ditambahkan manual bulan lalu tetap perlu tampil bulan ini,
+        // kalau tidak, tunggakan warisannya tidak punya baris untuk ditampilkan.
+        const semua = await getAll('juyarAdjust')
+        const sebelumnya = (semua || [])
+          .map(d => {
+            const m = String(d.id || '').match(/^juyar_manual_(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/)
+            return m ? { selesai: m[2], json: d.json } : null
+          })
+          .filter(d => d && d.selesai < startDate)
+          .sort((a, b) => b.selesai.localeCompare(a.selesai))[0]
+        let warisanMids = []
+        if (sebelumnya && sebelumnya.json) {
+          try { warisanMids = JSON.parse(sebelumnya.json) || [] } catch {}
+        }
+        if (alive) setManualMids(warisanMids)
       } catch (err) { console.error('Muat anggota manual gagal:', err); if (alive) setManualMids([]) }
     })()
     setTambahKompi(null)
@@ -1501,14 +1599,17 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
     showToast('Tunggakan disesuaikan — total potong ikut berubah')
   }
   function resetAdjust(mid) {
-    const next = { ...adjust }
-    delete next[mid]
-    simpanAdjust(next)
+    // Ditulis null (bukan dihapus) sebagai penanda "sengaja dikembalikan ke
+    // hitungan sistem". Kalau key-nya dihapus, nilai lama akan MUNCUL LAGI
+    // sebagai warisan dari periode sebelumnya.
+    simpanAdjust({ ...adjust, [mid]: null })
     setEditMid(null)
   }
   function resetSemuaAdjust() {
     if (!confirm('Kembalikan SEMUA tunggakan ke nilai asli (hasil hitung sistem)?')) return
-    simpanAdjust({})
+    const next = {}
+    for (const mid of Object.keys(adjust)) next[mid] = null // penanda, bukan dihapus
+    simpanAdjust(next)
     showToast('Semua penyesuaian tunggakan direset')
   }
   // Tunggakan efektif: pakai nilai manual bila ada, kalau tidak pakai hasil hitung.
@@ -1578,11 +1679,10 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
     // 4. TUNGGAKAN OTOMATIS TERHITUNG: penyesuaian manual dikurangi HANYA sebesar
     // porsi yang membayar tunggakan (bukan seluruh pembayaran). Habis → hapus.
     if (adjust[mid] != null && paidTunggakan > 0) {
+      // Sisa ditulis apa adanya (termasuk 0) supaya tidak muncul lagi
+      // sebagai warisan dari periode sebelumnya.
       const sisaAdj = Math.max(0, adjust[mid] - paidTunggakan)
-      const next = { ...adjust }
-      if (sisaAdj <= 0) delete next[mid]
-      else next[mid] = sisaAdj
-      simpanAdjust(next)
+      simpanAdjust({ ...adjust, [mid]: sisaAdj })
     }
 
     showToast('Pembayaran ' + formatRp(amount - remaining) + ' berhasil — ' + paidCount + ' piutang diupdate' + (remaining > 0 ? ' (sisa ' + formatRp(remaining) + ' tidak terpakai, semua piutang lunas)' : ''))
@@ -1830,7 +1930,7 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
                     ) : (
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end' }}>
                         {isAdj && <span title={'Nilai asli: ' + formatRp(m.totalTunggakan)} style={{ fontSize: 10, color: '#9e9e9e', textDecoration: 'line-through' }}>{formatRp(m.totalTunggakan)}</span>}
-                        <span onClick={() => mulaiEdit(mid, tg)} title="Klik untuk ubah tunggakan"
+                        <span onClick={() => mulaiEdit(mid, tg)} title={warisan[mid] != null ? 'Diwarisi dari periode sebelumnya (belum lunas) — klik untuk ubah' : 'Klik untuk ubah tunggakan'}
                           style={{ cursor: 'pointer', borderBottom: '1px dashed #c62828', color: tg > 0 ? '#c62828' : '#6b7280', fontWeight: tg > 0 ? 700 : 400 }}>
                           {formatRp(tg)}{isAdj ? ' •' : ''}
                         </span>
