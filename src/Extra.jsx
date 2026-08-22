@@ -1285,7 +1285,11 @@ function PilihAnggota({ members, sudahAda, kompiAwal, onPilih, onTutup }) {
   const kompiOpsi = [...new Set(members.map(m => (m.kompi || '').trim()).filter(Boolean))].sort()
 
   const kata = q.trim().toLowerCase()
-  const semua = members.filter(m => !sudahAda.has(m.id))
+  // PENTING: anggota yang SUDAH ada di daftar tetap ikut hasil pencarian.
+  // Dulu mereka disembunyikan, sehingga mencari nama yang jelas-jelas ada
+  // (mis. "aliku") menghasilkan "tidak ada anggota yang cocok" — terlihat rusak.
+  // Sekarang mereka tetap muncul, hanya ditandai "sudah di daftar".
+  const semua = members
   const terfilterKompi = kompiFilter
     ? semua.filter(m => (m.kompi || 'NON-ANGGOTA') === kompiFilter)
     : semua
@@ -1319,28 +1323,35 @@ function PilihAnggota({ members, sudahAda, kompiAwal, onPilih, onTutup }) {
       <div style={{ fontSize: 11, color: '#607d8b', marginBottom: 6 }}>
         Ketemu <b>{hasil.length}</b> anggota{kata ? ' untuk "' + q + '"' : ''} — dari total {members.length} anggota terdaftar
         {hasil.length > 30 ? '. Menampilkan 30 teratas, ketik lebih spesifik untuk mempersempit.' : ''}
+        {hasil.some(m => sudahAda.has(m.id)) ? ' Yang bertanda abu-abu sudah ada di daftar tagihan.' : ''}
       </div>
 
       <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid #e0e0e0', borderRadius: 6, background: '#fff' }}>
         {tampil.length === 0 && (
           <div style={{ padding: 14, fontSize: 13, color: '#78909c', textAlign: 'center' }}>
-            {semua.length === 0 ? 'Semua anggota sudah ada di daftar tagihan.' : 'Tidak ada anggota yang cocok. Coba kata kunci lain.'}
+            Tidak ada anggota yang cocok dengan "{q}". Coba potongan nama lain, atau ubah filter kompi.
           </div>
         )}
-        {tampil.map(m => (
-          <div key={m.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '7px 10px', borderBottom: '1px solid #f0f0f0' }}>
+        {tampil.map(m => {
+          const sudah = sudahAda.has(m.id)
+          return (
+          <div key={m.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '7px 10px', borderBottom: '1px solid #f0f0f0', background: sudah ? '#f5f7f8' : undefined }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: sudah ? '#78909c' : undefined }}>
                 {(m.pangkat ? m.pangkat + ' ' : '') + (m.name || '(tanpa nama)')}
               </div>
-              <div style={{ fontSize: 11, color: '#78909c', fontFamily: 'monospace' }}>
+              <div style={{ fontSize: 11, color: '#90a4ae', fontFamily: 'monospace' }}>
                 {(m.kompi || 'tanpa kompi')} · NRP {m.nrp || '-'}{m.no ? ' · No ' + m.no : ''}
               </div>
             </div>
-            <button style={{ ...S.primaryBtn, padding: '5px 12px', fontSize: 12 }}
-              onClick={() => onPilih(m.id)}>Tambah</button>
+            {sudah ? (
+              <span style={{ fontSize: 11, color: '#78909c', padding: '4px 10px', background: '#e0e5e8', borderRadius: 5, whiteSpace: 'nowrap' }}>sudah di daftar</span>
+            ) : (
+              <button style={{ ...S.primaryBtn, padding: '5px 12px', fontSize: 12 }}
+                onClick={() => onPilih(m.id)}>Tambah</button>
+            )}
           </div>
-        ))}
+        )})}
       </div>
     </div>
   )
@@ -1442,12 +1453,31 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
     const next = { ...adjust }; delete next[mid]; simpanAdjust(next)
   }
 
+  // --- Banner penyesuaian manual: tampil sebentar lalu hilang sendiri ---
+  // Pemberitahuan ini hanya perlu dilihat sesaat setelah mengubah angka;
+  // dibiarkan terus, ia cuma memakan tempat di layar.
+  const [bannerTampil, setBannerTampil] = useState(true)
+  const [statusSimpan, setStatusSimpan] = useState('') // '', 'menyimpan', 'tersimpan', 'gagal'
+
+  useEffect(() => {
+    if (!bannerTampil) return
+    const t = setTimeout(() => setBannerTampil(false), 60000) // 1 menit
+    return () => clearTimeout(t)
+  }, [bannerTampil, statusSimpan])
+
   function simpanAdjust(next) {
     setAdjust(next)
+    setBannerTampil(true)          // tampilkan lagi, hitung mundur 1 menit dimulai ulang
+    setStatusSimpan('menyimpan')
     // json string utuh (bukan object) supaya penghapusan key ikut tersimpan (merge Firestore tidak menghapus key)
     import('./db')
       .then(({ setOne }) => setOne('juyarAdjust', adjustKey, { id: adjustKey, json: JSON.stringify(next) }))
-      .catch(err => { console.error('Simpan penyesuaian gagal:', err); showToast('Penyesuaian gagal tersimpan ke server — cek koneksi', 'error') })
+      .then(() => setStatusSimpan('tersimpan'))
+      .catch(err => {
+        console.error('Simpan penyesuaian gagal:', err)
+        setStatusSimpan('gagal')
+        showToast('Penyesuaian gagal tersimpan ke server — cek koneksi', 'error')
+      })
     try { localStorage.setItem(adjustKey, JSON.stringify(next)) } catch {} // cadangan offline
   }
   function mulaiEdit(mid, nilaiSekarang) {
@@ -1729,10 +1759,18 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
         <div style={S.statCard}><div style={S.statLabel}>Tunggakan Bulan Lalu</div><div style={{ ...S.statVal, color: '#c62828' }}>{formatRp(totalTunggakanAll)}</div>{jumlahDisesuaikan > 0 && <div style={{ fontSize: 11, color: '#e65100' }}>{jumlahDisesuaikan} disesuaikan manual</div>}</div>
         <div style={S.statCard}><div style={S.statLabel}>Grand Total Potong</div><div style={{ ...S.statVal, color: '#2e7d32' }}>{formatRp(grandTotal)}</div><div style={{ fontSize: 11, color: '#999' }}>{semuaAnggota.length} anggota</div></div>
       </div>
-      {jumlahDisesuaikan > 0 && (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff8e1', border: '1px solid #ffe082', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 12 }}>
-          <span style={{ color: '#e65100' }}>{jumlahDisesuaikan} anggota tunggakannya disesuaikan manual (ditandai • pada tabel &amp; * pada cetakan)</span>
-          <button style={{ fontSize: 11, padding: '4px 10px', background: '#e65100', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }} onClick={resetSemuaAdjust}>Reset Semua</button>
+      {jumlahDisesuaikan > 0 && bannerTampil && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', background: '#fff8e1', border: '1px solid #ffe082', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 12 }}>
+          <span style={{ color: '#e65100' }}>
+            {jumlahDisesuaikan} anggota tunggakannya disesuaikan manual (ditandai • pada tabel &amp; * pada cetakan)
+            {statusSimpan === 'menyimpan' && <span style={{ color: '#8d6e63', marginLeft: 8 }}>menyimpan...</span>}
+            {statusSimpan === 'tersimpan' && <span style={{ color: '#2e7d32', marginLeft: 8, fontWeight: 600 }}>&#10003; tersimpan otomatis</span>}
+            {statusSimpan === 'gagal' && <span style={{ color: '#c62828', marginLeft: 8, fontWeight: 600 }}>gagal tersimpan &mdash; cek koneksi</span>}
+          </span>
+          <span style={{ display: 'flex', gap: 6 }}>
+            <button style={{ fontSize: 11, padding: '4px 10px', background: '#e65100', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }} onClick={resetSemuaAdjust}>Reset Semua</button>
+            <button title="Sembunyikan pemberitahuan ini" style={{ fontSize: 11, padding: '4px 10px', background: 'transparent', color: '#8d6e63', border: '1px solid #ffe082', borderRadius: 6, cursor: 'pointer' }} onClick={() => setBannerTampil(false)}>Tutup</button>
+          </span>
         </div>
       )}
       {sortedKompi.map(kompi => {
