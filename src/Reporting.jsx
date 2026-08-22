@@ -536,8 +536,12 @@ export function AuditTrail({ auditLogs, members, getMember }) {
 
   let filtered = auditLogs
   if (filter !== 'all') filtered = filtered.filter(l => l.module === filter)
-  if (search) filtered = filtered.filter(l => l.detail.toLowerCase().includes(search.toLowerCase()) || l.user.toLowerCase().includes(search.toLowerCase()))
-  const sorted = [...filtered].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 200)
+  // Pencarian tahan data kosong (dulu log tanpa detail/user membuat halaman blank)
+  if (search) {
+    const q = search.toLowerCase()
+    filtered = filtered.filter(l => String(l.detail||'').toLowerCase().includes(q) || String(l.user||'').toLowerCase().includes(q))
+  }
+  const sorted = [...filtered].sort((a, b) => String(b.timestamp||'').localeCompare(String(a.timestamp||''))).slice(0, 300)
 
   const modules = [...new Set(auditLogs.map(l => l.module))].sort()
 

@@ -1272,7 +1272,7 @@ const td = { padding: '8px 12px', borderBottom: '1px solid #e5e7eb' }
 // 8. TAGIHAN JUYAR (Potong Gaji) per Kompi
 // + TUNGGAKAN ketika tidak bisa dipotong
 // =============================================
-export function TagihanJuyar({ transactions, piutangs, members, settings, savePiutang, bayarPiutang, showToast, setModal }) {
+export function TagihanJuyar({ transactions, piutangs, members, settings, savePiutang, bayarPiutang, showToast, setModal, logAction }) {
   const now = new Date()
   const defaultEnd = new Date(now.getFullYear(), now.getMonth(), 25)
   const defaultStart = new Date(defaultEnd); defaultStart.setMonth(defaultStart.getMonth() - 1); defaultStart.setDate(26)
@@ -1355,6 +1355,11 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
     if (!mid) { showToast('Pilih anggota dulu', 'error'); return }
     if (manualMids.includes(mid)) { showToast('Anggota itu sudah ada di daftar', 'error'); return }
     simpanManual([...manualMids, mid])
+    try {
+      const nm = members.find(x => x.id === mid)
+      if (logAction) logAction('Tunggakan', 'tambah-anggota',
+        'Tambah manual: ' + (nm?.name || mid) + ' [' + (nm?.kompi || '-') + '] periode ' + startDate + ' s/d ' + endDate)
+    } catch {}
     setPilihMid('')
     setTambahKompi(null)
     showToast('Anggota ditambahkan — klik angka Tunggakan untuk mengisi nominal')
@@ -1381,8 +1386,17 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   function simpanEdit(mid) {
     const v = Number(editVal)
     if (isNaN(v) || v < 0) { showToast('Nilai tunggakan tidak valid', 'error'); return }
+    const sebelum = adjust[mid]
     simpanAdjust({ ...adjust, [mid]: Math.round(v) })
     setEditMid(null)
+    // AUDIT: penyesuaian tunggakan mengubah nominal potong gaji secara manual,
+    // jadi wajib tercatat siapa yang mengubah dan dari berapa jadi berapa.
+    try {
+      const nm = members.find(x => x.id === mid)?.name || mid
+      if (logAction) logAction('Tunggakan', 'sesuaikan',
+        nm + ': ' + (sebelum != null ? Number(sebelum).toLocaleString('id-ID') : 'otomatis') +
+        ' -> ' + Math.round(v).toLocaleString('id-ID') + ' (periode ' + startDate + ' s/d ' + endDate + ')')
+    } catch {}
     showToast('Tunggakan disesuaikan — total potong ikut berubah')
   }
   function resetAdjust(mid) {

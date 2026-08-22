@@ -124,9 +124,10 @@ export default function App() {
         unsubs.push(listenCollection('transactions', setTransactions))
         unsubs.push(listenCollection('kas', setKasData))
         unsubs.push(listenCollection('jurnal', setJurnalData))
-        // HEMAT KUOTA: auditLogs terus membesar — cukup 300 log terbaru,
+        // HEMAT KUOTA: auditLogs terus membesar — ambil 1000 log terbaru
+        // (penjualan kini ikut tercatat, jadi log bertambah jauh lebih cepat),
         // jangan baca ribuan log lama setiap kali aplikasi dibuka
-        unsubs.push(listenCollectionRecent('auditLogs', setAuditLogs, 'timestamp', 300))
+        unsubs.push(listenCollectionRecent('auditLogs', setAuditLogs, 'timestamp', 1000))
         unsubs.push(listenCollection('returs', setReturs))
         unsubs.push(listenCollection('piutangs', setPiutangs))
         unsubs.push(listenCollection('mutasis', setMutasis))
@@ -234,9 +235,28 @@ export default function App() {
 
   // ---- Inventory CRUD ----
   async function saveProduct(p, isEdit) {
+    const lama = isEdit ? products.find(x => x.id === p.id) : null
     p.updatedAt = today()
     if (isEdit) await setOne('products', p.id, p)
     else { p.id = genId(); p.createdAt = today(); await setOne('products', p.id, p) }
+
+    // AUDIT: perubahan HARGA dicatat lengkap (dari berapa jadi berapa),
+    // karena harga jual paling sering jadi sumber pertanyaan saat laba tidak cocok.
+    try {
+      const nama = p.name || lama?.name || p.id
+      if (!isEdit) {
+        await logAction('Produk', 'create', 'Tambah produk: ' + nama)
+      } else if (lama) {
+        const ubah = []
+        const cek = [['buyPrice','Harga beli'], ['sellPrice','Harga jual'], ['sellPrice2','Harga jual 2']]
+        for (const [f, label] of cek) {
+          if (p[f] != null && Number(p[f]) !== Number(lama[f] || 0)) {
+            ubah.push(label + ' ' + Number(lama[f]||0).toLocaleString('id-ID') + ' -> ' + Number(p[f]).toLocaleString('id-ID'))
+          }
+        }
+        if (ubah.length) await logAction('Produk', 'harga', nama + ': ' + ubah.join('; '))
+      }
+    } catch (err) { console.error('Audit produk gagal:', err) }
   }
   async function deleteProduct(id) {
     const p = products.find(x => x.id === id)
@@ -402,7 +422,30 @@ export default function App() {
 
   async function saveTransaction(tx) {
     tx.id = genId()
+    // KASIR SEBENARNYA. Dulu selalu ditulis "user" — struk & laporan jadi tidak
+    // bisa menunjukkan siapa yang melayani. Diisi di sini supaya berlaku untuk
+    // semua jalur (kasir maupun retur) tanpa perlu diubah di banyak tempat.
+    tx.cashier = user?.name || user?.username || 'Tidak diketahui'
+    tx.cashierId = user?.id || ''
     await setOne('transactions', tx.id, tx)
+
+    // AUDIT TRAIL PENJUALAN — sebelumnya penjualan sama sekali tidak tercatat,
+    // padahal ini aktivitas paling sering dan paling perlu ditelusuri saat kas selisih.
+    try {
+      const isRetur = tx.caraBayar === 'RETURN'
+      const jmlItem = (tx.items || []).length
+      const rincian = (tx.items || []).slice(0, 4).map(it => (it.name || '?') + ' x' + (it.qty || 0)).join(', ')
+      const lebih = jmlItem > 4 ? ' +' + (jmlItem - 4) + ' item lain' : ''
+      const nominal = 'Rp ' + Math.abs(tx.total || 0).toLocaleString('id-ID')
+      if (isRetur) {
+        await logAction('Penjualan', 'retur',
+          'RETUR ' + (tx.noNota || '') + ' — ' + (tx.customerName || 'Umum') + ' — ' + nominal + ' [' + rincian + lebih + ']')
+      } else {
+        await logAction('Penjualan', 'create',
+          'Jual ' + (tx.noNota || '') + ' — ' + (tx.customerName || 'Umum') + ' — ' + nominal +
+          ' (' + (tx.caraBayar || 'LUNAS') + ') [' + rincian + lebih + ']')
+      }
+    } catch (err) { console.error('Audit penjualan gagal:', err) }
 
     // Kas & jurnal dibungkus try/catch sendiri: kalau gagal, JANGAN batalkan
     // alur checkout (dulu error di sini bikin pengurangan stok ikut batal).
@@ -757,7 +800,7 @@ export default function App() {
         {page === 'members' && <Members {...{ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc }} />}
         {/* Simpanan & Pinjaman halaman dihapus */}
         {page === 'tutupbuku' && <LaporanTutupBuku transactions={transactions} members={members} settings={settings} />}
-        {page === 'juyar' && <TagihanJuyar {...{ transactions, piutangs, members, settings, savePiutang, bayarPiutang, showToast, setModal }} />}
+        {page === 'juyar' && <TagihanJuyar {...{ transactions, piutangs, members, settings, savePiutang, bayarPiutang, showToast, setModal, logAction }} />}
         {page === 'labaanggota' && <LabaPerAnggota {...{ transactions, members, products, settings }} />}
         {/* Neraca halaman dihapus */}
         {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, transactions, stockInData }} />}
