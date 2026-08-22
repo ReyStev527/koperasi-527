@@ -3,7 +3,7 @@
 // Retur, Kredit, Piutang, Diskon, Harga Bertingkat,
 // Mutasi Stok, Setoran Harian
 // =============================================
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7) }
 function formatRp(n) { return 'Rp ' + Number(n || 0).toLocaleString('id-ID') }
@@ -470,6 +470,305 @@ function SetoranForm({ defaults, onSave }) {
 
 // =============================================
 // SHARED STYLES
+// =============================================
+// STOCK OPNAME (HITUNG FISIK BARANG)
+// Bandingkan stok catatan vs hitungan fisik, simpan selisihnya sebagai
+// penyesuaian resmi berikut siapa yang menghitung. Draft tersimpan di server
+// supaya hitungan tidak hilang kalau halaman tertutup di tengah jalan.
+// =============================================
+export function StockOpname({ opnames, saveOpname, products, adjustProductStock, saveMutasi, user, showToast, logAction }) {
+  const [tab, setTab] = useState('hitung')          // hitung | riwayat
+  const [kategori, setKategori] = useState('all')
+  const [cari, setCari] = useState('')
+  const [fisik, setFisik] = useState({})            // { productId: jumlah }
+  const [catatan, setCatatan] = useState('')
+  const [sedangSimpan, setSedangSimpan] = useState(false)
+  const [statusDraft, setStatusDraft] = useState('')
+  const [lihat, setLihat] = useState(null)          // detail opname lama
+
+  const draftKey = 'opname_draft'
+
+  // Muat draft yang belum diselesaikan
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const { getOne } = await import('./db')
+        const r = await getOne('opnames', draftKey)
+        if (alive && r && r.json) {
+          const d = JSON.parse(r.json)
+          setFisik(d.fisik || {}); setCatatan(d.catatan || '')
+          if (Object.keys(d.fisik || {}).length) setStatusDraft('Draft dilanjutkan dari ' + (d.waktu || 'sebelumnya'))
+        }
+      } catch (err) { console.error('Muat draft opname gagal:', err) }
+    })()
+    return () => { alive = false }
+  }, [])
+
+  function simpanDraft(fisikBaru, catatanBaru) {
+    import('./db').then(({ setOne }) => setOne('opnames', draftKey, {
+      id: draftKey, json: JSON.stringify({ fisik: fisikBaru, catatan: catatanBaru, waktu: new Date().toLocaleString('id-ID') })
+    })).catch(err => console.error('Simpan draft gagal:', err))
+  }
+
+  function isiFisik(pid, nilai) {
+    const next = { ...fisik }
+    if (nilai === '' || nilai == null) delete next[pid]
+    else next[pid] = Number(nilai)
+    setFisik(next)
+    setStatusDraft('Tersimpan otomatis')
+    simpanDraft(next, catatan)
+  }
+
+  const kategoriList = useMemo(
+    () => [...new Set(products.map(p => p.category || 'Lainnya'))].sort(), [products])
+
+  const daftar = useMemo(() => {
+    const q = cari.trim().toLowerCase()
+    return products
+      .filter(p => kategori === 'all' || (p.category || 'Lainnya') === kategori)
+      .filter(p => !q || String(p.name||'').toLowerCase().includes(q) ||
+                        String(p.sku||'').toLowerCase().includes(q) ||
+                        String(p.barcode||'').toLowerCase().includes(q))
+      .sort((a,b) => String(a.name||'').localeCompare(String(b.name||'')))
+  }, [products, kategori, cari])
+
+  // Ringkasan selisih — hanya produk yang SUDAH diisi angka fisiknya
+  const terisi = products.filter(p => fisik[p.id] != null)
+  const rincian = terisi.map(p => {
+    const sistem = Number(p.stock) || 0
+    const fis = Number(fisik[p.id]) || 0
+    const selisih = fis - sistem
+    return { productId: p.id, name: p.name, sku: p.sku || '', unit: p.unit || 'pcs',
+             buyPrice: Number(p.buyPrice) || 0, stokSistem: sistem, stokFisik: fis,
+             selisih, nilaiSelisih: selisih * (Number(p.buyPrice) || 0) }
+  })
+  const adaSelisih = rincian.filter(r => r.selisih !== 0)
+  const nilaiSelisih = adaSelisih.reduce((a, r) => a + r.nilaiSelisih, 0)
+  const jmlKurang = adaSelisih.filter(r => r.selisih < 0).length
+  const jmlLebih = adaSelisih.filter(r => r.selisih > 0).length
+
+  async function selesaikan() {
+    if (sedangSimpan) return
+    if (terisi.length === 0) { showToast('Belum ada barang yang dihitung', 'error'); return }
+    const pesan = 'Selesaikan opname?\n\n' +
+      terisi.length + ' barang dihitung\n' +
+      adaSelisih.length + ' barang selisih (' + jmlKurang + ' kurang, ' + jmlLebih + ' lebih)\n' +
+      'Nilai selisih: ' + formatRp(nilaiSelisih) + '\n\n' +
+      'Stok akan DISESUAIKAN mengikuti hitungan fisik. Tindakan ini tercatat di Audit Trail.'
+    if (!confirm(pesan)) return
+
+    setSedangSimpan(true)
+    const petugas = user?.name || user?.username || 'Tidak diketahui'
+    const noOpname = 'OP' + String(new Date().getFullYear()).slice(2) +
+      String(new Date().getMonth()+1).padStart(2,'0') + String(new Date().getDate()).padStart(2,'0') +
+      '-' + Math.random().toString(36).slice(2,6).toUpperCase()
+    let berhasil = 0, gagal = 0
+    try {
+      // 1. Sesuaikan stok tiap barang yang selisih (atomik)
+      for (const r of adaSelisih) {
+        try {
+          await adjustProductStock(r.productId, r.selisih)
+          if (saveMutasi) {
+            await saveMutasi({
+              noMutasi: noOpname + '-' + r.productId.slice(-4),
+              date: today(), productId: r.productId, productName: r.name,
+              tipe: r.selisih > 0 ? 'tambah' : 'kurang', qty: Math.abs(r.selisih),
+              stokAwal: r.stokSistem, stokAkhir: r.stokFisik,
+              keterangan: 'Stock opname ' + noOpname + ' oleh ' + petugas,
+            })
+          }
+          berhasil++
+        } catch (err) { gagal++; console.error('Sesuaikan stok gagal:', r.name, err) }
+      }
+      // 2. Simpan berita acara opname
+      await saveOpname({
+        noOpname, date: today(), waktu: new Date().toLocaleString('id-ID'),
+        petugas, petugasId: user?.id || '', kategori: kategori === 'all' ? 'Semua kategori' : kategori,
+        catatan, jumlahDihitung: terisi.length, jumlahSelisih: adaSelisih.length,
+        jumlahKurang: jmlKurang, jumlahLebih: jmlLebih, nilaiSelisih,
+        items: rincian,
+      })
+      // 3. Audit
+      if (logAction) await logAction('Stock Opname', 'selesai',
+        noOpname + ': ' + terisi.length + ' barang dihitung, ' + adaSelisih.length +
+        ' selisih, nilai ' + formatRp(nilaiSelisih) + ' — oleh ' + petugas)
+      // 4. Hapus draft
+      try { const { removeOne } = await import('./db'); await removeOne('opnames', draftKey) } catch {}
+
+      setFisik({}); setCatatan(''); setStatusDraft('')
+      showToast('Opname ' + noOpname + ' selesai — ' + berhasil + ' stok disesuaikan' + (gagal ? ', ' + gagal + ' gagal' : ''))
+      setTab('riwayat')
+    } catch (err) {
+      console.error('Opname error:', err)
+      showToast('Gagal menyimpan opname: ' + (err.message || 'cek koneksi'), 'error')
+    }
+    setSedangSimpan(false)
+  }
+
+  function batalkanDraft() {
+    if (!confirm('Buang semua hitungan yang belum diselesaikan?')) return
+    setFisik({}); setCatatan(''); setStatusDraft('')
+    import('./db').then(({ removeOne }) => removeOne('opnames', draftKey)).catch(()=>{})
+    showToast('Draft opname dibuang', 'error')
+  }
+
+  function cetakBeritaAcara(op) {
+    const win = window.open('', '_blank', 'width=900,height=650')
+    const baris = (op.items || []).filter(r => r.selisih !== 0)
+    win.document.write('<html><head><title>Berita Acara ' + op.noOpname + '</title><style>' +
+      'body{font-family:Arial,sans-serif;font-size:12px;padding:24px;color:#000}' +
+      'h2{margin:0 0 4px;font-size:16px}table{width:100%;border-collapse:collapse;margin-top:12px}' +
+      'th,td{border:1px solid #999;padding:5px 7px}th{background:#eee;font-size:11px}' +
+      '.r{text-align:right}.neg{color:#c00}.pos{color:#060}.ttd{margin-top:40px;display:flex;justify-content:space-between}' +
+      '</style></head><body>' +
+      '<h2>BERITA ACARA STOCK OPNAME</h2>' +
+      '<div>Nomor: <b>' + op.noOpname + '</b> &nbsp;|&nbsp; Tanggal: ' + op.waktu + '</div>' +
+      '<div>Petugas: <b>' + op.petugas + '</b> &nbsp;|&nbsp; Lingkup: ' + (op.kategori || '-') + '</div>' +
+      '<div>Barang dihitung: ' + op.jumlahDihitung + ' &nbsp;|&nbsp; Selisih: ' + op.jumlahSelisih +
+      ' (' + op.jumlahKurang + ' kurang, ' + op.jumlahLebih + ' lebih)</div>' +
+      (op.catatan ? '<div>Catatan: ' + op.catatan + '</div>' : '') +
+      '<table><tr><th>No</th><th>Nama Barang</th><th>SKU</th><th class="r">Catatan</th><th class="r">Fisik</th><th class="r">Selisih</th><th class="r">Nilai (Rp)</th></tr>' +
+      baris.map((r,i) => '<tr><td>' + (i+1) + '</td><td>' + r.name + '</td><td>' + (r.sku||'-') + '</td>' +
+        '<td class="r">' + r.stokSistem + '</td><td class="r">' + r.stokFisik + '</td>' +
+        '<td class="r ' + (r.selisih<0?'neg':'pos') + '">' + (r.selisih>0?'+':'') + r.selisih + '</td>' +
+        '<td class="r ' + (r.nilaiSelisih<0?'neg':'pos') + '">' + Number(r.nilaiSelisih).toLocaleString('id-ID') + '</td></tr>').join('') +
+      '<tr><td colspan="6" class="r"><b>TOTAL NILAI SELISIH</b></td><td class="r"><b>' +
+      Number(op.nilaiSelisih).toLocaleString('id-ID') + '</b></td></tr></table>' +
+      '<div class="ttd"><div>Petugas Hitung<br><br><br><b>' + op.petugas + '</b></div>' +
+      '<div>Mengetahui,<br>Ketua Koperasi<br><br><br>(________________)</div></div>' +
+      '<script>setTimeout(()=>window.print(),400)<\/script></body></html>')
+    win.document.close()
+  }
+
+  const sorted = [...(opnames || [])].filter(o => o.id !== draftKey)
+    .sort((a,b) => String(b.waktu||b.date||'').localeCompare(String(a.waktu||a.date||'')))
+
+  return (
+    <div>
+      <div style={S.pageHead}>
+        <h2 style={S.title}>Stock Opname</h2>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={{ ...S.filterBtn, ...(tab==='hitung'?S.filterActive:{}) }} onClick={() => setTab('hitung')}>Hitung Barang</button>
+          <button style={{ ...S.filterBtn, ...(tab==='riwayat'?S.filterActive:{}) }} onClick={() => setTab('riwayat')}>Riwayat ({sorted.length})</button>
+        </div>
+      </div>
+
+      {tab === 'hitung' && (<>
+        <div style={{ ...S.card, background: '#e3f2fd', border: '1px solid #90caf9' }}>
+          <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+            Isi kolom <b>Stok Fisik</b> sesuai hitungan barang di rak. Barang yang tidak diisi dianggap belum dihitung
+            dan stoknya tidak akan diubah. Hitungan tersimpan otomatis — halaman boleh ditutup dan dilanjutkan nanti.
+            {statusDraft && <span style={{ marginLeft: 8, color: '#2e7d32', fontWeight: 600 }}>{statusDraft}</span>}
+          </div>
+        </div>
+
+        <div style={S.grid3}>
+          <div style={S.statCard}><div style={S.statLabel}>Sudah Dihitung</div><div style={S.statVal}>{terisi.length} <span style={{fontSize:13,color:'#9e9e9e'}}>/ {products.length}</span></div></div>
+          <div style={S.statCard}><div style={S.statLabel}>Barang Selisih</div><div style={{ ...S.statVal, color: adaSelisih.length ? '#e65100' : '#2e7d32' }}>{adaSelisih.length}</div><div style={{fontSize:11,color:'#6b7280'}}>{jmlKurang} kurang · {jmlLebih} lebih</div></div>
+          <div style={S.statCard}><div style={S.statLabel}>Nilai Selisih</div><div style={{ ...S.statVal, color: nilaiSelisih < 0 ? '#c62828' : (nilaiSelisih > 0 ? '#2e7d32' : '#374151') }}>{formatRp(nilaiSelisih)}</div></div>
+        </div>
+
+        <div style={{ ...S.card, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={S.searchBox}>
+            <input style={S.searchInput} placeholder="Cari nama / SKU / barcode..." value={cari} onChange={e => setCari(e.target.value)} />
+          </div>
+          <select style={{ ...S.input, width: 190 }} value={kategori} onChange={e => setKategori(e.target.value)}>
+            <option value="all">Semua kategori ({products.length})</option>
+            {kategoriList.map(k => <option key={k} value={k}>{k}</option>)}
+          </select>
+          <div style={{ flex: 1 }} />
+          {terisi.length > 0 && <button style={{ ...S.filterBtn, color: '#c62828' }} onClick={batalkanDraft}>Buang Draft</button>}
+          <button style={{ ...S.primaryBtn, background: '#2e7d32', opacity: sedangSimpan ? .6 : 1 }} disabled={sedangSimpan} onClick={selesaikan}>
+            {sedangSimpan ? 'Menyimpan...' : 'Selesaikan & Sesuaikan Stok'}
+          </button>
+        </div>
+
+        <div style={S.card}>
+          <label style={{ ...S.formLabel, marginBottom: 12 }}>Catatan opname (opsional)
+            <input style={S.input} value={catatan} placeholder="mis. opname rutin akhir bulan, gudang utama"
+              onChange={e => { setCatatan(e.target.value); simpanDraft(fisik, e.target.value) }} />
+          </label>
+          <div style={{ maxHeight: 560, overflowY: 'auto' }}>
+            <table style={S.table}>
+              <thead><tr>{['Nama Barang','SKU','Satuan','Stok Catatan','Stok Fisik','Selisih','Nilai (Rp)'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <tbody>{daftar.map(p => {
+                const sistem = Number(p.stock) || 0
+                const ada = fisik[p.id] != null
+                const fis = ada ? Number(fisik[p.id]) : null
+                const sel = ada ? fis - sistem : null
+                return (
+                  <tr key={p.id} style={{ ...S.tr, background: !ada ? undefined : (sel === 0 ? '#f1f8e9' : '#fff3e0') }}>
+                    <td style={{ ...S.td, fontWeight: 600 }}>{p.name}</td>
+                    <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{p.sku || '-'}</td>
+                    <td style={S.td}>{p.unit || 'pcs'}</td>
+                    <td style={{ ...S.td, textAlign: 'right' }}>{sistem}</td>
+                    <td style={{ ...S.td, textAlign: 'right' }}>
+                      <input type="number" style={{ ...S.input, width: 92, padding: '5px 8px', fontSize: 13, textAlign: 'right' }}
+                        value={ada ? fisik[p.id] : ''} placeholder="-"
+                        onChange={e => isiFisik(p.id, e.target.value)} />
+                    </td>
+                    <td style={{ ...S.td, textAlign: 'right', fontWeight: 700,
+                      color: sel == null ? '#bdbdbd' : (sel === 0 ? '#2e7d32' : (sel < 0 ? '#c62828' : '#1565c0')) }}>
+                      {sel == null ? '-' : (sel > 0 ? '+' + sel : sel)}
+                    </td>
+                    <td style={{ ...S.td, textAlign: 'right', color: sel && sel < 0 ? '#c62828' : '#6b7280' }}>
+                      {sel == null || sel === 0 ? '-' : formatRp(sel * (Number(p.buyPrice)||0))}
+                    </td>
+                  </tr>
+                )
+              })}</tbody>
+            </table>
+            {daftar.length === 0 && <div style={{ padding: 20, textAlign: 'center', color: '#9e9e9e', fontSize: 13 }}>Tidak ada barang yang cocok.</div>}
+          </div>
+        </div>
+      </>)}
+
+      {tab === 'riwayat' && (
+        <div style={S.card}>
+          <table style={S.table}>
+            <thead><tr>{['No Opname','Waktu','Petugas','Lingkup','Dihitung','Selisih','Nilai Selisih','Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>{sorted.map(op => (
+              <tr key={op.id} style={S.tr}>
+                <td style={{ ...S.td, fontFamily: 'monospace', fontWeight: 600 }}>{op.noOpname}</td>
+                <td style={S.td}>{op.waktu || fmtDate(op.date)}</td>
+                <td style={S.td}>{op.petugas}</td>
+                <td style={S.td}>{op.kategori}</td>
+                <td style={{ ...S.td, textAlign: 'right' }}>{op.jumlahDihitung}</td>
+                <td style={{ ...S.td, textAlign: 'right' }}>{op.jumlahSelisih}</td>
+                <td style={{ ...S.td, textAlign: 'right', color: (op.nilaiSelisih||0) < 0 ? '#c62828' : '#2e7d32', fontWeight: 600 }}>{formatRp(op.nilaiSelisih)}</td>
+                <td style={S.td}>
+                  <button style={{ ...S.filterBtn, marginRight: 6 }} onClick={() => setLihat(lihat?.id === op.id ? null : op)}>{lihat?.id === op.id ? 'Tutup' : 'Rincian'}</button>
+                  <button style={S.filterBtn} onClick={() => cetakBeritaAcara(op)}>Cetak</button>
+                </td>
+              </tr>
+            ))}</tbody>
+          </table>
+          {sorted.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: '#9e9e9e', fontSize: 13 }}>Belum ada opname yang diselesaikan.</div>}
+
+          {lihat && (
+            <div style={{ marginTop: 16, padding: 14, background: '#fafafa', borderRadius: 10, border: '1px solid #e0e0e0' }}>
+              <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 13 }}>Rincian selisih — {lihat.noOpname}</div>
+              <table style={S.table}>
+                <thead><tr>{['Nama Barang','Catatan','Fisik','Selisih','Nilai'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                <tbody>{(lihat.items||[]).filter(r => r.selisih !== 0).map((r,i) => (
+                  <tr key={i} style={S.tr}>
+                    <td style={S.td}>{r.name}</td>
+                    <td style={{ ...S.td, textAlign: 'right' }}>{r.stokSistem}</td>
+                    <td style={{ ...S.td, textAlign: 'right' }}>{r.stokFisik}</td>
+                    <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: r.selisih < 0 ? '#c62828' : '#1565c0' }}>{r.selisih > 0 ? '+' + r.selisih : r.selisih}</td>
+                    <td style={{ ...S.td, textAlign: 'right' }}>{formatRp(r.nilaiSelisih)}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // =============================================
 const S = {
   title: { fontSize: 22, fontWeight: 700, marginBottom: 20 },
