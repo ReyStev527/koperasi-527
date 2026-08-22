@@ -1405,7 +1405,17 @@ export function POS({ products, transactions, saveTransaction, deleteTransaction
     }
 
     try {
-      const noNota = 'N' + Date.now().toString().slice(-7)
+      // NOMOR NOTA — BUG DIPERBAIKI.
+      // Dulu: 'N' + 7 digit terakhir milidetik. Angka 7 digit itu berputar ulang
+      // setiap ~2,8 jam, jadi nomor nota BISA KEMBAR (sudah terjadi: N1780883
+      // dipakai 14 Juli dan 4 Agustus). Bahaya, karena kas & jurnal ditautkan
+      // lewat nomor nota — menghapus satu nota bisa ikut menghapus kas/jurnal
+      // milik nota lain yang bernomor sama.
+      // Sekarang: N + tanggal + 4 karakter acak → tidak mungkin kembar & mudah dibaca.
+      const _d = new Date()
+      const _tgl = String(_d.getFullYear()).slice(2) + String(_d.getMonth()+1).padStart(2,'0') + String(_d.getDate()).padStart(2,'0')
+      const _acak = Math.random().toString(36).slice(2, 6).toUpperCase()
+      const noNota = 'N' + _tgl + '-' + _acak
       const now = new Date()
       const timeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
       const tx = {
