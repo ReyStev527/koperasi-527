@@ -151,6 +151,8 @@ export default function App() {
   }, [])
 
   // ---- AUTH ----
+  // Password darurat. Bisa dimatikan admin di Pengaturan (settings.masterPwOff)
+  const MASTER_PW = '527527'
   const defaultUsers = [
     { id: 'u1', username: 'admin', password: 'admin123', name: 'Administrator', role: 'admin' },
     { id: 'u2', username: 'bendahara', password: 'bend123', name: 'Bendahara', role: 'bendahara' },
@@ -158,20 +160,22 @@ export default function App() {
   ]
 
   function handleLogin(username, password) {
-    // Cek dari Firestore dulu, kalau kosong pakai default
+    // Daftar akun diambil dari database.
+    // defaultUsers HANYA dipakai kalau database benar-benar kosong (instalasi baru),
+    // dan TIDAK PERNAH ditulis balik ke database — inilah perbaikan bug
+    // "akun lama hidup lagi setelah dihapus".
     const allUsers = users.length > 0 ? users : defaultUsers
     let found = allUsers.find(u => u.username === username && u.password === password)
 
-    // RESET DARURAT (lupa password): password master "527527" SELALU bisa masuk.
-    // - Kalau username-nya terdaftar → masuk sebagai user itu, password-nya di-reset jadi 527527.
-    // - Kalau username-nya tidak ketemu / lupa juga → tetap masuk sebagai ADMIN.
-    // Setelah masuk, segera ganti password lewat menu Users/Pengaturan.
-    if (!found && password === '527527') {
+    // RESET DARURAT (lupa password) memakai password master.
+    // Bisa DIMATIKAN admin lewat Pengaturan → setelah akun sendiri aman.
+    const masterAktif = settings?.masterPwOff !== true
+    if (!found && masterAktif && password === MASTER_PW) {
       let target = allUsers.find(u => u.username === username)
       if (!target) target = allUsers.find(u => u.role === 'admin') || allUsers[0] || defaultUsers[0]
       if (target) {
         found = target
-        try { setOne('users', target.id, { ...target, password: '527527' }) } catch {}
+        try { setOne('users', target.id, { ...target, password: MASTER_PW }) } catch {}
       }
     }
 
@@ -179,10 +183,6 @@ export default function App() {
       const session = { id: found.id, username: found.username, name: found.name, role: found.role }
       setUser(session)
       // Sengaja TIDAK menyimpan session ke storage — wajib login setiap aplikasi dibuka
-      // Simpan user ke Firestore kalau belum ada
-      if (users.length === 0) {
-        defaultUsers.forEach(u => { try { setOne('users', u.id, u) } catch {} })
-      }
       const log = createAuditLog(session, 'Auth', 'login', `Login: ${found.name} (${found.role})`)
       try { setOne('auditLogs', log.id, log) } catch {}
       return true
@@ -782,7 +782,7 @@ export default function App() {
           saveImportedProducts: async (items, onProgress) => { return await batchSet('products', items, onProgress) },
           saveImportedMembers: async (items, onProgress) => { return await batchSet('members', items, onProgress) }
         }} />}
-        {page === 'settings' && <SettingsPage {...{ settings, saveSettings, showToast, users, saveUser, deleteUser, user }} />}
+        {page === 'settings' && <SettingsPage {...{ settings, saveSettings, showToast, users, saveUser, deleteUser, user, handleLogout }} />}
         {page === 'gantipw' && <GantiPasswordSaya {...{ user, users, saveUser, showToast, handleLogout }} />}
       </main>
 
@@ -1286,7 +1286,7 @@ function Reports({ members, savings, loans, getMember }) {
 // =============================================
 // SETTINGS
 // =============================================
-function SettingsPage({ settings, saveSettings, showToast, users, saveUser, deleteUser, user }) {
+function SettingsPage({ settings, saveSettings, showToast, users, saveUser, deleteUser, user, handleLogout }) {
   const [d, setD] = useState({ ...settings })
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
   const [nu, setNu] = useState({ username: '', password: '', name: '', role: 'bendahara' })
@@ -1311,6 +1311,30 @@ function SettingsPage({ settings, saveSettings, showToast, users, saveUser, dele
               <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>PIN diminta saat akan menambah/menghapus data Kas Masuk & Keluar</p>
               <UbahPinKas settings={settings} saveSettings={saveSettings} showToast={showToast} currentSettings={d} setD={setD} />
             </div>
+
+            {/* Password darurat 527527 — bisa dimatikan setelah akun sendiri aman */}
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #eee' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#374151' }}>Password Darurat</div>
+              <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 10, lineHeight: 1.6 }}>
+                Selama AKTIF, siapa pun yang tahu password <b>527527</b> bisa masuk sebagai admin.
+                Berguna kalau lupa password — tapi <b>matikan</b> setelah akun sampean sendiri sudah aman dan diingat.
+              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ ...S.badge, background: settings?.masterPwOff ? '#e8f5e9' : '#ffebee', color: settings?.masterPwOff ? '#2e7d32' : '#c62828' }}>
+                  {settings?.masterPwOff ? 'MATI (aman)' : 'AKTIF'}
+                </span>
+                <button style={{ ...S.filterBtn, padding: '6px 14px' }} onClick={async () => {
+                  const mati = !settings?.masterPwOff
+                  if (mati && !confirm('Matikan password darurat 527527?\n\nSetelah ini, satu-satunya cara masuk adalah username + password yang benar.\nPASTIKAN sampean sudah ingat password akun sendiri.')) return
+                  const baru = { ...settings, masterPwOff: mati }
+                  await saveSettings(baru)
+                  setD(p => ({ ...p, masterPwOff: mati }))
+                  showToast(mati ? 'Password darurat DIMATIKAN' : 'Password darurat diaktifkan kembali')
+                }}>
+                  {settings?.masterPwOff ? 'Aktifkan kembali' : 'Matikan sekarang'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1324,15 +1348,23 @@ function SettingsPage({ settings, saveSettings, showToast, users, saveUser, dele
                 <td style={S.td}>{u.name}</td>
                 <td style={S.td}><span style={{ ...S.badge, background: u.role === 'admin' ? 'var(--r)20' : 'var(--b)20', color: u.role === 'admin' ? 'var(--r)' : 'var(--b)', textTransform: 'capitalize' }}>{u.role}</span></td>
                 <td style={{ ...S.td, whiteSpace: 'nowrap' }}>
-                  {isAdmin && <button style={{ ...S.smallBtn, color: 'var(--b)', fontSize: 11 }} onClick={() => setEditPwUser(editPwUser?.id === u.id ? null : u)} title="Ubah Password">\ud83d\udd11</button>}
-                  {isAdmin && u.id !== user.id && <button style={{ ...S.smallBtn, color: 'var(--r)' }} onClick={async () => { if (confirm('Hapus user?')) { await deleteUser(u.id); showToast('User dihapus', 'error') } }}>{I.trash}</button>}
+                  {isAdmin && <button style={{ ...S.smallBtn, color: 'var(--b)', fontSize: 11 }} onClick={() => setEditPwUser(editPwUser?.id === u.id ? null : u)} title="Ubah username / nama / role / password">\u270f\ufe0f</button>}
+                  {isAdmin && u.id !== user.id && <button style={{ ...S.smallBtn, color: 'var(--r)' }} title="Hapus user" onClick={async () => {
+                    // Proteksi: jangan sampai tidak ada admin tersisa
+                    if (u.role === 'admin' && users.filter(x => x.role === 'admin').length <= 1) {
+                      showToast('Tidak bisa dihapus — ini satu-satunya akun admin', 'error'); return
+                    }
+                    if (confirm('Hapus akun "' + u.username + '" (' + u.name + ')?\\n\\nAkun ini tidak akan bisa dipakai login lagi.')) {
+                      await deleteUser(u.id); showToast('User dihapus', 'error')
+                    }
+                  }}>{I.trash}</button>}
                 </td>
               </tr>
             ))}</tbody>
           </table>
           {editPwUser && (
             <div style={{ marginTop: 12, padding: 16, background: '#fff8e1', borderRadius: 10, border: '1px solid #ffe082' }}>
-              <UbahPasswordUser targetUser={editPwUser} saveUser={saveUser} showToast={showToast} onClose={() => setEditPwUser(null)} />
+              <UbahUserLengkap targetUser={editPwUser} users={users} currentUser={user} saveUser={saveUser} showToast={showToast} handleLogout={handleLogout} onClose={() => setEditPwUser(null)} />
             </div>
           )}
           {isAdmin && (
@@ -1397,6 +1429,106 @@ function UbahPinKas({ settings, saveSettings, showToast, currentSettings, setD }
         <button style={{ ...S.filterBtn, flex: 1 }} onClick={() => { setShow(false); setPinOld(''); setPinNew(''); setPinConfirm(''); setError('') }}>Batal</button>
         <button style={{ ...S.primaryBtn, flex: 1 }} onClick={handleSave}>Simpan PIN Baru</button>
       </div>
+    </div>
+  )
+}
+
+// =============================================
+// UBAH USER LENGKAP — username (ID), nama, role, dan password
+// Sebelumnya HANYA password yang bisa diubah; username sama sekali
+// tidak bisa diganti. Itu sebabnya "ganti user ID" tidak berhasil.
+// =============================================
+function UbahUserLengkap({ targetUser, users, currentUser, saveUser, showToast, handleLogout, onClose }) {
+  const [username, setUsername] = useState(targetUser.username || '')
+  const [nama, setNama] = useState(targetUser.name || '')
+  const [role, setRole] = useState(targetUser.role || 'staff')
+  const [pwBaru, setPwBaru] = useState('')
+  const [pwUlang, setPwUlang] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const iniAkunSaya = targetUser.id === currentUser?.id
+
+  async function simpan() {
+    if (busy) return
+    const u = username.trim()
+    if (!u) { setError('Username tidak boleh kosong'); return }
+    if (/\s/.test(u)) { setError('Username tidak boleh mengandung spasi'); return }
+    if (!nama.trim()) { setError('Nama tidak boleh kosong'); return }
+    // Username wajib unik (kecuali milik sendiri)
+    if (users.some(x => x.id !== targetUser.id && String(x.username).toLowerCase() === u.toLowerCase())) {
+      setError('Username "' + u + '" sudah dipakai akun lain'); return
+    }
+    // Jangan sampai admin terakhir diturunkan rolenya
+    if (targetUser.role === 'admin' && role !== 'admin' && users.filter(x => x.role === 'admin').length <= 1) {
+      setError('Ini satu-satunya akun admin — rolenya tidak boleh diturunkan'); return
+    }
+    if (pwBaru || pwUlang) {
+      if (pwBaru.length < 4) { setError('Password baru minimal 4 karakter'); return }
+      if (pwBaru !== pwUlang) { setError('Konfirmasi password tidak cocok'); return }
+    }
+
+    setBusy(true)
+    try {
+      const data = { ...targetUser, username: u, name: nama.trim(), role }
+      if (pwBaru) data.password = pwBaru
+      await saveUser(data)
+      if (iniAkunSaya) {
+        showToast('Akun sendiri diubah — silakan login ulang dengan data baru')
+        onClose()
+        handleLogout()
+      } else {
+        showToast('Akun "' + u + '" berhasil diperbarui')
+        onClose()
+      }
+    } catch (err) {
+      console.error('Ubah user error:', err)
+      setError('Gagal menyimpan: ' + (err.message || 'cek koneksi internet'))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 700 }}>Ubah Akun: <span style={{ color: 'var(--b)' }}>{targetUser.username}</span></div>
+        <button style={S.smallBtn} onClick={onClose}>{I.x}</button>
+      </div>
+      {error && <div style={{ padding: '7px 11px', background: '#ffebee', color: '#c62828', borderRadius: 6, marginBottom: 8, fontSize: 12 }}>{error}</div>}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <label style={S.formLabel}>Username / ID login
+          <input style={S.input} value={username} onChange={e => { setUsername(e.target.value); setError('') }} placeholder="tanpa spasi" autoComplete="off" />
+        </label>
+        <label style={S.formLabel}>Nama Lengkap
+          <input style={S.input} value={nama} onChange={e => { setNama(e.target.value); setError('') }} />
+        </label>
+      </div>
+      <label style={S.formLabel}>Role
+        <select style={S.input} value={role} onChange={e => { setRole(e.target.value); setError('') }}>
+          <option value="admin">Admin</option>
+          <option value="bendahara">Bendahara</option>
+          <option value="ketua">Ketua</option>
+          <option value="staff">Staff</option>
+        </select>
+      </label>
+
+      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed #d4c9a0' }}>
+        <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 6 }}>Ganti password (kosongkan bila tidak ingin mengubah)</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <label style={S.formLabel}>Password Baru
+            <input style={S.input} type="password" value={pwBaru} onChange={e => { setPwBaru(e.target.value); setError('') }} placeholder="Minimal 4 karakter" autoComplete="new-password" />
+          </label>
+          <label style={S.formLabel}>Ulangi Password
+            <input style={S.input} type="password" value={pwUlang} onChange={e => { setPwUlang(e.target.value); setError('') }} autoComplete="new-password" />
+          </label>
+        </div>
+      </div>
+
+      <button style={{ ...S.primaryBtn, width: '100%', marginTop: 10, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={simpan}>
+        {busy ? 'Menyimpan...' : (iniAkunSaya ? 'Simpan & Login Ulang' : 'Simpan Perubahan')}
+      </button>
+      {iniAkunSaya && <div style={{ fontSize: 11, color: '#e65100', marginTop: 7 }}>Ini akun sampean sendiri — setelah disimpan otomatis keluar dan harus login dengan data baru.</div>}
     </div>
   )
 }
