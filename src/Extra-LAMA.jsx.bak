@@ -1,0 +1,2494 @@
+// =============================================
+// MODUL TAMBAHAN: PDF, Hutang Supplier, Kartu Anggota,
+// Struk Thermal, Backup/Restore, Dashboard Grafik
+// =============================================
+import { useState, useRef, useEffect } from 'react'
+
+function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7) }
+function formatRp(n) { return 'Rp ' + Number(n || 0).toLocaleString('id-ID') }
+function fmtDate(d) { if (!d) return '-'; return new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) }
+function today() { 
+  const d = new Date()
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+}
+function toLocalDate(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') }
+
+// Pisahkan pangkat dari nama. Kalau field pangkat kosong (data lama), ambil kata pertama nama bila cocok daftar pangkat.
+const RANKS_TNI = ['Jenderal','Letjen','Mayjen','Brigjen','Kolonel','Letkol','Mayor','Kapten','Lettu','Letda','Peltu','Pelda','Serma','Serka','Sertu','Serda','Kopka','Koptu','Kopda','Praka','Pratu','Prada','Prajurit','Tamtama','PNS','Honorer']
+function splitPangkat(member, fallbackName) {
+  const pkt = (member?.pangkat || '').trim()
+  const full = (member?.name || fallbackName || '').trim()
+  if (pkt) return { pangkat: pkt, nama: full }
+  const parts = full.split(/\s+/)
+  if (parts.length > 1 && RANKS_TNI.some(r => r.toLowerCase() === parts[0].toLowerCase())) {
+    return { pangkat: parts[0], nama: parts.slice(1).join(' ') }
+  }
+  return { pangkat: '-', nama: full }
+}
+
+
+// =============================================
+// 1. CETAK STRUK THERMAL (browser print - 58mm/80mm)
+// =============================================
+export function cetakStruk(tx, settings, members) {
+  const member = members?.find(m => m.id === tx.memberId)
+  const win = window.open('', '_blank', 'width=300,height=500')
+  win.document.write(`<!DOCTYPE html><html><head><style>
+    @page { margin: 0; size: 58mm auto; }
+    * { box-sizing: border-box; }
+    body { font-family: 'Courier New', monospace; font-size: 10px; width: 54mm; margin: 2mm; padding: 0; color: #000; line-height: 1.3; }
+    .center { text-align: center; }
+    .bold { font-weight: bold; }
+    .line { border-top: 1px dashed #000; margin: 3px 0; }
+    .dline { border-top: 2px solid #000; margin: 3px 0; }
+    .row { display: flex; justify-content: space-between; gap: 4px; }
+    .row span:last-child { text-align: right; white-space: nowrap; }
+    .right { text-align: right; }
+    .small { font-size: 8px; }
+    .item-name { font-size: 10px; font-weight: bold; margin-bottom: 0; }
+    .item-detail { font-size: 9px; display: flex; justify-content: space-between; }
+    .total-box { font-size: 13px; font-weight: bold; padding: 3px 0; }
+    table { width: 100%; border-collapse: collapse; }
+    td { padding: 0; vertical-align: top; font-size: 9px; }
+  </style></head><body>
+    <div class="center bold" style="font-size:11px;letter-spacing:1px">${settings?.name || 'KOPERASI YONIF 527/BY'}</div>
+    <div class="center small">Baladibya Yudha</div>
+    <div class="center small">Lumajang, Jawa Timur</div>
+    <div class="dline"></div>
+    <div class="row" style="font-size:9px"><span>No: ${tx.noNota || '-'}</span><span>${tx.date || today()}</span></div>
+    <div style="font-size:9px">Kasir: ${tx.cashier || 'admin'}</div>
+    ${member ? '<div style="font-size:9px">Pembeli: ' + member.name + '</div>' : ''}
+    <div class="line"></div>
+    ${(tx.items || []).map(item => {
+      const sub = item.price * item.qty
+      const dis = item.diskon ? sub * item.diskon / 100 : 0
+      const net = sub - dis
+      return '<div class="item-name">' + item.name + '</div>' +
+        '<div class="item-detail"><span>' + item.qty + ' x ' + Number(item.price).toLocaleString('id-ID') +
+        (item.diskon ? ' (-' + item.diskon + '%)' : '') +
+        '</span><span style="font-weight:bold">' + Number(net).toLocaleString('id-ID') + '</span></div>'
+    }).join('')}
+    <div class="dline"></div>
+    ${tx.totalDiskon > 0 ? '<div class="row" style="font-size:9px"><span>Subtotal</span><span>' + Number(tx.totalSebelumDiskon).toLocaleString('id-ID') + '</span></div><div class="row" style="font-size:9px"><span>Diskon</span><span>-' + Number(tx.totalDiskon).toLocaleString('id-ID') + '</span></div>' : ''}
+    <div class="row total-box"><span>TOTAL</span><span>Rp ${Number(tx.total).toLocaleString('id-ID')}</span></div>
+    <div class="line"></div>
+    <div class="row" style="font-size:9px"><span>${tx.caraBayar || 'TUNAI'}</span><span>${Number(tx.payment || 0).toLocaleString('id-ID')}</span></div>
+    ${tx.caraBayar !== 'KREDIT' && tx.change > 0 ? '<div class="row" style="font-size:9px;font-weight:bold"><span>Kembali</span><span>' + Number(tx.change).toLocaleString('id-ID') + '</span></div>' : ''}
+    ${tx.caraBayar === 'KREDIT' ? '<div class="row" style="font-size:10px;font-weight:bold;color:#000"><span>SISA PIUTANG</span><span>' + Number(tx.total - (tx.payment || 0)).toLocaleString('id-ID') + '</span></div>' : ''}
+    <div class="line"></div>
+    <div class="center small">Terima kasih atas kunjungan Anda</div>
+    <div class="center small">Barang yg sudah dibeli tidak dapat dikembalikan</div>
+    <div class="center small" style="margin-top:4px">--- ${new Date().toLocaleString('id-ID')} ---</div>
+    <script>setTimeout(()=>{window.print();},300)</script>
+  </body></html>`)
+  win.document.close()
+}
+
+// =============================================
+// 2. CETAK LAPORAN PDF (via browser print)
+// =============================================
+export function cetakLaporanPDF(title, headers, rows, settings, summary) {
+  const win = window.open('', '_blank')
+  win.document.write(`<!DOCTYPE html><html><head><style>
+    @page { margin: 15mm; size: A4; }
+    body { font-family: Arial, sans-serif; font-size: 12px; color: #333; }
+    h1 { font-size: 18px; margin: 0; }
+    h2 { font-size: 14px; margin: 4px 0 16px; color: #666; font-weight: normal; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th { background: #1565c0; color: #fff; padding: 8px 10px; text-align: left; font-size: 11px; text-transform: uppercase; }
+    td { padding: 6px 10px; border-bottom: 1px solid #e5e7eb; font-size: 11px; }
+    tr:nth-child(even) { background: #f9f9f9; }
+    .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #1565c0; padding-bottom: 8px; margin-bottom: 12px; }
+    .summary { background: #f5f6fa; padding: 12px 16px; border-radius: 8px; margin-top: 16px; font-size: 12px; }
+    .footer { text-align: center; font-size: 10px; color: #999; margin-top: 20px; border-top: 1px solid #e5e7eb; padding-top: 8px; }
+    @media print { button { display: none; } }
+  </style></head><body>
+    <div class="header">
+      <div><h1>${settings?.name || 'KOPERASI YONIF 527/BY'}</h1><h2>${title}</h2></div>
+      <div style="text-align:right;font-size:11px;color:#666">Tanggal cetak: ${new Date().toLocaleDateString('id-ID')}<br>Halaman 1</div>
+    </div>
+    <table>
+      <thead><tr>${headers.map(h => '<th>' + h + '</th>').join('')}</tr></thead>
+      <tbody>${rows.map(r => '<tr>' + r.map(c => '<td>' + (c ?? '-') + '</td>').join('') + '</tr>').join('')}</tbody>
+    </table>
+    ${summary ? '<div class="summary">' + summary + '</div>' : ''}
+    <div class="footer">${settings?.name || 'KOPERASI YONIF 527/BY'} — Dicetak oleh sistem pada ${new Date().toLocaleString('id-ID')}</div>
+    <script>setTimeout(()=>{window.print();},500)</script>
+  </body></html>`)
+  win.document.close()
+}
+
+// =============================================
+// 3. KARTU ANGGOTA DIGITAL + BARCODE
+// =============================================
+// Load JsBarcode dari CDN
+async function loadJsBarcode() {
+  if (window.JsBarcode) return window.JsBarcode
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script')
+    s.src = 'https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js'
+    s.onload = () => resolve(window.JsBarcode)
+    s.onerror = () => reject(new Error('Gagal memuat JsBarcode'))
+    document.head.appendChild(s)
+  })
+}
+
+export function KartuAnggota({ member, settings, logoSrc }) {
+  const cardRef = useRef()
+  const barcodeRef = useRef()
+
+  // Kode barcode: prefix AGT- + ID unik anggota (dijamin tidak bentrok)
+  const barcodeValue = 'AGT-' + (member.id || '000')
+
+  // Render barcode di canvas saat komponen dimuat
+  useEffect(() => {
+    loadJsBarcode().then(JsBarcode => {
+      if (barcodeRef.current) {
+        JsBarcode(barcodeRef.current, barcodeValue, {
+          format: 'CODE128',
+          width: 1.5,
+          height: 30,
+          displayValue: true,
+          fontSize: 10,
+          font: 'Arial',
+          textMargin: 2,
+          margin: 0,
+          background: '#ffffff',
+          lineColor: '#000000',
+        })
+      }
+    }).catch(err => console.warn('Barcode load error:', err))
+  }, [barcodeValue])
+
+  function cetakKartu() {
+    const win = window.open('', '_blank', 'width=500,height=350')
+    win.document.write(`<!DOCTYPE html><html><head>
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
+    <style>
+      @page { margin: 10mm; size: 86mm 54mm; }
+      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+      body { margin: 0; font-family: Arial, sans-serif; }
+      .card { width: 86mm; height: 54mm; border: 2px solid #1565c0; border-radius: 10px; overflow: hidden; position: relative; background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%) !important; color: #fff; padding: 8px 12px; box-sizing: border-box; }
+      .logo { width: 32px; height: 32px; border-radius: 6px; object-fit: contain; }
+      .header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+      .title { font-size: 10px; font-weight: bold; line-height: 1.2; }
+      .subtitle { font-size: 7px; opacity: 0.7; }
+      .info { font-size: 8px; margin-top: 2px; }
+      .info div { margin-bottom: 1px; }
+      .no { font-size: 14px; font-weight: bold; letter-spacing: 2px; color: #ffd54f !important; margin-top: 2px; }
+      .name { font-size: 12px; font-weight: bold; margin-top: 1px; }
+      .barcode-area { position: absolute; bottom: 4px; left: 12px; right: 12px; text-align: center; background: #fff !important; border-radius: 4px; padding: 3px 6px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+      .barcode-area canvas { max-width: 100%; }
+      .footer { position: absolute; bottom: 4px; right: 12px; font-size: 7px; opacity: 0.5; }
+      @media print { body { margin: 0; } .card { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%) !important; } }
+    </style></head><body>
+      <div class="card">
+        <div class="header">
+          ${logoSrc ? '<img src="' + logoSrc + '" class="logo">' : ''}
+          <div><div class="title">${settings?.name || 'KOPERASI YONIF 527/BY'}</div><div class="subtitle">Baladibya Yudha — Kartu Anggota</div></div>
+        </div>
+        <div class="no">No. ${member.no}</div>
+        <div class="name">${member.name}</div>
+        <div class="info">
+          <div>Telepon: ${member.phone || '-'}</div>
+        </div>
+        <div class="barcode-area">
+          <canvas id="print-barcode"></canvas>
+        </div>
+      </div>
+      <script>
+        window.onload = function() {
+          try {
+            JsBarcode("#print-barcode", "${barcodeValue}", {
+              format: "CODE128", width: 2, height: 35,
+              displayValue: true, fontSize: 10, font: "Arial",
+              textMargin: 2, margin: 4,
+              background: "#ffffff", lineColor: "#000000"
+            });
+          } catch(e) { console.warn('Barcode error:', e); }
+          setTimeout(function(){ window.print(); }, 500);
+        }
+      <\/script>
+    </body></html>`)
+    win.document.close()
+  }
+
+  return (
+    <div>
+      <div ref={cardRef} style={{ width: 340, height: 220, borderRadius: 12, overflow: 'hidden', position: 'relative', background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)', color: '#fff', padding: '12px 18px', boxSizing: 'border-box', fontFamily: 'Arial, sans-serif', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+          {logoSrc && <img src={logoSrc} style={{ width: 36, height: 36, borderRadius: 6, objectFit: 'contain' }} />}
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700 }}>{settings?.name || 'KOPERASI YONIF 527/BY'}</div>
+            <div style={{ fontSize: 8, opacity: 0.6 }}>Baladibya Yudha — Kartu Anggota</div>
+          </div>
+        </div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: '#ffd54f', letterSpacing: 2, marginTop: 2 }}>No. {member.no}</div>
+        <div style={{ fontSize: 14, fontWeight: 700, marginTop: 2 }}>{member.name}</div>
+        <div style={{ fontSize: 10, marginTop: 4, lineHeight: 1.5, opacity: 0.85 }}>
+          <div>Telepon: {member.phone || '-'}</div>
+        </div>
+        {/* Barcode area */}
+        <div style={{ position: 'absolute', bottom: 8, left: 18, right: 18, textAlign: 'center', background: '#fff', borderRadius: 4, padding: '3px 6px' }}>
+          <canvas ref={barcodeRef} style={{ maxWidth: '100%' }} />
+        </div>
+      </div>
+      <div style={{ marginTop: 10, padding: '8px 12px', background: '#e3f2fd', borderRadius: 8, fontSize: 12, color: '#1565c0' }}>
+        Kode Barcode: <strong>{barcodeValue}</strong> — scan di Kasir untuk auto-pilih anggota
+      </div>
+      <button onClick={cetakKartu} style={{ marginTop: 10, padding: '8px 20px', background: '#1565c0', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>Cetak Kartu</button>
+    </div>
+  )
+}
+
+// =============================================
+// 3b. CETAK SEMUA KARTU ANGGOTA (4 atau 6 per halaman A4)
+// Ukuran kartu = ukuran ATM: 85.6mm x 54mm
+// =============================================
+export function cetakSemuaKartu(members, settings, logoSrc, perPage = 6) {
+  const activeMembers = members.filter(m => m.status === 'active')
+  if (activeMembers.length === 0) { alert('Tidak ada anggota aktif'); return }
+
+  // CEK DUPLIKAT BARCODE
+  const barcodeMap = {}
+  const duplicates = []
+  activeMembers.forEach(m => {
+    const code = 'AGT-' + (m.id || '000')
+    if (barcodeMap[code]) {
+      duplicates.push(m.name + ' & ' + barcodeMap[code] + ' = ' + code)
+    }
+    barcodeMap[code] = m.name
+  })
+  if (duplicates.length > 0) {
+    alert('⚠️ PERINGATAN: Ada barcode DUPLIKAT!\n\n' + duplicates.join('\n') + '\n\nHubungi admin untuk perbaiki data anggota.')
+  }
+
+  const cols = 2
+  const rows = perPage === 4 ? 2 : 3
+  const cardW = '85.6mm'
+  const cardH = '54mm'
+  const totalPages = Math.ceil(activeMembers.length / perPage)
+
+  let cardsHtml = ''
+  activeMembers.forEach((m, i) => {
+    const barcodeId = 'bc-' + i
+    const barcodeValue = 'AGT-' + (m.id || '000')
+    if (i > 0 && i % perPage === 0) {
+      cardsHtml += '<div class="page-break"></div>'
+    }
+    cardsHtml += `
+      <div class="card">
+        <div class="header">
+          ${logoSrc ? '<img src="' + logoSrc + '" class="logo">' : ''}
+          <div>
+            <div class="title">${settings?.name || 'KOPERASI YONIF 527/BY'}</div>
+            <div class="subtitle">Baladibya Yudha — Kartu Anggota</div>
+          </div>
+        </div>
+        <div class="no">No. ${m.no}</div>
+        <div class="name">${m.pangkat ? m.pangkat + ' ' : ''}${m.name}</div>
+        <div class="info">
+          <div>${m.nrp ? 'NRP: ' + m.nrp : ''} ${m.kompi ? '| ' + m.kompi : ''}</div>
+        </div>
+        <div class="barcode-area"><canvas id="${barcodeId}" data-value="${barcodeValue}"></canvas></div>
+        <div class="footer">${barcodeValue}</div>
+      </div>`
+  })
+
+  const win = window.open('', '_blank', 'width=800,height=600')
+  win.document.write(`<!DOCTYPE html><html><head>
+  <title>Cetak Kartu Anggota - ${activeMembers.length} kartu</title>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
+  <style>
+    @page { margin: 8mm; size: A4 portrait; }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+    body { font-family: Arial, sans-serif; background: #fff; }
+    .print-info { padding: 10px 20px; background: #e3f2fd; text-align: center; font-size: 13px; color: #1565c0; }
+    .print-info button { margin-left: 12px; padding: 6px 20px; background: #1565c0; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+    .grid { 
+      display: grid; 
+      grid-template-columns: repeat(${cols}, ${cardW}); 
+      gap: 6mm; 
+      justify-content: center; 
+      padding: 4mm 0;
+    }
+    .page-break { 
+      grid-column: 1 / -1; 
+      height: 0; 
+      page-break-after: always; 
+      break-after: page; 
+    }
+    .card {
+      width: ${cardW}; height: ${cardH};
+      border: 1.5px solid #1565c0; border-radius: 8px; overflow: hidden;
+      position: relative; background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%) !important;
+      color: #fff; padding: 5px 8px;
+      -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important;
+    }
+    .header { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; }
+    .logo { width: 22px; height: 22px; border-radius: 4px; object-fit: contain; }
+    .title { font-size: 7.5px; font-weight: bold; line-height: 1.2; }
+    .subtitle { font-size: 5.5px; opacity: 0.7; }
+    .no { font-size: 11px; font-weight: bold; letter-spacing: 1.5px; color: #ffd54f; margin-top: 1px; }
+    .name { font-size: 9px; font-weight: bold; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .info { font-size: 6.5px; margin-top: 1px; line-height: 1.4; opacity: 0.85; }
+    .info div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .barcode-area { position: absolute; bottom: 3px; left: 8px; right: 8px; text-align: center; background: #fff !important; border-radius: 3px; padding: 3px 6px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    .barcode-area canvas { max-width: 100%; }
+    .footer { position: absolute; bottom: 2px; right: 8px; font-size: 5px; opacity: 0.4; }
+    @media print { 
+      .print-info { display: none; } 
+      body { background: #fff; }
+      .card { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%) !important; color: #fff !important; }
+      .no { color: #ffd54f !important; }
+    }
+  </style></head><body>
+    <div class="print-info">
+      Cetak ${activeMembers.length} Kartu Anggota — ${totalPages} halaman (${perPage} kartu/halaman)
+      <button onclick="window.print()">🖨️ Print Sekarang</button>
+    </div>
+    <div class="grid">${cardsHtml}</div>
+    <script>
+      window.onload = function() {
+        document.querySelectorAll('.barcode-area canvas').forEach(function(canvas) {
+          var val = canvas.getAttribute('data-value');
+          if (val) {
+            try {
+              JsBarcode(canvas, val, {
+                format: 'CODE128', width: 1.8, height: 28,
+                displayValue: true, fontSize: 8, font: 'Arial',
+                textMargin: 2, margin: 3,
+                background: '#ffffff', lineColor: '#000000'
+              });
+            } catch(e) { console.warn('Barcode error:', e); }
+          }
+        });
+        setTimeout(function(){ window.print(); }, 800);
+      }
+    <\/script>
+  </body></html>`)
+  win.document.close()
+}
+
+// =============================================
+// 4. HUTANG KE SUPPLIER
+// =============================================
+export function HutangSupplier({ hutangs, saveHutang, bayarHutang, suppliers, setModal, showToast }) {
+  const [filter, setFilter] = useState('all')
+
+  let filtered = hutangs
+  if (filter === 'belum') filtered = filtered.filter(h => h.sisa > 0)
+  if (filter === 'lunas') filtered = filtered.filter(h => h.sisa <= 0)
+  const sorted = [...filtered].sort((a, b) => b.date.localeCompare(a.date))
+
+  const totalHutang = hutangs.filter(h => (h.sisa||0) > 0).reduce((a, h) => a + (h.sisa||0), 0)
+
+  function openBayar(hutang) {
+    setModal({
+      title: 'Bayar Hutang - ' + hutang.supplierName,
+      content: <BayarHutangForm hutang={hutang} onSave={async (amount) => {
+        await bayarHutang(hutang, amount)
+        setModal(null)
+        showToast('Pembayaran hutang berhasil')
+      }} />,
+    })
+  }
+
+  function openTambah() {
+    setModal({
+      title: 'Catat Hutang ke Supplier',
+      content: <TambahHutangForm suppliers={suppliers} onSave={async d => {
+        await saveHutang(d)
+        setModal(null)
+        showToast('Hutang ke supplier berhasil dicatat')
+      }} />,
+    })
+  }
+
+  return (
+    <div>
+      <div style={S.pageHead}><h2 style={S.title}>Hutang ke Supplier</h2><button style={S.primaryBtn} onClick={openTambah}>{IC.plus} Catat Hutang</button></div>
+
+      <div style={S.grid3}>
+        <div style={S.statCard}><div style={S.statLabel}>Total Hutang</div><div style={{ ...S.statVal, color: '#c62828' }}>{formatRp(totalHutang)}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Belum Lunas</div><div style={S.statVal}>{hutangs.filter(h => h.sisa > 0).length}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Sudah Lunas</div><div style={{ ...S.statVal, color: '#2e7d32' }}>{hutangs.filter(h => h.sisa <= 0).length}</div></div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
+        {[['all', 'Semua'], ['belum', 'Belum Lunas'], ['lunas', 'Lunas']].map(([k, l]) => (
+          <button key={k} style={{ ...S.filterBtn, ...(filter === k ? S.filterActive : {}) }} onClick={() => setFilter(k)}>{l}</button>
+        ))}
+      </div>
+
+      <div style={S.card}>
+        <table style={S.table}>
+          <thead><tr>{['Tanggal', 'No Faktur', 'Supplier', 'Nilai', 'Dibayar', 'Sisa', 'Status', 'Aksi'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <tbody>{sorted.map(h => {
+            const isLunas = h.sisa <= 0
+            return (
+              <tr key={h.id} style={S.tr}>
+                <td style={S.td}>{fmtDate(h.date)}</td>
+                <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 12 }}>{h.noFaktur}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>{h.supplierName}</td>
+                <td style={S.td}>{formatRp(h.total)}</td>
+                <td style={{ ...S.td, color: '#2e7d32' }}>{formatRp(h.totalBayar)}</td>
+                <td style={{ ...S.td, fontWeight: 600, color: isLunas ? '#2e7d32' : '#c62828' }}>{formatRp(Math.max(0, h.sisa))}</td>
+                <td style={S.td}><span style={{ ...S.badge, background: isLunas ? '#e8f5e9' : '#ffebee', color: isLunas ? '#2e7d32' : '#c62828' }}>{isLunas ? 'LUNAS' : 'HUTANG'}</span></td>
+                <td style={S.td}>{!isLunas && <button style={S.linkBtn} onClick={() => openBayar(h)}>Bayar</button>}</td>
+              </tr>
+            )
+          })}{sorted.length === 0 && <tr><td colSpan={8} style={{ ...S.td, textAlign: 'center', color: '#999' }}>Belum ada hutang</td></tr>}</tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function TambahHutangForm({ suppliers, onSave }) {
+  const [d, setD] = useState({ supplierId: suppliers[0]?.id || '', total: '', date: today(), note: '' })
+  const set = (k, v) => setD(p => ({ ...p, [k]: v }))
+  const sup = suppliers.find(s => s.id === d.supplierId)
+  return (
+    <div style={S.form}>
+      <label style={S.formLabel}>Supplier
+        <select style={S.input} value={d.supplierId} onChange={e => set('supplierId', e.target.value)}>
+          {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      </label>
+      <label style={S.formLabel}>Nilai Hutang (Rp)<input style={S.input} type="number" value={d.total} onChange={e => set('total', e.target.value)} /></label>
+      <label style={S.formLabel}>Tanggal<input style={S.input} type="date" value={d.date} onChange={e => set('date', e.target.value)} /></label>
+      <label style={S.formLabel}>Keterangan<input style={S.input} value={d.note} onChange={e => set('note', e.target.value)} /></label>
+      <button style={{ ...S.primaryBtn, width: '100%' }} onClick={() => onSave({
+        noFaktur: 'HT-' + Date.now().toString().slice(-6), supplierId: d.supplierId, supplierName: sup?.name || '',
+        total: Number(d.total), totalBayar: 0, sisa: Number(d.total), date: d.date, note: d.note, payments: []
+      })}>Simpan</button>
+    </div>
+  )
+}
+
+function BayarHutangForm({ hutang, onSave }) {
+  const [amount, setAmount] = useState(hutang.sisa)
+  return (
+    <div style={S.form}>
+      <div style={{ padding: '10px 14px', background: '#ffebee', borderRadius: 8, fontSize: 13 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <div>Nilai Hutang: <strong>{formatRp(hutang.total)}</strong></div>
+          <div>Sudah Bayar: <strong style={{ color: '#2e7d32' }}>{formatRp(hutang.totalBayar)}</strong></div>
+          <div>Sisa: <strong style={{ color: '#c62828' }}>{formatRp(hutang.sisa)}</strong></div>
+        </div>
+      </div>
+      <label style={S.formLabel}>Jumlah Bayar (Rp)<input style={{ ...S.input, fontSize: 18, fontWeight: 700 }} type="number" max={hutang.sisa} value={amount} onChange={e => setAmount(Number(e.target.value))} /></label>
+      <button style={{ ...S.primaryBtn, width: '100%' }} disabled={amount <= 0 || amount > hutang.sisa} onClick={() => onSave(amount)}>Konfirmasi Pembayaran</button>
+    </div>
+  )
+}
+
+// =============================================
+// 5. BACKUP & RESTORE
+// =============================================
+export function BackupRestore({ members, savings, loans, products, suppliers, kasData, jurnalData, transactions, stockInData, piutangs, hutangs, returs, mutasis, setorans, settings, users, opnames, showToast, deleteCollection, removeOne, saveImportedProducts, saveImportedMembers, saveSettings, logAction }) {
+  const [restoring, setRestoring] = useState(false)
+  const [restoreProgress, setRestoreProgress] = useState('')
+  const fileRef = useRef()
+
+  // Reset Data state
+  const [showReset, setShowReset] = useState(false)
+  const [resetPin, setResetPin] = useState('')
+  const [resetSelections, setResetSelections] = useState({}) // { key: true } = hapus semua
+  const [expandedKey, setExpandedKey] = useState(null) // kategori yg dibuka
+  const [selectedItems, setSelectedItems] = useState({}) // { key: Set(id1, id2) }
+  const [resetting, setResetting] = useState(false)
+  const [resetProgress, setResetProgress] = useState('')
+
+  const RESET_PIN = '527reset'
+
+  // Data untuk setiap kategori
+  const dataMap = {
+    transactions: transactions||[],
+    stockIn: stockInData||[],
+    kas: kasData||[],
+    jurnal: jurnalData||[],
+    piutangs: piutangs||[],
+    hutangs: hutangs||[],
+    returs: returs||[],
+    mutasis: mutasis||[],
+    setorans: setorans||[],
+    auditLogs: [],
+  }
+
+  const resetOptions = [
+    { key: 'transactions', label: 'Riwayat Penjualan (Kasir)', color: '#1565c0' },
+    { key: 'stockIn', label: 'Riwayat Barang Masuk', color: '#6a1b9a' },
+    { key: 'kas', label: 'Riwayat Kas Masuk/Keluar', color: '#2e7d32' },
+    { key: 'jurnal', label: 'Jurnal Umum', color: '#e65100' },
+    { key: 'piutangs', label: 'Data Piutang', color: '#c62828' },
+    { key: 'hutangs', label: 'Data Hutang Supplier', color: '#ad1457' },
+    { key: 'returs', label: 'Data Retur', color: '#4527a0' },
+    { key: 'mutasis', label: 'Mutasi Stok', color: '#00695c' },
+    { key: 'setorans', label: 'Setoran Harian', color: '#ef6c00' },
+    { key: 'auditLogs', label: 'Audit Log', color: '#546e7a' },
+  ]
+
+  // Deskripsi item untuk ditampilkan di list
+  function itemLabel(key, item) {
+    const d = fmtDate(item.date||'')
+    switch(key) {
+      case 'transactions': return d + ' — ' + (item.noNota||'-') + ' — ' + (item.customerName||'Umum') + ' — ' + formatRp(item.total||0)
+      case 'stockIn': return d + ' — ' + (item.invoice||'-') + ' — ' + formatRp(item.total||0)
+      case 'kas': return d + ' — ' + (item.type==='masuk'?'Masuk':'Keluar') + ' — ' + (item.description||item.category||'-') + ' — ' + formatRp(item.amount||0)
+      case 'jurnal': return d + ' — ' + (item.description||'-')
+      case 'piutangs': return d + ' — ' + (item.customerName||'-') + ' — ' + formatRp(item.total||0) + (item.status==='LUNAS'?' ✅':'')
+      case 'hutangs': return d + ' — ' + (item.supplierName||'-') + ' — ' + formatRp(item.total||0)
+      case 'returs': return d + ' — ' + (item.productName||'-') + ' × ' + (item.qty||0)
+      case 'mutasis': return d + ' — ' + (item.tipe||'') + ' — ' + (item.productName||products.find(p=>p.id===item.productId)?.name||'-')
+      case 'setorans': return d + ' — ' + formatRp(item.total||item.penjualan||0)
+      default: return d + ' — ' + (item.id||'')
+    }
+  }
+
+  function toggleReset(key) {
+    setResetSelections(prev => {
+      const next = { ...prev }
+      if (next[key]) {
+        delete next[key]
+        // Clear individual selections too
+        setSelectedItems(p => { const n = {...p}; delete n[key]; return n })
+      } else {
+        next[key] = true
+      }
+      return next
+    })
+    setExpandedKey(null)
+  }
+
+  // Expand/collapse item list
+  function toggleExpand(key) {
+    if (expandedKey === key) { setExpandedKey(null); return }
+    setExpandedKey(key)
+    // Init selected items for this key if not exists
+    if (!selectedItems[key]) {
+      setSelectedItems(prev => ({ ...prev, [key]: new Set() }))
+    }
+  }
+
+  function toggleItem(key, id) {
+    setSelectedItems(prev => {
+      const set = new Set(prev[key] || [])
+      if (set.has(id)) set.delete(id); else set.add(id)
+      // If some items selected, remove "select all" flag
+      if (set.size > 0 && set.size < dataMap[key].length) {
+        setResetSelections(p => { const n = {...p}; delete n[key]; return n })
+      }
+      return { ...prev, [key]: set }
+    })
+  }
+
+  function selectAllItems(key) {
+    const allIds = dataMap[key].map(item => item.id)
+    setSelectedItems(prev => ({ ...prev, [key]: new Set(allIds) }))
+    setResetSelections(prev => ({ ...prev, [key]: true }))
+  }
+
+  function deselectAllItems(key) {
+    setSelectedItems(prev => ({ ...prev, [key]: new Set() }))
+    setResetSelections(prev => { const n = {...prev}; delete n[key]; return n })
+  }
+
+  // Hitung total yang akan dihapus
+  function getDeleteCount(key) {
+    if (resetSelections[key]) return dataMap[key].length // hapus semua
+    return (selectedItems[key]?.size) || 0
+  }
+
+  const totalToDelete = resetOptions.reduce((a, opt) => a + getDeleteCount(opt.key), 0)
+
+  async function doReset() {
+    if (resetPin !== RESET_PIN) {
+      alert('❌ Sandi salah!')
+      return
+    }
+    if (totalToDelete === 0) {
+      alert('Pilih minimal 1 data yang ingin direset.')
+      return
+    }
+
+    // Build summary
+    const summary = resetOptions
+      .filter(opt => getDeleteCount(opt.key) > 0)
+      .map(opt => '- ' + opt.label + ': ' + getDeleteCount(opt.key) + ' dari ' + dataMap[opt.key].length)
+      .join('\n')
+
+    const confirmed = window.confirm(
+      '⚠️ PERINGATAN RESET DATA ⚠️\n\n' +
+      'Data yang akan DIHAPUS:\n' + summary + '\n\n' +
+      'Total: ' + totalToDelete + ' record\n\n' +
+      'AKSI INI TIDAK BISA DIBATALKAN!\nKetik OK untuk melanjutkan.'
+    )
+    if (!confirmed) return
+
+    setResetting(true)
+    let totalDeleted = 0
+
+    for (const opt of resetOptions) {
+      const count = getDeleteCount(opt.key)
+      if (count === 0) continue
+
+      setResetProgress('Menghapus ' + opt.label + '...')
+
+      if (resetSelections[opt.key] && (!selectedItems[opt.key] || selectedItems[opt.key].size === 0 || selectedItems[opt.key].size >= dataMap[opt.key].length)) {
+        // Hapus semua → pakai deleteCollection (batch, lebih cepat)
+        try {
+          const deleted = await deleteCollection(opt.key)
+          totalDeleted += deleted
+        } catch (err) { console.error('Reset all error:', opt.key, err) }
+      } else {
+        // Hapus sebagian → pakai removeOne per item
+        const ids = [...(selectedItems[opt.key] || [])]
+        for (let i = 0; i < ids.length; i++) {
+          try {
+            await removeOne(opt.key, ids[i])
+            totalDeleted++
+            setResetProgress('Menghapus ' + opt.label + ' (' + (i+1) + '/' + ids.length + ')')
+          } catch (err) { console.error('Remove error:', opt.key, ids[i], err) }
+        }
+      }
+    }
+
+    setResetting(false)
+    setResetProgress('')
+    setResetPin('')
+    setResetSelections({})
+    setSelectedItems({})
+    setExpandedKey(null)
+    setShowReset(false)
+    showToast(totalDeleted + ' data berhasil dihapus', 'error')
+  }
+
+  // --- PENGINGAT BACKUP OTOMATIS ---
+  // Browser tidak bisa menjalankan tugas terjadwal saat aplikasi tertutup,
+  // jadi yang bisa diandalkan adalah: begitu aplikasi dibuka, periksa kapan
+  // backup terakhir. Kalau sudah lewat batas, ingatkan dan tawarkan sekali klik.
+  const BATAS_HARI = 3
+  const terakhir = settings?.lastBackupAt || ''
+  const selisihHari = terakhir
+    ? Math.floor((Date.now() - new Date(terakhir).getTime()) / 86400000)
+    : null
+  const perluBackup = selisihHari === null || selisihHari >= BATAS_HARI
+
+  function doBackup(otomatis) {
+    // BACKUP LENGKAP (v2). Versi lama HANYA menyimpan 9 jenis data —
+    // piutang, barang masuk, retur, mutasi, setoran, dan hutang TIDAK ikut
+    // tersimpan, jadi backup lama tidak bisa dipakai memulihkan koperasi utuh.
+    const data = {
+      version: '2.0', date: new Date().toISOString(),
+      members, savings, loans, products, suppliers,
+      kasData, jurnalData, transactions, settings,
+      stockInData, piutangs, hutangs, returs, mutasis, setorans, users, opnames,
+    }
+    const json = JSON.stringify(data, null, 2)
+    const blob = new Blob([json], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'backup_koperasi_' + today() + '.json'
+    a.click()
+
+    // Catat waktu backup supaya pengingat tahu kapan terakhir dilakukan
+    try {
+      if (saveSettings) saveSettings({ ...settings, lastBackupAt: new Date().toISOString() })
+      if (logAction) logAction('Backup', 'download',
+        'Backup ' + (otomatis ? 'terjadwal' : 'manual') + ': ' +
+        members.length + ' anggota, ' + transactions.length + ' transaksi, ' + products.length + ' produk')
+    } catch (err) { console.error('Catat waktu backup gagal:', err) }
+
+    showToast('Backup berhasil di-download' + (otomatis ? ' (pengingat terjadwal)' : ''))
+  }
+
+  async function doRestore(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    setRestoring(true)
+    try {
+      const text = await file.text()
+      const data = JSON.parse(text)
+      if (!data.version || !data.members) { showToast('Format backup tidak valid', 'error'); setRestoring(false); return }
+
+      const confirmed = window.confirm('PERINGATAN: Restore akan menambahkan ' +
+        (data.products?.length || 0) + ' produk dan ' +
+        (data.members?.length || 0) + ' anggota ke database.\n\nLanjutkan?')
+      if (!confirmed) { setRestoring(false); return }
+
+      if (data.products?.length && saveImportedProducts) {
+        setRestoreProgress('Restore produk...')
+        await saveImportedProducts(data.products, (done, total) => setRestoreProgress(`Produk: ${done}/${total}`))
+      }
+      if (data.members?.length && saveImportedMembers) {
+        setRestoreProgress('Restore anggota...')
+        await saveImportedMembers(data.members, (done, total) => setRestoreProgress(`Anggota: ${done}/${total}`))
+      }
+
+      setRestoreProgress('')
+      showToast('Restore berhasil!')
+    } catch (err) {
+      showToast('Restore gagal: ' + err.message, 'error')
+    }
+    setRestoring(false)
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  const stats = [
+    { l: 'Anggota', n: members.length },
+    { l: 'Produk', n: products.length },
+    { l: 'Transaksi', n: transactions.length },
+    { l: 'Simpanan', n: savings.length },
+    { l: 'Pinjaman', n: loans.length },
+    { l: 'Kas', n: kasData.length },
+  ]
+
+  return (
+    <div>
+      <h2 style={S.title}>Backup & Restore Data</h2>
+
+      {/* Status backup — menggantikan "backup terjadwal" yang tidak bisa dijalankan browser */}
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+        background: perluBackup ? '#fff3e0' : '#e8f5e9',
+        border: '1px solid ' + (perluBackup ? '#ffb74d' : '#a5d6a7'),
+        borderRadius: 10, padding: '12px 16px', marginBottom: 16, fontSize: 13,
+      }}>
+        <div>
+          <div style={{ fontWeight: 700, color: perluBackup ? '#e65100' : '#2e7d32', marginBottom: 3 }}>
+            {perluBackup ? 'Waktunya backup' : 'Backup terkini'}
+          </div>
+          <div style={{ color: '#5d6d66' }}>
+            {terakhir
+              ? 'Backup terakhir: ' + new Date(terakhir).toLocaleString('id-ID') +
+                (selisihHari === 0 ? ' (hari ini)' : ' — ' + selisihHari + ' hari lalu')
+              : 'Belum pernah backup dari perangkat ini.'}
+            {perluBackup && ' Disarankan setiap ' + BATAS_HARI + ' hari sekali.'}
+          </div>
+        </div>
+        {perluBackup && (
+          <button style={{ ...S.primaryBtn, background: '#e65100' }} onClick={() => doBackup(true)}>
+            Backup Sekarang
+          </button>
+        )}
+      </div>
+      <div style={S.grid2}>
+        <div style={{ ...S.card, padding: 24 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 12, color: '#2e7d32' }}>Backup Data</h3>
+          <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>Download semua data koperasi dalam format JSON. Simpan sebagai cadangan.</p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 16 }}>
+            {stats.map(s => (
+              <div key={s.l} style={{ background: '#f5f6fa', borderRadius: 8, padding: '8px 12px', textAlign: 'center' }}>
+                <div style={{ fontSize: 18, fontWeight: 700 }}>{s.n}</div>
+                <div style={{ fontSize: 11, color: '#6b7280' }}>{s.l}</div>
+              </div>
+            ))}
+          </div>
+          <button style={{ ...S.primaryBtn, width: '100%', justifyContent: 'center', background: '#2e7d32' }} onClick={() => doBackup(false)}>
+            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            Download Backup
+          </button>
+        </div>
+        <div style={{ ...S.card, padding: 24 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 12, color: '#e65100' }}>Restore Data</h3>
+          <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>Upload file backup JSON untuk mengembalikan data. Data yang sudah ada TIDAK akan dihapus.</p>
+          <input ref={fileRef} type="file" accept=".json" onChange={doRestore} style={{ ...S.input, padding: 8, fontSize: 13, width: '100%' }} />
+          {restoring && <div style={{ textAlign: 'center', padding: 16, color: '#e65100', fontWeight: 600 }}>{restoreProgress || 'Sedang restore data...'}</div>}
+        </div>
+      </div>
+
+      {/* RESET DATA */}
+      <div style={{ ...S.card, padding: 24, marginTop: 24, border: '2px solid #c62828' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: '#c62828', marginBottom: 4 }}>Reset Data Transaksi</h3>
+            <p style={{ fontSize: 12, color: '#999', margin: 0 }}>Hapus riwayat transaksi tanpa menghapus data master (anggota, barang, supplier)</p>
+          </div>
+          <button style={{ ...S.primaryBtn, background: showReset ? '#666' : '#c62828' }} onClick={() => setShowReset(!showReset)}>
+            {showReset ? 'Tutup' : '🔒 Buka Reset Data'}
+          </button>
+        </div>
+
+        {showReset && (
+          <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: 16 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'end', marginBottom: 16 }}>
+              <label style={{ ...S.formLabel, marginBottom: 0, flex: 1 }}>
+                Masukkan Sandi Reset
+                <input style={{ ...S.input, fontSize: 14, fontWeight: 600, letterSpacing: 2 }} type="password" value={resetPin} onChange={e => setResetPin(e.target.value)} placeholder="Ketik sandi..." />
+              </label>
+              <div style={{ padding: '10px 16px', background: resetPin === RESET_PIN ? '#e8f5e9' : '#f5f5f5', borderRadius: 8, fontSize: 13, fontWeight: 600, color: resetPin === RESET_PIN ? '#2e7d32' : '#999' }}>
+                {resetPin === RESET_PIN ? '✅ Sandi benar' : '🔒 Terkunci'}
+              </div>
+            </div>
+
+            {resetPin === RESET_PIN && (
+              <>
+                <div style={{ padding: '10px 14px', background: '#e8f5e9', borderRadius: 8, marginBottom: 16, fontSize: 13 }}>
+                  <strong style={{ color: '#2e7d32' }}>✅ Data yang TIDAK akan dihapus:</strong>
+                  <span style={{ color: '#333', marginLeft: 8 }}>
+                    Anggota ({members.length}), Barang ({products.length}), Supplier ({suppliers.length}), Simpanan ({savings.length}), Pinjaman ({loans.length}), Users, Pengaturan
+                  </span>
+                </div>
+
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#c62828', marginBottom: 8 }}>Pilih data yang ingin direset:</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8, marginBottom: 16 }}>
+                  {resetOptions.map(opt => {
+                    const data = dataMap[opt.key]
+                    const deleteCount = getDeleteCount(opt.key)
+                    const isExpanded = expandedKey === opt.key
+                    const itemSet = selectedItems[opt.key] || new Set()
+                    return (
+                      <div key={opt.key} style={{ border: deleteCount > 0 ? '2px solid #c62828' : '1px solid #e0e0e0', borderRadius: 8, background: deleteCount > 0 ? '#ffebee' : '#f8f9fa', overflow: 'hidden' }}>
+                        {/* Header */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={!!resetSelections[opt.key]} onChange={() => toggleReset(opt.key)}
+                            style={{ width: 18, height: 18, accentColor: '#c62828' }} title="Pilih semua" />
+                          <div style={{ flex: 1 }} onClick={() => data.length > 0 && toggleExpand(opt.key)}>
+                            <div style={{ fontWeight: 600, fontSize: 13, color: deleteCount > 0 ? '#c62828' : '#333' }}>{opt.label}</div>
+                            {deleteCount > 0 && deleteCount < data.length && <div style={{ fontSize: 10, color: '#e65100' }}>{deleteCount} dari {data.length} dipilih</div>}
+                          </div>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: opt.color, background: '#fff', padding: '2px 8px', borderRadius: 10, border: '1px solid ' + opt.color }}>{data.length}</span>
+                          {data.length > 0 && (
+                            <button style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 14, color: '#666', padding: '2px 4px' }} onClick={() => toggleExpand(opt.key)} title="Lihat detail">
+                              {isExpanded ? '▲' : '▼'}
+                            </button>
+                          )}
+                        </div>
+                        {/* Expanded item list */}
+                        {isExpanded && data.length > 0 && (
+                          <div style={{ borderTop: '1px solid #e0e0e0', padding: '8px 12px', maxHeight: 250, overflow: 'auto', background: '#fff' }}>
+                            <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+                              <button style={{ fontSize: 10, color: '#1565c0', border: '1px solid #e0e0e0', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', background: '#fff' }} onClick={() => selectAllItems(opt.key)}>Pilih Semua</button>
+                              <button style={{ fontSize: 10, color: '#c62828', border: '1px solid #e0e0e0', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', background: '#fff' }} onClick={() => deselectAllItems(opt.key)}>Hapus Pilihan</button>
+                              <span style={{ fontSize: 10, color: '#666', marginLeft: 'auto' }}>{itemSet.size}/{data.length} dipilih</span>
+                            </div>
+                            {[...data].sort((a,b) => (b.date||'').localeCompare(a.date||'')).map(item => (
+                              <label key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderBottom: '1px solid #f5f5f5', cursor: 'pointer', fontSize: 11 }}>
+                                <input type="checkbox" checked={itemSet.has(item.id)} onChange={() => toggleItem(opt.key, item.id)}
+                                  style={{ width: 14, height: 14, accentColor: '#c62828', flexShrink: 0 }} />
+                                <span style={{ color: itemSet.has(item.id) ? '#c62828' : '#333', wordBreak: 'break-all' }}>{itemLabel(opt.key, item)}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <button style={{ ...S.primaryBtn, background: '#c62828', fontSize: 14, padding: '12px 24px' }}
+                    disabled={resetting || totalToDelete === 0}
+                    onClick={doReset}>
+                    🗑️ Hapus {totalToDelete} Data Terpilih
+                  </button>
+                  {resetting && <span style={{ fontSize: 13, color: '#c62828', fontWeight: 600 }}>{resetProgress}</span>}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// =============================================
+// 6. DASHBOARD GRAFIK DETAIL
+// =============================================
+export function DashboardCharts({ transactions, kasData, savings, loans, products }) {
+  const [period, setPeriod] = useState('7d')
+
+  // Data per hari
+  const now = new Date()
+  const days = period === '7d' ? 7 : period === '30d' ? 30 : 90
+  const dateRange = Array.from({ length: days }, (_, i) => {
+    const d = new Date(now); d.setDate(d.getDate() - (days - 1 - i))
+    return toLocalDate(d)
+  })
+
+  const dailySales = dateRange.map(d => ({
+    date: d,
+    label: d.slice(8, 10) + '/' + d.slice(5, 7),
+    sales: transactions.filter(t => t.date === d).reduce((a, t) => a + (t.total || 0), 0),
+    count: transactions.filter(t => t.date === d).length,
+    kasIn: kasData.filter(k => k.date === d && k.type === 'masuk').reduce((a, k) => a + (k.amount||0), 0),
+    kasOut: kasData.filter(k => k.date === d && k.type === 'keluar').reduce((a, k) => a + (k.amount||0), 0),
+  }))
+
+  const maxSales = Math.max(1, ...dailySales.map(d => d.sales))
+  const totalPeriod = dailySales.reduce((a, d) => a + d.sales, 0)
+  const avgDaily = Math.round(totalPeriod / days)
+
+  // Top 10 produk terlaris
+  const productSales = {}
+  transactions.forEach(tx => {
+    (tx.items || []).forEach(item => {
+      productSales[item.name] = (productSales[item.name] || 0) + item.qty
+    })
+  })
+  const topProducts = Object.entries(productSales).sort((a, b) => b[1] - a[1]).slice(0, 10)
+  const maxQty = Math.max(1, ...topProducts.map(p => p[1]))
+
+  // Kategori stok
+  const catStock = {}
+  products.forEach(p => { catStock[p.category] = (catStock[p.category] || 0) + p.stock })
+  const topCats = Object.entries(catStock).sort((a, b) => b[1] - a[1]).slice(0, 8)
+  const maxCatStock = Math.max(1, ...topCats.map(c => c[1]))
+
+  const barColors = ['#1565c0', '#2e7d32', '#e65100', '#7b1fa2', '#c62828', '#00838f', '#4e342e', '#37474f', '#ff8f00', '#1b5e20']
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700 }}>Analisis & Grafik</h3>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {[['7d', '7 Hari'], ['30d', '30 Hari'], ['90d', '90 Hari']].map(([k, l]) => (
+            <button key={k} style={{ ...S.filterBtn, ...(period === k ? S.filterActive : {}) }} onClick={() => setPeriod(k)}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={S.grid3}>
+        <div style={S.statCard}><div style={S.statLabel}>Total Penjualan ({days} hari)</div><div style={{ ...S.statVal, color: '#1565c0' }}>{formatRp(totalPeriod)}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Rata-rata / Hari</div><div style={S.statVal}>{formatRp(avgDaily)}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Total Transaksi</div><div style={S.statVal}>{dailySales.reduce((a, d) => a + d.count, 0)}</div></div>
+      </div>
+
+      {/* Grafik Penjualan Harian */}
+      <div style={{ ...S.card, marginBottom: 16 }}>
+        <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Penjualan Harian</h4>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: days > 30 ? 1 : 3, height: 160 }}>
+          {dailySales.map((d, i) => (
+            <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <div style={{ width: '100%', background: d.sales > 0 ? '#1565c0' : '#e5e7eb', borderRadius: '3px 3px 0 0', height: Math.max(2, (d.sales / maxSales) * 140), transition: 'height 0.3s' }} title={d.date + ': ' + formatRp(d.sales)} />
+              {days <= 14 && <div style={{ fontSize: 9, color: '#6b7280', marginTop: 4 }}>{d.label}</div>}
+            </div>
+          ))}
+        </div>
+        {days > 14 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#6b7280', marginTop: 4 }}><span>{dailySales[0]?.label}</span><span>{dailySales[Math.floor(days/2)]?.label}</span><span>{dailySales[days-1]?.label}</span></div>}
+      </div>
+
+      <div style={S.grid2}>
+        {/* Top Produk */}
+        <div style={S.card}>
+          <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Top 10 Produk Terlaris</h4>
+          {topProducts.length === 0 ? <div style={{ color: '#999', fontSize: 13 }}>Belum ada data penjualan</div> : topProducts.map(([name, qty], i) => (
+            <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div style={{ width: 20, fontSize: 11, color: '#6b7280', textAlign: 'right' }}>{i + 1}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, marginBottom: 2 }}>{name}</div>
+                <div style={{ height: 8, background: '#e5e7eb', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: (qty / maxQty * 100) + '%', background: barColors[i % 10], borderRadius: 4 }} />
+                </div>
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 600, minWidth: 40, textAlign: 'right' }}>{qty}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Stok per Kategori */}
+        <div style={S.card}>
+          <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Stok per Kategori</h4>
+          {topCats.map(([cat, stock], i) => (
+            <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, marginBottom: 2 }}>{cat}</div>
+                <div style={{ height: 8, background: '#e5e7eb', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: (stock / maxCatStock * 100) + '%', background: barColors[i % 10], borderRadius: 4 }} />
+                </div>
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 600, minWidth: 50, textAlign: 'right' }}>{stock} pcs</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// =============================================
+// 7. LAPORAN TUTUP BUKU (Tgl 26 - 25)
+// Per Kompi, dengan Pangkat, NRP, Kredit/Lunas
+// =============================================
+export function LaporanTutupBuku({ transactions, members, settings }) {
+  // Default: periode 26 bulan lalu — 25 bulan ini
+  const now = new Date()
+  const defaultEnd = new Date(now.getFullYear(), now.getMonth(), 25)
+  const defaultStart = new Date(defaultEnd)
+  defaultStart.setMonth(defaultStart.getMonth() - 1)
+  defaultStart.setDate(26)
+
+  const [startDate, setStartDate] = useState(toLocalDate(defaultStart))
+  const [endDate, setEndDate] = useState(toLocalDate(defaultEnd))
+  const [filterKompi, setFilterKompi] = useState('all')
+
+  // Filter transaksi dalam periode (EXCLUDE return)
+  const periodTx = transactions.filter(t => t.date >= startDate && t.date <= endDate && t.caraBayar !== 'RETURN' && !t.returned)
+
+  // Daftar kompi dari members
+  const kompiList = [...new Set(members.map(m => m.kompi || 'LAINNYA'))].filter(Boolean).sort()
+
+  // Group by kompi
+  const kompiData = {}
+  periodTx.forEach(tx => {
+    const member = members.find(m => m.id === tx.memberId)
+    const kompi = member?.kompi || 'NON-ANGGOTA'
+    if (filterKompi !== 'all' && kompi !== filterKompi) return
+
+    if (!kompiData[kompi]) kompiData[kompi] = []
+    kompiData[kompi].push({
+      ...tx,
+      pangkat: member?.pangkat || '-',
+      nrp: member?.nrp || '-',
+      memberName: member?.name || tx.customerName || 'Umum',
+      kompi,
+    })
+  })
+
+  const sortedKompi = Object.keys(kompiData).sort()
+  const filteredTx = sortedKompi.flatMap(k => kompiData[k])
+  const grandTotalLunas = filteredTx.filter(t => (t.caraBayar||'LUNAS') === 'LUNAS').reduce((a, t) => a + (t.total||0), 0)
+  const grandTotalKredit = filteredTx.filter(t => t.caraBayar === 'KREDIT').reduce((a, t) => a + (t.total||0), 0)
+  const grandTotal = grandTotalLunas + grandTotalKredit
+  const judulKompi = filterKompi === 'all' ? 'SEMUA KOMPI' : filterKompi
+
+  // Hitung bulan/tahun untuk judul
+  const endD = new Date(endDate)
+  const bulanNama = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember']
+  const judulPeriode = `${bulanNama[endD.getMonth()]} ${endD.getFullYear()}`
+
+  function cetakLaporan() {
+    const win = window.open('', '_blank')
+    win.document.write(`<!DOCTYPE html><html><head><style>
+      @page { margin: 12mm; size: A4 landscape; }
+      body { font-family: Arial, sans-serif; font-size: 11px; color: #333; }
+      h1 { font-size: 16px; text-align: center; margin: 0; }
+      h2 { font-size: 13px; text-align: center; margin: 4px 0 12px; color: #666; font-weight: normal; }
+      h3 { font-size: 13px; margin: 16px 0 6px; padding: 4px 8px; background: #1565c0; color: #fff; border-radius: 4px; }
+      table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+      th { background: #f5f5f5; padding: 5px 8px; text-align: left; border: 1px solid #ccc; font-size: 10px; }
+      td { padding: 4px 8px; border: 1px solid #ccc; font-size: 10px; }
+      .right { text-align: right; }
+      .bold { font-weight: bold; }
+      .kredit { color: #e65100; }
+      .lunas { color: #2e7d32; }
+      .total-row td { background: #f5f6fa; font-weight: bold; }
+      .grand td { background: #1565c0; color: #fff; font-weight: bold; font-size: 12px; }
+      .footer { text-align: center; font-size: 9px; color: #999; margin-top: 16px; }
+      @media print { button { display: none; } }
+    </style></head><body>
+      <h1>${settings?.name || 'KOPERASI YONIF 527/BY'}</h1>
+      <h2>LAPORAN TUTUP BUKU — ${judulKompi}<br>${judulPeriode} | Periode: ${fmtDate(startDate)} s/d ${fmtDate(endDate)}</h2>
+
+      ${sortedKompi.map(kompi => {
+        const rows = kompiData[kompi]
+        const kompiLunas = rows.filter(t => (t.caraBayar||'LUNAS') === 'LUNAS').reduce((a, t) => a + (t.total||0), 0)
+        const kompiKredit = rows.filter(t => t.caraBayar === 'KREDIT').reduce((a, t) => a + (t.total||0), 0)
+        return '<h3>' + kompi + ' (' + rows.length + ' transaksi)</h3>' +
+          '<table><thead><tr><th>No</th><th>Tanggal</th><th>No Nota</th><th>Pangkat</th><th>Nama</th><th>NRP</th><th>Barang</th><th>Qty</th><th class="right">Total</th><th>Status</th></tr></thead><tbody>' +
+          rows.map((tx, i) => {
+            const items = (tx.items||[]).map(it => it.name).join(', ')
+            const totalQty = (tx.items||[]).reduce((a, it) => a + (it.qty||0), 0)
+            const isKredit = tx.caraBayar === 'KREDIT'
+            return '<tr><td>' + (i+1) + '</td><td>' + (tx.date||'') + '</td><td>' + (tx.noNota||'-') + '</td><td>' + tx.pangkat + '</td><td class="bold">' + tx.memberName + '</td><td>' + tx.nrp + '</td><td>' + items + '</td><td class="right">' + totalQty + '</td><td class="right">' + Number(tx.total||0).toLocaleString('id-ID') + '</td><td class="' + (isKredit ? 'kredit' : 'lunas') + ' bold">' + (isKredit ? 'KREDIT' : 'LUNAS') + '</td></tr>'
+          }).join('') +
+          '<tr class="total-row"><td colspan="8" class="right">Total ' + kompi + '</td><td class="right">' + Number(kompiLunas + kompiKredit).toLocaleString('id-ID') + '</td><td></td></tr>' +
+          '<tr class="total-row"><td colspan="8" class="right">LUNAS</td><td class="right lunas">' + Number(kompiLunas).toLocaleString('id-ID') + '</td><td></td></tr>' +
+          '<tr class="total-row"><td colspan="8" class="right">KREDIT</td><td class="right kredit">' + Number(kompiKredit).toLocaleString('id-ID') + '</td><td></td></tr>' +
+          '</tbody></table>'
+      }).join('')}
+
+      <table><tbody>
+        <tr class="grand"><td colspan="8" class="right">GRAND TOTAL ${judulKompi}</td><td class="right">Rp ${Number(grandTotal).toLocaleString('id-ID')}</td><td></td></tr>
+        <tr class="total-row"><td colspan="8" class="right">Total LUNAS</td><td class="right lunas">Rp ${Number(grandTotalLunas).toLocaleString('id-ID')}</td><td></td></tr>
+        <tr class="total-row"><td colspan="8" class="right">Total KREDIT</td><td class="right kredit">Rp ${Number(grandTotalKredit).toLocaleString('id-ID')}</td><td></td></tr>
+      </tbody></table>
+
+      <div class="footer">Dicetak: ${new Date().toLocaleString('id-ID')} — ${settings?.name || 'KOPERASI YONIF 527/BY'}</div>
+      <script>setTimeout(()=>{window.print();},500)</script>
+    </body></html>`)
+    win.document.close()
+  }
+
+  return (
+    <div>
+      <div style={S.pageHead}><h2 style={S.title}>Laporan Tutup Buku</h2>
+        <button style={{ ...S.primaryBtn, background: '#2e7d32' }} onClick={cetakLaporan}>
+          <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+          Cetak {filterKompi === 'all' ? 'Semua Kompi' : filterKompi}
+        </button>
+      </div>
+
+      <div style={{ ...S.card, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, alignItems: 'end' }}>
+          <label style={S.formLabel}>Tanggal Mulai (tgl 26)<input style={S.input} type="date" value={startDate} onChange={e => setStartDate(e.target.value)} /></label>
+          <label style={S.formLabel}>Tanggal Akhir (tgl 25)<input style={S.input} type="date" value={endDate} onChange={e => setEndDate(e.target.value)} /></label>
+          <label style={S.formLabel}>Filter Kompi
+            <select style={S.input} value={filterKompi} onChange={e => setFilterKompi(e.target.value)}>
+              <option value="all">Semua Kompi</option>
+              {kompiList.map(k => <option key={k} value={k}>{k}</option>)}
+            </select>
+          </label>
+        </div>
+        <div style={{ fontSize: 13, color: '#6b7280', marginTop: 8 }}>Periode: <strong>{fmtDate(startDate)}</strong> s/d <strong>{fmtDate(endDate)}</strong> — Laporan <strong>{judulPeriode}</strong></div>
+      </div>
+
+      <div style={S.grid3}>
+        <div style={S.statCard}><div style={S.statLabel}>Total Transaksi</div><div style={S.statVal}>{periodTx.length}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Total LUNAS</div><div style={{ ...S.statVal, color: '#2e7d32' }}>{formatRp(grandTotalLunas)}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Total KREDIT</div><div style={{ ...S.statVal, color: '#e65100' }}>{formatRp(grandTotalKredit)}</div></div>
+      </div>
+
+      {sortedKompi.map(kompi => {
+        const rows = kompiData[kompi]
+        const kompiLunas = rows.filter(t => (t.caraBayar||'LUNAS') === 'LUNAS').reduce((a, t) => a + (t.total||0), 0)
+        const kompiKredit = rows.filter(t => t.caraBayar === 'KREDIT').reduce((a, t) => a + (t.total||0), 0)
+        return (
+          <div key={kompi} style={{ ...S.card, marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: '#1565c0' }}>{kompi}</h3>
+              <div style={{ display: 'flex', gap: 12, fontSize: 13 }}>
+                <span>LUNAS: <strong style={{ color: '#2e7d32' }}>{formatRp(kompiLunas)}</strong></span>
+                <span>KREDIT: <strong style={{ color: '#e65100' }}>{formatRp(kompiKredit)}</strong></span>
+                <span>Total: <strong>{formatRp(kompiLunas + kompiKredit)}</strong></span>
+              </div>
+            </div>
+            <table style={S.table}>
+              <thead><tr>{['No', 'Tanggal', 'No Nota', 'Pangkat', 'Nama', 'NRP', 'Barang', 'Qty', 'Total', 'Status'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <tbody>
+                {rows.map((tx, i) => {
+                  const items = (tx.items||[]).map(it => it.name).join(', ')
+                  const totalQty = (tx.items||[]).reduce((a, it) => a + (it.qty||0), 0)
+                  const isKredit = tx.caraBayar === 'KREDIT'
+                  return (
+                    <tr key={tx.id || i} style={S.tr}>
+                      <td style={S.td}>{i + 1}</td>
+                      <td style={S.td}>{fmtDate(tx.date)}</td>
+                      <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{tx.noNota || '-'}</td>
+                      <td style={S.td}>{tx.pangkat}</td>
+                      <td style={{ ...S.td, fontWeight: 600 }}>{tx.memberName}</td>
+                      <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{tx.nrp}</td>
+                      <td style={{ ...S.td, fontSize: 11, maxWidth: 200 }}>{items || '-'}</td>
+                      <td style={{ ...S.td, textAlign: 'right' }}>{totalQty}</td>
+                      <td style={{ ...S.td, textAlign: 'right', fontWeight: 600 }}>{formatRp(tx.total)}</td>
+                      <td style={S.td}><span style={{ ...S.badge, background: isKredit ? '#fff3e0' : '#e8f5e9', color: isKredit ? '#e65100' : '#2e7d32' }}>{isKredit ? 'KREDIT' : 'LUNAS'}</span></td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
+      })}
+
+      {sortedKompi.length === 0 && <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>Tidak ada transaksi dalam periode ini</div>}
+
+      {sortedKompi.length > 0 && (
+        <div style={{ ...S.card, background: '#0f172a', color: '#fff', textAlign: 'center', padding: 20 }}>
+          <div style={{ fontSize: 13, opacity: 0.7, marginBottom: 8 }}>TOTAL {judulKompi}</div>
+          <div style={{ fontSize: 28, fontWeight: 700 }}>{formatRp(grandTotal)}</div>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 24, marginTop: 8, fontSize: 14 }}>
+            <span>LUNAS: <strong style={{ color: '#66bb6a' }}>{formatRp(grandTotalLunas)}</strong></span>
+            <span>KREDIT: <strong style={{ color: '#ffb74d' }}>{formatRp(grandTotalKredit)}</strong></span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// =============================================
+// 8. STOK HISTORI (lihat stok per tanggal)
+// =============================================
+export function StokHistori({ products, stockIn, transactions, mutasis }) {
+  const [targetDate, setTargetDate] = useState(today())
+  const [search, setSearch] = useState('')
+  const [filterTipe, setFilterTipe] = useState('all') // all, MILIK, TITIPAN
+
+  // Hitung stok pada tanggal tertentu:
+  // Stok sekarang - (barang masuk setelah tanggal) + (penjualan setelah tanggal) - (mutasi tambah setelah) + (mutasi kurang setelah)
+  const stokPadaTanggal = products.map(p => {
+    let stok = p.stock || 0
+
+    // Kurangi stok dari barang masuk SETELAH tanggal target
+    ;(stockIn||[]).filter(si => si.date > targetDate).forEach(si => {
+      (si.items||[]).forEach(it => {
+        if (it.productId === p.id) stok -= (it.qty||0)
+      })
+    })
+
+    // Tambahkan kembali stok dari penjualan SETELAH tanggal target
+    ;(transactions||[]).filter(tx => tx.date > targetDate).forEach(tx => {
+      const isReturn = tx.caraBayar === 'RETURN' // retur MENAMBAH stok saat terjadi → reverse-nya MENGURANGI
+      ;(tx.items||[]).forEach(it => {
+        if (it.productId === p.id) stok += isReturn ? -(it.qty||0) : (it.qty||0)
+      })
+    })
+
+    // Reverse mutasi SETELAH tanggal target
+    ;(mutasis||[]).filter(m => m.date > targetDate).forEach(m => {
+      if (m.productId === p.id) {
+        if (m.tipe === 'tambah') stok -= (m.qty||0)
+        else stok += (m.qty||0)
+      }
+    })
+
+    return { ...p, stokHistori: Math.max(0, stok) }
+  })
+
+  const filtered = stokPadaTanggal.filter(p => {
+    if (filterTipe !== 'all' && (p.tipeBarang||'MILIK') !== filterTipe) return false
+    if (search && !String(p.name||'').toLowerCase().includes(search.toLowerCase()) && !String(p.sku||'').toLowerCase().includes(search.toLowerCase())) return false
+    return true
+  })
+
+  const totalItems = filtered.reduce((a, p) => a + p.stokHistori, 0)
+  const totalValue = filtered.reduce((a, p) => a + (p.stokHistori * (p.buyPrice||0)), 0)
+  const titipanCount = filtered.filter(p => (p.tipeBarang||'MILIK') === 'TITIPAN').length
+
+  const isToday = targetDate === today()
+
+  return (
+    <div>
+      <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 20 }}>Stok per Tanggal</h2>
+
+      <div style={{ ...card, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, alignItems: 'end' }}>
+          <label style={fl}>Lihat stok pada tanggal:
+            <input style={inp} type="date" value={targetDate} onChange={e => setTargetDate(e.target.value)} />
+          </label>
+          <label style={fl}>Cari produk:
+            <input style={inp} value={search} onChange={e => setSearch(e.target.value)} placeholder="Nama / SKU..." />
+          </label>
+          <label style={fl}>Tipe Barang:
+            <select style={inp} value={filterTipe} onChange={e => setFilterTipe(e.target.value)}>
+              <option value="all">Semua</option>
+              <option value="MILIK">Milik Koperasi</option>
+              <option value="TITIPAN">Barang Titipan</option>
+            </select>
+          </label>
+        </div>
+        {!isToday && <div style={{ marginTop: 10, padding: '6px 12px', background: '#fff3e0', borderRadius: 8, fontSize: 13, color: '#e65100' }}>Menampilkan stok pada tanggal <strong>{fmtDate(targetDate)}</strong> (estimasi berdasarkan transaksi)</div>}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 20 }}>
+        <div style={card}><div style={{ fontSize: 12, color: '#6b7280' }}>Total Produk</div><div style={{ fontSize: 20, fontWeight: 700 }}>{filtered.length}</div></div>
+        <div style={card}><div style={{ fontSize: 12, color: '#6b7280' }}>Total Item Stok</div><div style={{ fontSize: 20, fontWeight: 700 }}>{totalItems.toLocaleString('id-ID')}</div></div>
+        <div style={card}><div style={{ fontSize: 12, color: '#6b7280' }}>Nilai Inventaris</div><div style={{ fontSize: 20, fontWeight: 700, color: '#1565c0' }}>{formatRp(totalValue)}</div></div>
+        {titipanCount > 0 && <div style={card}><div style={{ fontSize: 12, color: '#6b7280' }}>Barang Titipan</div><div style={{ fontSize: 20, fontWeight: 700, color: '#7b1fa2' }}>{titipanCount}</div></div>}
+      </div>
+
+      <div style={card}>
+        <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+          <thead><tr>{['SKU', 'Produk', 'Tipe', 'Kategori', isToday ? 'Stok' : 'Stok ' + fmtDate(targetDate), 'Stok Sekarang', 'Selisih', 'Nilai'].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
+          <tbody>{filtered.map(p => {
+            const diff = p.stokHistori - (p.stock||0)
+            return (
+              <tr key={p.id}>
+                <td style={td}>{String(p.sku||'')}</td>
+                <td style={{ ...td, fontWeight: 600 }}>{p.name}</td>
+                <td style={td}><span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600, background: (p.tipeBarang||'MILIK') === 'TITIPAN' ? '#f3e5f5' : '#e8f5e9', color: (p.tipeBarang||'MILIK') === 'TITIPAN' ? '#7b1fa2' : '#2e7d32' }}>{p.tipeBarang||'MILIK'}</span></td>
+                <td style={td}>{p.category||'-'}</td>
+                <td style={{ ...td, fontWeight: 600 }}>{p.stokHistori}</td>
+                <td style={td}>{p.stock||0}</td>
+                <td style={{ ...td, color: diff > 0 ? '#2e7d32' : diff < 0 ? '#c62828' : '#999' }}>{diff > 0 ? '+' : ''}{diff}</td>
+                <td style={{ ...td, textAlign: 'right' }}>{formatRp(p.stokHistori * (p.buyPrice||0))}</td>
+              </tr>
+            )
+          })}</tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+const card = { background: '#fff', borderRadius: 12, padding: 18, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }
+const fl = { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, fontWeight: 600, color: '#6b7280' }
+const inp = { padding: '9px 12px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 14, outline: 'none' }
+const th = { textAlign: 'left', padding: '10px 12px', borderBottom: '2px solid #e5e7eb', color: '#6b7280', fontWeight: 600, fontSize: 11, textTransform: 'uppercase' }
+const td = { padding: '8px 12px', borderBottom: '1px solid #e5e7eb' }
+
+// =============================================
+// ICONS & STYLES
+// =============================================
+// =============================================
+// 8. TAGIHAN JUYAR (Potong Gaji) per Kompi
+// + TUNGGAKAN ketika tidak bisa dipotong
+// =============================================
+// =============================================
+// PEMILIH ANGGOTA DENGAN PENCARIAN
+// Daftar anggota koperasi ratusan orang — memilih lewat dropdown biasa
+// berarti menggulir satu per satu. Di sini cukup ketik sebagian nama,
+// NRP, kompi, atau no anggota; hasilnya langsung tersaring.
+// =============================================
+function PilihAnggota({ members, sudahAda, kompiAwal, onPilih, onTutup }) {
+  const [q, setQ] = useState('')
+  const [kompiFilter, setKompiFilter] = useState(kompiAwal || '')
+
+  const kompiOpsi = [...new Set(members.map(m => (m.kompi || '').trim()).filter(Boolean))].sort()
+
+  const kata = q.trim().toLowerCase()
+  // PENTING: anggota yang SUDAH ada di daftar tetap ikut hasil pencarian.
+  // Dulu mereka disembunyikan, sehingga mencari nama yang jelas-jelas ada
+  // (mis. "aliku") menghasilkan "tidak ada anggota yang cocok" — terlihat rusak.
+  // Sekarang mereka tetap muncul, hanya ditandai "sudah di daftar".
+  const semua = members
+  const terfilterKompi = kompiFilter
+    ? semua.filter(m => (m.kompi || 'NON-ANGGOTA') === kompiFilter)
+    : semua
+  const hasil = (kata
+    ? terfilterKompi.filter(m =>
+        String(m.name || '').toLowerCase().includes(kata) ||
+        String(m.nrp || '').toLowerCase().includes(kata) ||
+        String(m.no || '').toLowerCase().includes(kata) ||
+        String(m.pangkat || '').toLowerCase().includes(kata) ||
+        String(m.kompi || '').toLowerCase().includes(kata))
+    : terfilterKompi
+  ).sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
+
+  const tampil = hasil.slice(0, 30)
+
+  return (
+    <div style={{ border: '1px solid #cfd8dc', borderRadius: 8, padding: 12, background: '#fafcfd' }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+        <input autoFocus style={{ ...S.input, flex: '1 1 260px', fontSize: 13, padding: '7px 10px' }}
+          placeholder="Ketik nama / NRP / no anggota..."
+          value={q} onChange={e => setQ(e.target.value)} />
+        <select style={{ ...S.input, width: 165, fontSize: 12, padding: '7px 8px' }}
+          value={kompiFilter} onChange={e => setKompiFilter(e.target.value)}>
+          <option value="">Semua kompi</option>
+          {kompiOpsi.map(k => <option key={k} value={k}>{k}</option>)}
+          <option value="NON-ANGGOTA">(tanpa kompi)</option>
+        </select>
+        {onTutup && <button style={{ ...S.filterBtn, padding: '7px 12px', fontSize: 12 }} onClick={onTutup}>Tutup</button>}
+      </div>
+
+      <div style={{ fontSize: 11, color: '#607d8b', marginBottom: 6 }}>
+        Ketemu <b>{hasil.length}</b> anggota{kata ? ' untuk "' + q + '"' : ''} — dari total {members.length} anggota terdaftar
+        {hasil.length > 30 ? '. Menampilkan 30 teratas, ketik lebih spesifik untuk mempersempit.' : ''}
+        {hasil.some(m => sudahAda.has(m.id)) ? ' Yang bertanda abu-abu sudah ada di daftar tagihan.' : ''}
+      </div>
+
+      <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid #e0e0e0', borderRadius: 6, background: '#fff' }}>
+        {tampil.length === 0 && (
+          <div style={{ padding: 14, fontSize: 13, color: '#78909c', textAlign: 'center' }}>
+            Tidak ada anggota yang cocok dengan "{q}". Coba potongan nama lain, atau ubah filter kompi.
+          </div>
+        )}
+        {tampil.map(m => {
+          const sudah = sudahAda.has(m.id)
+          return (
+          <div key={m.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '7px 10px', borderBottom: '1px solid #f0f0f0', background: sudah ? '#f5f7f8' : undefined }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: sudah ? '#78909c' : undefined }}>
+                {(m.pangkat ? m.pangkat + ' ' : '') + (m.name || '(tanpa nama)')}
+              </div>
+              <div style={{ fontSize: 11, color: '#90a4ae', fontFamily: 'monospace' }}>
+                {(m.kompi || 'tanpa kompi')} · NRP {m.nrp || '-'}{m.no ? ' · No ' + m.no : ''}
+              </div>
+            </div>
+            {sudah ? (
+              <span style={{ fontSize: 11, color: '#78909c', padding: '4px 10px', background: '#e0e5e8', borderRadius: 5, whiteSpace: 'nowrap' }}>sudah di daftar</span>
+            ) : (
+              <button style={{ ...S.primaryBtn, padding: '5px 12px', fontSize: 12 }}
+                onClick={() => onPilih(m.id)}>Tambah</button>
+            )}
+          </div>
+        )})}
+      </div>
+    </div>
+  )
+}
+
+// Hitung periode potong gaji (tgl 26 s/d 25) yang memuat tanggal acuan.
+// geser = 0 periode berjalan, -1 sebelumnya, +1 berikutnya.
+function periode26(acuan, geser) {
+  const d = new Date(acuan)
+  // Kalau tanggal >= 26, periode dimulai bulan ini; kalau tidak, bulan lalu
+  const basis = d.getDate() >= 26 ? d.getMonth() : d.getMonth() - 1
+  const mulai = new Date(d.getFullYear(), basis + (geser || 0), 26)
+  const akhir = new Date(d.getFullYear(), basis + (geser || 0) + 1, 25)
+  return { mulai: toLocalDate(mulai), akhir: toLocalDate(akhir) }
+}
+
+export function TagihanJuyar({ transactions, piutangs, members, settings, savePiutang, bayarPiutang, showToast, setModal, logAction, kasData, jurnalData }) {
+  const now = new Date()
+  const defaultEnd = new Date(now.getFullYear(), now.getMonth(), 25)
+  const defaultStart = new Date(defaultEnd); defaultStart.setMonth(defaultStart.getMonth() - 1); defaultStart.setDate(26)
+
+  const [startDate, setStartDate] = useState(toLocalDate(defaultStart))
+  const [endDate, setEndDate] = useState(toLocalDate(defaultEnd))
+  const [filterKompi, setFilterKompi] = useState('all')
+  const [bayarMid, setBayarMid] = useState(null)
+  const [bayarAmount, setBayarAmount] = useState('')
+
+  // --- Penyesuaian tunggakan manual (per periode) ---
+  // FIX: dulu tersimpan di localStorage browser → tiap komputer/HP angkanya beda.
+  // Sekarang tersimpan di Firestore (koleksi 'juyarAdjust') → sama di semua device.
+  const adjustKey = 'juyar_adj_' + startDate + '_' + endDate
+  const [adjust, setAdjust] = useState({})
+  const [editMid, setEditMid] = useState(null)
+  const [editVal, setEditVal] = useState('')
+
+  // Penanda mana yang nilainya DIWARISI dari periode sebelumnya (bukan diketik di periode ini)
+  const [warisan, setWarisan] = useState({})
+
+  // Muat penyesuaian saat periode berubah
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const { getAll, getOne } = await import('./db')
+
+        // 1. Penyesuaian milik periode ini
+        let milikPeriode = {}
+        const remote = await getOne('juyarAdjust', adjustKey)
+        if (remote && remote.json) {
+          milikPeriode = JSON.parse(remote.json) || {}
+        } else {
+          // Migrasi satu kali: angkat data lama dari browser ini ke server
+          try { milikPeriode = JSON.parse(localStorage.getItem(adjustKey) || '{}') || {} } catch {}
+          if (Object.keys(milikPeriode).length > 0) {
+            const { setOne } = await import('./db')
+            await setOne('juyarAdjust', adjustKey, { id: adjustKey, json: JSON.stringify(milikPeriode) })
+          }
+        }
+
+        // 2. WARISAN DARI PERIODE SEBELUMNYA — inilah perbaikan bug utama.
+        //    Dulu penyesuaian hanya berlaku di periodenya sendiri, sehingga
+        //    tunggakan yang diisi manual bulan lalu HILANG begitu ganti ke
+        //    bulan ini. Padahal utang yang belum dibayar memang harus terbawa.
+        //    Diambil dari periode terakhir yang berakhir SEBELUM periode ini dimulai.
+        const semua = await getAll('juyarAdjust')
+        const sebelumnya = (semua || [])
+          .map(d => {
+            const m = String(d.id || '').match(/^juyar_adj_(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/)
+            return m ? { mulai: m[1], selesai: m[2], json: d.json } : null
+          })
+          .filter(d => d && d.selesai < startDate)
+          .sort((a, b) => b.selesai.localeCompare(a.selesai))[0]
+
+        const diwarisi = {}
+        if (sebelumnya && sebelumnya.json) {
+          try {
+            const lama = JSON.parse(sebelumnya.json) || {}
+            for (const [mid, nilai] of Object.entries(lama)) {
+              if (mid in milikPeriode) continue          // sudah disentuh di periode ini
+              if (nilai == null) continue                // sengaja dikembalikan ke hitungan sistem
+              // Dukung dua bentuk: angka lama, dan bentuk baru { n, d }
+              const a = (typeof nilai === 'number') ? { n: nilai, d: 0 }
+                      : (nilai && nilai.n != null) ? { n: Number(nilai.n)||0, d: Number(nilai.d)||0 }
+                      : null
+              if (a && (a.n - a.d) > 0) diwarisi[mid] = a
+            }
+          } catch {}
+        }
+
+        if (!alive) return
+        setAdjust({ ...diwarisi, ...milikPeriode })
+        setWarisan(diwarisi)
+      } catch (err) {
+        console.error('Muat penyesuaian tunggakan gagal:', err)
+        if (alive) { setAdjust({}); setWarisan({}) }
+      }
+    })()
+    setEditMid(null)
+    return () => { alive = false }
+  }, [adjustKey])
+
+  // --- ANGGOTA MANUAL: dipaksa muncul di daftar walau tidak punya piutang ---
+  // Contoh pemakaian: anggota yang tagihannya dicatat di luar sistem, atau
+  // titipan potongan yang belum berupa nota kredit.
+  const manualKey = 'juyar_manual_' + startDate + '_' + endDate
+  const [manualMids, setManualMids] = useState([])
+  const [tambahKompi, setTambahKompi] = useState(null) // kompi yang sedang membuka form tambah
+  // (pemilih dropdown lama dihapus — diganti komponen PilihAnggota yang bisa dicari)
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const { getAll, getOne } = await import('./db')
+        const r = await getOne('juyarAdjust', manualKey)
+        if (r && r.json) {
+          if (alive) setManualMids(JSON.parse(r.json) || [])
+          return
+        }
+        // Belum ada daftar untuk periode ini → WARISI dari periode sebelumnya.
+        // Anggota yang ditambahkan manual bulan lalu tetap perlu tampil bulan ini,
+        // kalau tidak, tunggakan warisannya tidak punya baris untuk ditampilkan.
+        const semua = await getAll('juyarAdjust')
+        const sebelumnya = (semua || [])
+          .map(d => {
+            const m = String(d.id || '').match(/^juyar_manual_(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/)
+            return m ? { selesai: m[2], json: d.json } : null
+          })
+          .filter(d => d && d.selesai < startDate)
+          .sort((a, b) => b.selesai.localeCompare(a.selesai))[0]
+        let warisanMids = []
+        if (sebelumnya && sebelumnya.json) {
+          try { warisanMids = JSON.parse(sebelumnya.json) || [] } catch {}
+        }
+        if (alive) setManualMids(warisanMids)
+      } catch (err) { console.error('Muat anggota manual gagal:', err); if (alive) setManualMids([]) }
+    })()
+    setTambahKompi(null)
+    return () => { alive = false }
+  }, [manualKey])
+
+  function simpanManual(next) {
+    setManualMids(next)
+    import('./db')
+      .then(({ setOne }) => setOne('juyarAdjust', manualKey, { id: manualKey, json: JSON.stringify(next) }))
+      .catch(err => { console.error(err); showToast('Daftar anggota manual gagal tersimpan ke server', 'error') })
+  }
+
+  function tambahAnggotaManual(mid) {
+    if (!mid) { showToast('Pilih anggota dulu', 'error'); return }
+    if (manualMids.includes(mid)) { showToast('Anggota itu sudah ada di daftar', 'error'); return }
+    simpanManual([...manualMids, mid])
+    try {
+      const nm = members.find(x => x.id === mid)
+      if (logAction) logAction('Tunggakan', 'tambah-anggota',
+        'Tambah manual: ' + (nm?.name || mid) + ' [' + (nm?.kompi || '-') + '] periode ' + startDate + ' s/d ' + endDate)
+    } catch {}
+    setTambahKompi(null)
+    showToast('Anggota ditambahkan — klik angka Tunggakan untuk mengisi nominal')
+  }
+
+  function hapusAnggotaManual(mid) {
+    if (!confirm('Keluarkan anggota ini dari daftar tagihan?')) return
+    simpanManual(manualMids.filter(x => x !== mid))
+    const next = { ...adjust }; delete next[mid]; simpanAdjust(next)
+  }
+
+  // --- Banner penyesuaian manual: tampil sebentar lalu hilang sendiri ---
+  // Pemberitahuan ini hanya perlu dilihat sesaat setelah mengubah angka;
+  // dibiarkan terus, ia cuma memakan tempat di layar.
+  const [bannerTampil, setBannerTampil] = useState(true)
+  const [statusSimpan, setStatusSimpan] = useState('') // '', 'menyimpan', 'tersimpan', 'gagal'
+
+  useEffect(() => {
+    if (!bannerTampil) return
+    const t = setTimeout(() => setBannerTampil(false), 60000) // 1 menit
+    return () => clearTimeout(t)
+  }, [bannerTampil, statusSimpan])
+
+  function simpanAdjust(next) {
+    setAdjust(next)
+    setBannerTampil(true)          // tampilkan lagi, hitung mundur 1 menit dimulai ulang
+    setStatusSimpan('menyimpan')
+    // json string utuh (bukan object) supaya penghapusan key ikut tersimpan (merge Firestore tidak menghapus key)
+    import('./db')
+      .then(({ setOne }) => setOne('juyarAdjust', adjustKey, { id: adjustKey, json: JSON.stringify(next) }))
+      .then(() => setStatusSimpan('tersimpan'))
+      .catch(err => {
+        console.error('Simpan penyesuaian gagal:', err)
+        setStatusSimpan('gagal')
+        showToast('Penyesuaian gagal tersimpan ke server — cek koneksi', 'error')
+      })
+    try { localStorage.setItem(adjustKey, JSON.stringify(next)) } catch {} // cadangan offline
+  }
+  function mulaiEdit(mid, nilaiSekarang) {
+    setEditMid(mid)
+    setEditVal(String(Math.round(nilaiSekarang || 0)))
+  }
+  function simpanEdit(mid, dasarSistem) {
+    const v = Number(editVal)
+    if (isNaN(v) || v < 0) { showToast('Nilai tunggakan tidak valid', 'error'); return }
+    const a0 = bacaAdj(adjust[mid])
+    const sebelum = a0 ? a0.n : null
+    const dasar = Number(dasarSistem) || 0
+    // Angka yang diketik = tunggakan yang benar SAAT INI.
+    // Yang disimpan selisihnya terhadap hitungan sistem, supaya bulan depan
+    // tagihan baru tetap ikut bertambah, bukan tertimpa.
+    simpanAdjust({ ...adjust, [mid]: { n: Math.round(v), d: dasar } })
+    setEditMid(null)
+    // AUDIT: penyesuaian tunggakan mengubah nominal potong gaji secara manual,
+    // jadi wajib tercatat siapa yang mengubah dan dari berapa jadi berapa.
+    try {
+      const nm = members.find(x => x.id === mid)?.name || mid
+      if (logAction) logAction('Tunggakan', 'sesuaikan',
+        nm + ': ' + (sebelum != null ? Number(sebelum).toLocaleString('id-ID') : 'otomatis') +
+        ' -> ' + Math.round(v).toLocaleString('id-ID') + ' (periode ' + startDate + ' s/d ' + endDate + ')')
+    } catch {}
+    showToast('Tunggakan disesuaikan — total potong ikut berubah')
+  }
+  function resetAdjust(mid) {
+    // Ditulis null (bukan dihapus) sebagai penanda "sengaja dikembalikan ke
+    // hitungan sistem". Kalau key-nya dihapus, nilai lama akan MUNCUL LAGI
+    // sebagai warisan dari periode sebelumnya.
+    simpanAdjust({ ...adjust, [mid]: null })
+    setEditMid(null)
+  }
+  function resetSemuaAdjust() {
+    if (!confirm('Kembalikan SEMUA tunggakan ke nilai asli (hasil hitung sistem)?')) return
+    const next = {}
+    for (const mid of Object.keys(adjust)) next[mid] = null // penanda, bukan dihapus
+    simpanAdjust(next)
+    showToast('Semua penyesuaian tunggakan direset')
+  }
+  // Tunggakan efektif: pakai nilai manual bila ada, kalau tidak pakai hasil hitung.
+  //
+  // BUG YANG DIPERBAIKI: dulu di sini ada Math.min(nilaiManual, hitunganSistem).
+  // Akibatnya untuk anggota yang tunggakan sistemnya Rp 0, berapa pun angka yang
+  // diketik user selalu dipaksa jadi Rp 0 — sehingga "Total Potong tidak berubah".
+  // Sekarang angka yang diketik user DIHORMATI apa adanya.
+  // Pengurangan otomatis saat pembayaran tetap jalan (lihat prosesBayarTunggakan).
+  // Penyesuaian disimpan sebagai { n: nilai_diketik, d: nilai_sistem_saat_diketik }.
+  // Yang berlaku adalah SELISIHNYA (n - d), bukan angka mutlak.
+  //
+  // BUG YANG DIPERBAIKI: dulu angka manual MENGGANTIKAN hitungan sistem.
+  // Akibatnya tagihan baru yang jatuh tempo bulan berikutnya ikut tertelan —
+  // contoh nyata: tunggakan manual 2.590.700 + tagihan 254.600 seharusnya
+  // jadi 2.845.300 bulan depan, tapi yang tampil tetap 2.590.700.
+  // Format angka lama (tanpa d) dianggap d = 0 supaya tetap terbaca.
+  function bacaAdj(v) {
+    if (v == null) return null
+    if (typeof v === 'number') return { n: v, d: 0 }
+    if (typeof v === 'object' && v.n != null) return { n: Number(v.n) || 0, d: Number(v.d) || 0 }
+    return null
+  }
+  function tunggakanEfektif(m) {
+    const a = bacaAdj(adjust[m.mid])
+    if (!a) return m.totalTunggakan
+    return Math.max(0, (m.totalTunggakan || 0) + (a.n - a.d))
+  }
+  // Bagian yang murni ditambahkan manual (di luar hitungan sistem)
+  function selisihManual(mid) {
+    const a = bacaAdj(adjust[mid])
+    return a ? a.n - a.d : 0
+  }
+
+  async function prosesBayarTunggakan(mid) {
+    const amount = Number(bayarAmount)
+    if (!amount || amount <= 0) { showToast('Masukkan jumlah pembayaran', 'error'); return }
+
+    // 1. Piutang resmi yang belum lunas
+    const memberPiutangs = piutangs
+      .filter(p => p.memberId === mid && (Math.max(0, (p.total||0) - (p.totalBayar||0))) > 0 && p.status !== 'LUNAS')
+      .map(p => ({ ...p }))
+
+    // 2. FIX BUG: nota KREDIT lama TANPA catatan piutang (orphan) ikut tampil di
+    // tunggakan, tapi dulu TIDAK PERNAH bisa dibayar dari sini → tunggakannya
+    // macet selamanya. Sekarang: didaftarkan sebagai piutang dulu, lalu dibayar.
+    const memberOrphans = orphanKredit
+      .filter(t => t.memberId === mid)
+      .map(t => ({
+        noNota: t.noNota || ('TX-' + (t.id || '')),
+        date: t.date || '',
+        memberId: t.memberId,
+        customerName: t.customerName || (members.find(m => m.id === mid)?.name || 'Umum'),
+        total: t.total || 0,
+        dp: t.payment || 0,
+        totalBayar: t.payment || 0,
+        sisa: Math.max(0, (t.total||0) - (t.payment||0)),
+        status: 'KREDIT',
+        payments: [],
+        fromTxId: t.id || null, // jejak: piutang ini dibuat dari nota lama
+      }))
+
+    // 3. Gabung & urutkan: yang paling lama dibayar duluan
+    const payables = [...memberPiutangs, ...memberOrphans]
+      .sort((a, b) => (a.date||'').localeCompare(b.date||''))
+    if (payables.length === 0) { showToast('Tidak ada piutang/tunggakan untuk dibayar', 'error'); return }
+
+    if (!confirm('Bayar tunggakan ' + formatRp(amount) + ' atas nama ' + (members.find(m => m.id === mid)?.name||'') + '?')) return
+
+    let remaining = amount, paidCount = 0, paidTunggakan = 0
+    try {
+      for (const p of payables) {
+        if (remaining <= 0) break
+        const sisa = Math.max(0, (p.total||0) - (p.totalBayar||0))
+        if (sisa <= 0) continue
+        const bayar = Math.min(remaining, sisa)
+        if (!p.id) await savePiutang(p) // orphan → daftarkan dulu (savePiutang mengisi p.id)
+        await bayarPiutang(p, bayar)
+        remaining -= bayar
+        if ((p.date||'') < startDate) paidTunggakan += bayar // porsi yang membayar TUNGGAKAN (bukan tagihan bulan ini)
+        paidCount++
+      }
+    } catch (err) {
+      console.error('Bayar tunggakan error:', err)
+      showToast('Sebagian pembayaran gagal tersimpan — cek koneksi lalu periksa menu Piutang', 'error')
+    }
+
+    // 4. TUNGGAKAN OTOMATIS TERHITUNG: penyesuaian manual dikurangi HANYA sebesar
+    // porsi yang membayar tunggakan (bukan seluruh pembayaran). Habis → hapus.
+    const aBayar = bacaAdj(adjust[mid])
+    if (aBayar && paidTunggakan > 0) {
+      // Kurangi bagian manualnya; ditulis apa adanya (termasuk 0) supaya
+      // tidak muncul lagi sebagai warisan dari periode sebelumnya.
+      const nBaru = Math.max(aBayar.d, aBayar.n - paidTunggakan)
+      simpanAdjust({ ...adjust, [mid]: { n: nBaru, d: aBayar.d } })
+    }
+
+    showToast('Pembayaran ' + formatRp(amount - remaining) + ' berhasil — ' + paidCount + ' piutang diupdate' + (remaining > 0 ? ' (sisa ' + formatRp(remaining) + ' tidak terpakai, semua piutang lunas)' : ''))
+    setBayarMid(null)
+    setBayarAmount('')
+  }
+
+  // =====================================================================
+  // TANDAI PERIODE SUDAH DIPOTONG GAJI
+  //
+  // INILAH yang selama ini hilang. Tagihan tidak pernah ditandai lunas,
+  // sehingga setiap nota kredit menumpuk selamanya: bulan ini masuk kolom
+  // "Tagihan Bulan Ini", bulan depan otomatis pindah ke "Tunggakan",
+  // padahal uangnya sudah dipotong juru bayar.
+  //
+  // Fungsi ini menutup satu periode: seluruh tagihan + tunggakan yang tampil
+  // ditandai LUNAS, lalu dicatat SATU Kas Masuk sejumlah total potong
+  // (sesuai kenyataan: juru bayar menyetor sekali, bukan per nota).
+  // =====================================================================
+  const [sedangTutup, setSedangTutup] = useState(false)
+  // Anggota yang DIKECUALIKAN dari penutupan (belum bayar).
+  // Bawaannya kosong = semua dianggap sudah dipotong; hilangkan centang
+  // pada anggota yang belum membayar.
+  const [tanpaBayar, setTanpaBayar] = useState(new Set())
+  function togglePilih(mid) {
+    setTanpaBayar(prev => { const n = new Set(prev); n.has(mid) ? n.delete(mid) : n.add(mid); return n })
+  }
+
+  // =====================================================================
+  // RIWAYAT PENUTUPAN PERIODE + PEMBATALAN
+  //
+  // Dicari dari SELURUH catatan piutang, bukan hanya periode yang sedang
+  // dibuka. Ini penting: kalau tombol tertekan saat tanggalnya salah,
+  // penutupannya tetap bisa ditemukan dan dibatalkan.
+  // =====================================================================
+  const [sedangBatal, setSedangBatal] = useState('')
+
+  const riwayatTutup = (() => {
+    const peta = new Map()
+    for (const p of (piutangs || [])) {
+      for (const x of (p.payments || [])) {
+        const ket = x && x.ket
+        if (!ket || !String(ket).startsWith('Potong gaji ')) continue
+        if (!peta.has(ket)) peta.set(ket, { ket, jumlah: 0, nilai: 0, records: [] })
+        const g = peta.get(ket)
+        g.jumlah++
+        g.nilai += Number(x.amount) || 0
+        if (!g.records.includes(p)) g.records.push(p)
+      }
+    }
+    return [...peta.values()].sort((a, b) => b.ket.localeCompare(a.ket))
+  })()
+
+  async function batalkanPenutupan(grup) {
+    if (sedangBatal) return
+    const ket = grup.ket
+    const m = ket.match(/^Potong gaji (\S+) s\/d (\S+)$/)
+    const pMulai = m ? m[1] : ''
+    const pAkhir = m ? m[2] : ''
+    const ref = 'JUYAR-' + pMulai + '_' + pAkhir
+
+    if (!confirm(
+      'BATALKAN penutupan periode ' + pMulai + ' s/d ' + pAkhir + '?\n\n' +
+      grup.records.length + ' tagihan senilai ' + formatRp(grup.nilai) + ' akan\n' +
+      'dikembalikan menjadi BELUM LUNAS, dan catatan kas serta\n' +
+      'jurnalnya dihapus.\n\n' +
+      'Pakai ini kalau tombol "Tandai Sudah Dipotong" tertekan tidak sengaja.'
+    )) return
+
+    setSedangBatal(ket)
+    let balik = 0, gagal = 0
+    try {
+      const { setOne, removeOne, getOne } = await import('./db')
+
+      for (const p of grup.records) {
+        try {
+          const sisaPay = (p.payments || []).filter(x => !(x && x.ket === ket))
+          const dibalik = (p.payments || []).filter(x => x && x.ket === ket)
+            .reduce((a, x) => a + (Number(x.amount) || 0), 0)
+
+          if (p.fromTxId && sisaPay.length === 0) {
+            // Catatan ini DIBUAT oleh penutupan (dari nota kredit lama) -> hapus
+            await removeOne('piutangs', p.id)
+          } else {
+            const tb = Math.max(0, (p.totalBayar || 0) - dibalik)
+            await setOne('piutangs', p.id, {
+              ...p, totalBayar: tb, sisa: Math.max(0, (p.total || 0) - tb),
+              status: tb >= (p.total || 0) ? 'LUNAS' : 'KREDIT', payments: sisaPay,
+            })
+          }
+          balik++
+        } catch (err) { gagal++; console.error('Batal piutang gagal:', p.id, err) }
+      }
+
+      for (const k of (kasData || []).filter(x => x.ref === ref)) {
+        try { await removeOne('kas', k.id) } catch (err) { console.error(err) }
+      }
+      for (const j of (jurnalData || []).filter(x => x.ref === ref)) {
+        try { await removeOne('jurnal', j.id) } catch (err) { console.error(err) }
+      }
+
+      // Kembalikan penyesuaian manual dari cadangan (kalau penutupannya
+      // dilakukan oleh versi aplikasi yang sudah menyimpan cadangan)
+      try {
+        const idSnap = 'juyar_tutup_' + pMulai + '_' + pAkhir
+        const snap = await getOne('juyarAdjust', idSnap)
+        if (snap && snap.json) {
+          const isi = JSON.parse(snap.json)
+          if (isi && isi.adjust) {
+            await setOne('juyarAdjust', 'juyar_adj_' + pMulai + '_' + pAkhir, {
+              id: 'juyar_adj_' + pMulai + '_' + pAkhir, json: JSON.stringify(isi.adjust),
+            })
+          }
+          await removeOne('juyarAdjust', idSnap)
+        }
+      } catch (err) { console.error('Kembalikan penyesuaian gagal:', err) }
+
+      if (logAction) await logAction('Tagihan Juyar', 'batal-tutup',
+        'Penutupan periode ' + pMulai + ' s/d ' + pAkhir + ' DIBATALKAN: ' +
+        balik + ' tagihan dikembalikan, ' + formatRp(grup.nilai) + (gagal ? ', ' + gagal + ' gagal' : ''))
+
+      showToast('Penutupan dibatalkan — ' + balik + ' tagihan kembali' + (gagal ? ' (' + gagal + ' gagal)' : ''))
+    } catch (err) {
+      console.error('Batal penutupan error:', err)
+      showToast('Gagal membatalkan: ' + (err.message || 'cek koneksi'), 'error')
+    }
+    setSedangBatal('')
+  }
+
+  async function tandaiSudahDipotong() {
+    if (sedangTutup) return
+    const semuaTagih = [...kreditPeriod, ...tunggakanList]
+    const totalManual = semuaAnggota.reduce(
+      (a, m) => a + Math.max(0, selisihManual(m.mid)), 0)
+
+    if (semuaTagih.length === 0 && totalManual === 0) {
+      showToast('Tidak ada tagihan pada periode ini', 'error'); return
+    }
+
+    const ikut = semuaAnggota.filter(m => !tanpaBayar.has(m.mid))
+    const dikecualikan = semuaAnggota.length - ikut.length
+    const totalIkut = ikut.reduce((a, m) => a + m.totalTagihan + tunggakanEfektif(m), 0)
+    const pesan =
+      'Tandai periode ' + startDate + ' s/d ' + endDate + ' SUDAH DIPOTONG GAJI?\n\n' +
+      ikut.length + ' anggota ikut dipotong\n' +
+      (dikecualikan > 0 ? dikecualikan + ' anggota DIKECUALIKAN (belum bayar)\n' : '') +
+      'Nilai ditandai lunas : ' + formatRp(totalIkut) + '\n\n' +
+      'Total seluruh periode: ' + formatRp(grandTotal) + '\n\n' +
+      'Tagihan anggota terpilih ditandai LUNAS dan dicatat sebagai Kas Masuk.\n' +
+      'Bulan depan tidak akan muncul lagi sebagai tunggakan.\n\n' +
+      'Lakukan SETELAH uang dari juru bayar benar-benar diterima.'
+    if (!confirm(pesan)) return
+
+    setSedangTutup(true)
+    let lunas = 0, gagal = 0, totalRp = 0
+    try {
+      const { setOne } = await import('./db')
+
+      // Cadangan penyesuaian manual — supaya pembatalan bisa mengembalikannya utuh
+      try {
+        await setOne('juyarAdjust', 'juyar_tutup_' + startDate + '_' + endDate, {
+          id: 'juyar_tutup_' + startDate + '_' + endDate,
+          json: JSON.stringify({ adjust, waktu: new Date().toISOString() }),
+        })
+      } catch (err) { console.error('Simpan cadangan gagal:', err) }
+
+      for (const rec of semuaTagih) {
+        if (rec.memberId && tanpaBayar.has(rec.memberId)) continue  // dikecualikan
+        const sisa = Number(rec.sisa) || 0
+        if (sisa <= 0) continue
+        try {
+          if (rec.id && rec.total != null && rec.totalBayar != null) {
+            // sudah berupa catatan piutang -> tandai lunas
+            await setOne('piutangs', rec.id, {
+              ...rec, totalBayar: (rec.totalBayar || 0) + sisa, sisa: 0, status: 'LUNAS',
+              payments: [...(rec.payments || []), { date: today(), amount: sisa, ket: 'Potong gaji ' + startDate + ' s/d ' + endDate }],
+            })
+          } else {
+            // nota kredit lama tanpa catatan piutang -> buat langsung dalam keadaan lunas
+            const baru = {
+              id: genId(), noNota: rec.noNota || ('TX-' + (rec.id || '')), date: rec.date || today(),
+              memberId: rec.memberId || null, customerName: rec.customerName || 'Umum',
+              total: rec.total || sisa, dp: 0, totalBayar: rec.total || sisa, sisa: 0, status: 'LUNAS',
+              payments: [{ date: today(), amount: sisa, ket: 'Potong gaji ' + startDate + ' s/d ' + endDate }],
+              fromTxId: rec.id || null,
+            }
+            await setOne('piutangs', baru.id, baru)
+          }
+          totalRp += sisa
+          lunas++
+        } catch (err) { gagal++; console.error('Tandai lunas gagal:', rec.noNota, err) }
+      }
+
+      // Penyesuaian manual dinolkan supaya tidak terbawa lagi bulan depan
+      if (Object.keys(adjust).length > 0) {
+        const next = {}
+        for (const mid of Object.keys(adjust)) {
+          if (tanpaBayar.has(mid)) { next[mid] = adjust[mid]; continue }  // belum bayar, biarkan
+          const a = bacaAdj(adjust[mid])
+          next[mid] = a ? { n: a.d, d: a.d } : null   // selisih jadi 0, tidak terbawa lagi
+        }
+        simpanAdjust(next)
+        totalRp += totalManual
+      }
+
+      // SATU Kas Masuk untuk seluruh setoran juru bayar
+      if (totalRp > 0) {
+        const ref = 'JUYAR-' + startDate + '_' + endDate
+        const kas = { id: genId(), date: today(), type: 'masuk', amount: totalRp,
+          category: 'Potong Gaji (Juyar)',
+          description: 'Setoran potong gaji periode ' + startDate + ' s/d ' + endDate + ' - ' + semuaAnggota.length + ' anggota',
+          ref }
+        await setOne('kas', kas.id, kas)
+
+        const jurnal = { id: genId(), date: today(),
+          description: 'Setoran potong gaji ' + startDate + ' s/d ' + endDate,
+          entries: [
+            { account: 'Kas/Bank', type: 'debit', amount: totalRp },
+            { account: 'Piutang Anggota', type: 'kredit', amount: totalRp },
+          ], ref }
+        await setOne('jurnal', jurnal.id, jurnal)
+      }
+
+      if (logAction) await logAction('Tagihan Juyar', 'tutup-periode',
+        'Periode ' + startDate + ' s/d ' + endDate + ' ditandai sudah dipotong: ' +
+        lunas + ' tagihan lunas, total ' + formatRp(totalRp) + (gagal ? ', ' + gagal + ' gagal' : ''))
+
+      showToast('Periode ditandai lunas - ' + lunas + ' tagihan, ' + formatRp(totalRp) + ' masuk kas' + (gagal ? ' (' + gagal + ' gagal)' : ''))
+    } catch (err) {
+      console.error('Tutup periode error:', err)
+      showToast('Gagal menutup periode: ' + (err.message || 'cek koneksi'), 'error')
+    }
+    setSedangTutup(false)
+  }
+
+  const kompiList = [...new Set(members.map(m => m.kompi || 'LAINNYA'))].filter(Boolean).sort()
+
+  // ============================================
+  // HITUNG TAGIHAN & TUNGGAKAN
+  // ============================================
+
+  // 1. Kumpulkan semua piutang yang belum lunas (recalculate sisa dari total - totalBayar)
+  const activePiutangs = piutangs.filter(p => {
+    const sisa = Math.max(0, (p.total||0) - (p.totalBayar||0))
+    return sisa > 0 && p.status !== 'LUNAS'
+  }).map(p => ({
+    ...p,
+    sisa: Math.max(0, (p.total||0) - (p.totalBayar||0)) // recalculate, jangan pakai p.sisa yang mungkin salah
+  }))
+
+  // 2. Cari transaksi KREDIT yang TIDAK punya piutang (data lama)
+  const piutangNotas = new Set(piutangs.map(p => p.noNota).filter(Boolean))
+  // Dulu dedup hanya pakai (anggota + tanggal) — kalau satu anggota punya DUA nota
+  // kredit di tanggal sama dan hanya satu yang punya catatan piutang, nota kedua
+  // ikut terbuang → tagihan kurang hitung. Sekarang nominalnya ikut dibandingkan.
+  const piutangMemberDates = new Set(piutangs.map(p => (p.memberId||'') + '_' + (p.date||'') + '_' + (p.total||0)))
+  const orphanKredit = (transactions||[]).filter(t => {
+    if (t.caraBayar !== 'KREDIT') return false
+    if (t.returned) return false // nota yang sudah diretur penuh jangan ditagih
+    if (t.noNota && piutangNotas.has(t.noNota)) return false // sudah ada piutang
+    if (piutangMemberDates.has((t.memberId||'') + '_' + (t.date||'') + '_' + (t.total||0))) return false
+    const sisa = (t.total||0) - (t.payment||0)
+    return sisa > 0
+  }).map(t => ({
+    ...t,
+    sisa: (t.total||0) - (t.payment||0)
+  }))
+
+  // 3. Gabungkan semua data kredit belum lunas
+  const allUnpaid = [...activePiutangs, ...orphanKredit]
+
+  // 4. Pisah tagihan bulan ini vs tunggakan
+  // Pengaman tanggal: kalau kolom tanggal dikosongkan, dulu SELURUH tagihan
+  // diam-diam jadi Rp 0 tanpa penjelasan apa pun.
+  const tglMulai = startDate || '0000-01-01'
+  const tglAkhir = endDate || '9999-12-31'
+
+  const kreditPeriod = allUnpaid.filter(k => k.date >= tglMulai && k.date <= tglAkhir)
+  const tunggakanList = allUnpaid.filter(k => k.date < tglMulai)
+
+  // Nota SESUDAH tanggal "Sampai" — dulu hilang dari kedua kolom tanpa jejak.
+  // Inilah penyebab "Tagihan Bulan Ini Rp 0 padahal ada belanja": belanjanya
+  // terjadi setelah tanggal akhir periode yang sedang dipilih.
+  const diLuarPeriode = allUnpaid.filter(k => k.date > tglAkhir)
+  const nilaiDiLuar = diLuarPeriode.reduce((a, k) => a + (k.sisa || 0), 0)
+
+  // 5. Group per kompi → per anggota
+  const kompiData = {}
+
+  // Tagihan pembeli UMUM (tanpa anggota) — tidak bisa dipotong gaji.
+  // Dikumpulkan terpisah supaya tidak mengacaukan daftar potong juru bayar.
+  const tagihanUmum = []
+
+  function addToKompi(record, isTunggakan) {
+    const member = members.find(m => m.id === record.memberId)
+
+    // BUKAN anggota (pembeli umum, atau anggotanya sudah dihapus):
+    // tidak mungkin dipotong dari gaji, jadi dikeluarkan dari daftar.
+    if (!member) { tagihanUmum.push(record); return }
+
+    // Anggota terdaftar tapi kompinya belum diisi — tetap ditagih,
+    // tapi dikelompokkan jelas supaya ketahuan dan bisa dilengkapi.
+    const kompi = (member.kompi || '').trim() || 'BELUM ADA KOMPI'
+    if (filterKompi !== 'all' && kompi !== filterKompi) return
+    if (!kompiData[kompi]) kompiData[kompi] = {}
+    const mid = record.memberId || 'umum'
+    if (!kompiData[kompi][mid]) {
+      const sp = splitPangkat(member, record.customerName)
+      kompiData[kompi][mid] = {
+        member, mid, pangkat: sp.pangkat, nrp: member.nrp || '-',
+        name: sp.nama || member.name || '-', items: [], totalTagihan: 0, totalTunggakan: 0, tunggakanItems: []
+      }
+    }
+    if (isTunggakan) {
+      kompiData[kompi][mid].totalTunggakan += (record.sisa||0)
+      kompiData[kompi][mid].tunggakanItems.push(record)
+    } else {
+      kompiData[kompi][mid].totalTagihan += (record.sisa||0)
+      kompiData[kompi][mid].items.push(record)
+    }
+  }
+
+  kreditPeriod.forEach(k => addToKompi(k, false))
+  tunggakanList.forEach(k => addToKompi(k, true))
+
+  // Anggota yang ditambahkan MANUAL: dipaksa muncul walau tidak punya piutang,
+  // dengan tagihan & tunggakan 0 (nominalnya diisi lewat kolom Tunggakan).
+  manualMids.forEach(mid => {
+    const member = members.find(m => m.id === mid)
+    if (!member) return
+    const kompi = member.kompi || 'NON-ANGGOTA'
+    if (filterKompi !== 'all' && kompi !== filterKompi) return
+    if (!kompiData[kompi]) kompiData[kompi] = {}
+    if (!kompiData[kompi][mid]) {
+      const sp = splitPangkat(member, member.name)
+      kompiData[kompi][mid] = {
+        member, mid, pangkat: sp.pangkat, nrp: member.nrp || '-',
+        name: sp.nama || member.name || '-', items: [], totalTagihan: 0,
+        totalTunggakan: 0, tunggakanItems: [], manual: true,
+      }
+    } else {
+      kompiData[kompi][mid].manual = true
+    }
+  })
+
+  const sortedKompi = Object.keys(kompiData).sort()
+  // Semua anggota yang SUDAH tampil di daftar tagihan (dari kompi mana pun)
+  const midTampil = new Set()
+  for (const k of sortedKompi) for (const mid of Object.keys(kompiData[k])) midTampil.add(mid)
+  // Total-total memakai tunggakan EFEKTIF (sudah termasuk penyesuaian manual)
+  const semuaAnggota = Object.values(kompiData).flatMap(m => Object.values(m))
+  const totalTagihanAll = semuaAnggota.reduce((a, m) => a + m.totalTagihan, 0)
+  const totalTunggakanAll = semuaAnggota.reduce((a, m) => a + tunggakanEfektif(m), 0)
+  const grandTotal = totalTagihanAll + totalTunggakanAll
+  const jumlahDisesuaikan = semuaAnggota.filter(m => selisihManual(m.mid) !== 0).length
+
+  const endD = new Date(endDate)
+  const bulanNama = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember']
+
+  function cetakTagihan() {
+    const win = window.open('', '_blank')
+    win.document.write(`<!DOCTYPE html><html><head><style>
+      @page{margin:12mm;size:A4 landscape}body{font-family:Arial;font-size:11px}
+      h1{font-size:16px;text-align:center;margin:0}h2{font-size:13px;text-align:center;color:#666;margin:4px 0 12px}
+      h3{font-size:13px;margin:16px 0 6px;padding:4px 8px;background:#1565c0;color:#fff;border-radius:4px}
+      table{width:100%;border-collapse:collapse;margin-bottom:8px}th{background:#f5f5f5;padding:5px 8px;border:1px solid #ccc;font-size:10px}
+      td{padding:4px 8px;border:1px solid #ccc;font-size:10px}.r{text-align:right}.b{font-weight:bold}
+      .tunggakan{color:#c62828}.total td{background:#f5f6fa;font-weight:bold}.grand td{background:#1565c0;color:#fff;font-weight:bold}
+      .footer{text-align:center;font-size:9px;color:#999;margin-top:16px}@media print{button{display:none}}
+    </style></head><body>
+      <h1>${settings?.name || 'KOPERASI YONIF 527/BY'}</h1>
+      <h2>TAGIHAN JUYAR (POTONG GAJI) — ${filterKompi === 'all' ? 'SEMUA KOMPI' : filterKompi}<br>${bulanNama[endD.getMonth()]} ${endD.getFullYear()} | ${fmtDate(startDate)} s/d ${fmtDate(endDate)}</h2>
+      ${sortedKompi.map(kompi => {
+        const anggotaList = Object.values(kompiData[kompi]).sort((a,b) => (a.name||'').localeCompare(b.name||''))
+        const totalKompi = anggotaList.reduce((a, m) => a + m.totalTagihan + tunggakanEfektif(m), 0)
+        return '<h3>' + kompi + '</h3><table><tr><th>No</th><th>Pangkat</th><th>Nama</th><th>NRP</th><th class="r">Tagihan Bln Ini</th><th class="r">Tunggakan</th><th class="r">Total Potong</th></tr>' +
+          anggotaList.map((m, i) => { const tg = tunggakanEfektif(m); const adj = selisihManual(m.mid) !== 0
+            return '<tr><td>'+(i+1)+'</td><td>'+m.pangkat+'</td><td class="b">'+m.name+'</td><td>'+m.nrp+'</td><td class="r">'+Number(m.totalTagihan).toLocaleString('id-ID')+'</td><td class="r tunggakan">'+Number(tg).toLocaleString('id-ID')+(adj ? ' *' : '')+'</td><td class="r b">'+Number(m.totalTagihan+tg).toLocaleString('id-ID')+'</td></tr>' }).join('') +
+          '<tr class="total"><td colspan="6" class="r">Total '+kompi+'</td><td class="r">'+Number(totalKompi).toLocaleString('id-ID')+'</td></tr></table>'
+      }).join('')}
+      ${jumlahDisesuaikan > 0 ? '<div style="font-size:9px;color:#c62828;margin-top:6px">* Tunggakan disesuaikan manual ('+jumlahDisesuaikan+' anggota)</div>' : ''}
+      <table><tr class="grand"><td colspan="6" class="r">GRAND TOTAL</td><td class="r">Rp ${Number(grandTotal).toLocaleString('id-ID')}</td></tr></table>
+      <div class="footer">Dicetak: ${new Date().toLocaleString('id-ID')}</div>
+      <script>setTimeout(()=>{window.print()},500)<\/script></body></html>`)
+    win.document.close()
+  }
+
+  return (
+    <div>
+      <div style={S.pageHead}><h2 style={S.title}>Tagihan Juyar (Potong Gaji)</h2>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button style={{ ...S.primaryBtn, background: '#2e7d32' }} onClick={cetakTagihan}>Cetak {filterKompi === 'all' ? 'Semua' : filterKompi}</button>
+          <button style={{ ...S.primaryBtn, background: '#6a1b9a', opacity: sedangTutup ? 0.6 : 1 }}
+            disabled={sedangTutup} onClick={tandaiSudahDipotong}
+            title="Tandai seluruh tagihan periode ini sudah dipotong gaji dan uangnya diterima">
+            {sedangTutup ? 'Memproses...' : ('Tandai Sudah Dipotong' + (tanpaBayar.size > 0 ? ' (' + Math.max(0, semuaAnggota.length - tanpaBayar.size) + ')' : ''))}
+          </button>
+        </div>
+      </div>
+
+      {riwayatTutup.length > 0 && (
+        <div style={{ background: '#e8f5e9', border: '1px solid #81c784', borderRadius: 10, padding: '14px 16px', marginBottom: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#1b5e20', marginBottom: 4 }}>
+            Riwayat Penutupan Periode ({riwayatTutup.length})
+          </div>
+          <div style={{ fontSize: 12, color: '#33691e', marginBottom: 10, lineHeight: 1.6 }}>
+            Daftar periode yang pernah ditandai sudah dipotong gaji. Kalau tombolnya tertekan
+            tidak sengaja, tekan <b>Batalkan</b> — seluruh tagihannya kembali menjadi belum lunas,
+            catatan kas dan jurnalnya ikut dihapus.
+          </div>
+          {riwayatTutup.map(g => {
+            const m = g.ket.match(/^Potong gaji (\S+) s\/d (\S+)$/)
+            return (
+              <div key={g.ket} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', background: '#fff', border: '1px solid #c8e6c9', borderRadius: 8, padding: '9px 12px', marginBottom: 7 }}>
+                <div style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+                  <b>Periode {m ? m[1] + ' s/d ' + m[2] : g.ket}</b>
+                  <div style={{ color: '#607d8b' }}>{g.records.length} tagihan &middot; {formatRp(g.nilai)}</div>
+                </div>
+                <button style={{ background: '#c62828', color: '#fff', border: 'none', borderRadius: 7, padding: '7px 15px', cursor: 'pointer', fontWeight: 600, fontSize: 12.5, opacity: sedangBatal === g.ket ? 0.6 : 1 }}
+                  disabled={sedangBatal === g.ket} onClick={() => batalkanPenutupan(g)}>
+                  {sedangBatal === g.ket ? 'Mengembalikan...' : 'Batalkan'}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Penjelasan alur — supaya tidak ada lagi tagihan yang menumpuk selamanya */}
+      <div style={{ background: '#ede7f6', border: '1px solid #b39ddb', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 12, lineHeight: 1.7, color: '#4527a0' }}>
+        <b>Alur setiap bulan:</b> cetak daftar &rarr; serahkan ke juru bayar &rarr; setelah uang diterima,
+        klik <b>Tandai Sudah Dipotong</b>. Tanpa langkah terakhir itu, tagihan bulan ini akan
+        muncul lagi sebagai <b>tunggakan</b> bulan depan, terus menumpuk walau sebenarnya sudah dibayar.
+      </div>
+      <div style={{ ...S.card, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, alignItems: 'end' }}>
+          <label style={S.formLabel}>Dari (tgl 26)<input style={S.input} type="date" value={startDate} onChange={e => setStartDate(e.target.value)} /></label>
+          <label style={S.formLabel}>Sampai (tgl 25)<input style={S.input} type="date" value={endDate} onChange={e => setEndDate(e.target.value)} /></label>
+          <label style={S.formLabel}>Filter Kompi<select style={S.input} value={filterKompi} onChange={e => setFilterKompi(e.target.value)}><option value="all">Semua Kompi</option>{kompiList.map(k => <option key={k} value={k}>{k}</option>)}</select></label>
+        </div>
+
+        {/* Pemilih periode otomatis — mencegah salah isi tanggal, penyebab
+            "Tagihan Bulan Ini Rp 0 padahal ada belanja". */}
+        <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 600 }}>Pilih cepat:</span>
+          {[
+            { label: '\u25c0 Periode Sebelumnya', geser: -1 },
+            { label: 'Periode Berjalan', geser: 0 },
+            { label: 'Periode Berikutnya \u25b6', geser: 1 },
+          ].map(b => {
+            const pd = periode26(new Date(), b.geser)
+            const aktif = startDate === pd.mulai && endDate === pd.akhir
+            return (
+              <button key={b.label}
+                style={{ ...S.filterBtn, ...(aktif ? S.filterActive : {}), padding: '6px 12px' }}
+                title={pd.mulai + ' s/d ' + pd.akhir}
+                onClick={() => { setStartDate(pd.mulai); setEndDate(pd.akhir) }}>
+                {b.label}
+              </button>
+            )
+          })}
+          <span style={{ fontSize: 11, color: '#9e9e9e' }}>
+            Periode berjalan: {periode26(new Date(), 0).mulai} s/d {periode26(new Date(), 0).akhir}
+          </span>
+        </div>
+      </div>
+      {/* Tambah anggota manual — pencarian langsung ke seluruh daftar anggota */}
+      <div style={{ ...S.card, marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Tambah Anggota Manual</div>
+        <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>
+          Untuk anggota yang belum punya nota kredit tapi tetap harus dipotong. Ketik namanya untuk mencari —
+          seluruh <b>{members.length} anggota</b> bisa dicari dari sini. Setelah ditambahkan, klik angka di kolom
+          <b> Tunggakan</b> pada barisnya untuk mengisi nominal.
+        </div>
+        <PilihAnggota
+          members={members}
+          sudahAda={new Set([...manualMids, ...midTampil])}
+          kompiAwal=""
+          onPilih={(mid) => tambahAnggotaManual(mid)}
+          onTutup={null}
+        />
+        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 12, marginTop: 10, color: '#546e7a' }}>
+          <span>Sudah di daftar tagihan: <b style={{ color: '#1565c0' }}>{midTampil.size}</b> dari {members.length} anggota</span>
+          <span>Belum masuk: <b>{Math.max(0, members.length - midTampil.size)}</b> anggota (tidak punya tagihan/tunggakan)</span>
+          {manualMids.length > 0 && <span>Ditambahkan manual: <b style={{ color: '#1565c0' }}>{manualMids.length}</b></span>}
+        </div>
+      </div>
+
+      <div style={S.grid3}>
+        <div style={S.statCard}><div style={S.statLabel}>Tagihan Periode Ini ({startDate ? startDate.slice(8,10)+'/'+startDate.slice(5,7) : '?'} &ndash; {endDate ? endDate.slice(8,10)+'/'+endDate.slice(5,7) : '?'})</div><div style={{ ...S.statVal, color: '#1565c0' }}>{formatRp(totalTagihanAll)}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Tunggakan (sebelum {startDate ? startDate.slice(8,10)+'/'+startDate.slice(5,7) : '?'})</div><div style={{ ...S.statVal, color: '#c62828' }}>{formatRp(totalTunggakanAll)}</div>{jumlahDisesuaikan > 0 && <div style={{ fontSize: 11, color: '#e65100' }}>{jumlahDisesuaikan} disesuaikan manual</div>}</div>
+        <div style={S.statCard}><div style={S.statLabel}>Grand Total Potong</div><div style={{ ...S.statVal, color: '#2e7d32' }}>{formatRp(grandTotal)}</div><div style={{ fontSize: 11, color: '#999' }}>{semuaAnggota.length} anggota</div></div>
+      </div>
+      {(() => {
+        // Rentang tanggal tidak wajar — penyebab paling sering "Tagihan Rp 0".
+        if (!startDate || !endDate) return (
+          <div style={{ background: '#ffebee', border: '1px solid #ef9a9a', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12.5, color: '#c62828' }}>
+            <b>Tanggal periode belum lengkap.</b> Isi kolom Dari dan Sampai, atau tekan tombol <b>Periode Berjalan</b> di atas.
+          </div>
+        )
+        const hari = Math.round((new Date(endDate) - new Date(startDate)) / 86400000) + 1
+        if (hari < 20) return (
+          <div style={{ background: '#ffebee', border: '1px solid #ef9a9a', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12.5, lineHeight: 1.7, color: '#c62828' }}>
+            <b>Rentang tanggal cuma {hari} hari</b> ({startDate} s/d {endDate}), padahal satu periode potong gaji seharusnya sekitar 31 hari.
+            Belanja di luar rentang sesempit ini tidak masuk kolom Tagihan — itulah sebabnya angkanya Rp 0.
+            Tekan tombol <b>Periode Berjalan</b> di atas untuk membetulkannya.
+          </div>
+        )
+        return null
+      })()}
+      {(() => {
+        const nilaiUmum = tagihanUmum.reduce((a, k) => a + (k.sisa || 0), 0)
+        if (tagihanUmum.length === 0) return null
+        return (
+          <div style={{ background: '#fff8e1', border: '1px solid #ffe082', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12.5, lineHeight: 1.7, color: '#8d6e63' }}>
+            <b>{tagihanUmum.length} tagihan kredit senilai {formatRp(nilaiUmum)} TIDAK dimasukkan ke daftar potong gaji</b> —
+            pembelinya bukan anggota terdaftar (pembeli umum, atau anggotanya sudah dihapus).
+            Gaji mereka tidak bisa dipotong, jadi tagih lewat menu <b>Piutang Pelanggan</b>.
+          </div>
+        )
+      })()}
+      {diLuarPeriode.length > 0 && (
+        <div style={{ background: '#e3f2fd', border: '1px solid #90caf9', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12.5, lineHeight: 1.7, color: '#0d47a1' }}>
+          <b>{diLuarPeriode.length} nota kredit senilai {formatRp(nilaiDiLuar)} berada DI LUAR periode ini</b> —
+          tanggalnya setelah {endDate}, jadi belum masuk hitungan Tagihan maupun Tunggakan.
+          {totalTagihanAll === 0 && <> Inilah sebabnya kolom <b>Tagihan Bulan Ini</b> masih Rp 0.</>}
+          {' '}Ubah tanggal <b>Sampai</b> supaya nota-nota itu ikut terhitung.
+        </div>
+      )}
+      {jumlahDisesuaikan > 0 && bannerTampil && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', background: '#fff8e1', border: '1px solid #ffe082', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 12 }}>
+          <span style={{ color: '#e65100' }}>
+            {jumlahDisesuaikan} anggota tunggakannya disesuaikan manual (ditandai • pada tabel &amp; * pada cetakan)
+            {statusSimpan === 'menyimpan' && <span style={{ color: '#8d6e63', marginLeft: 8 }}>menyimpan...</span>}
+            {statusSimpan === 'tersimpan' && <span style={{ color: '#2e7d32', marginLeft: 8, fontWeight: 600 }}>&#10003; tersimpan otomatis</span>}
+            {statusSimpan === 'gagal' && <span style={{ color: '#c62828', marginLeft: 8, fontWeight: 600 }}>gagal tersimpan &mdash; cek koneksi</span>}
+          </span>
+          <span style={{ display: 'flex', gap: 6 }}>
+            <button style={{ fontSize: 11, padding: '4px 10px', background: '#e65100', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }} onClick={resetSemuaAdjust}>Reset Semua</button>
+            <button title="Sembunyikan pemberitahuan ini" style={{ fontSize: 11, padding: '4px 10px', background: 'transparent', color: '#8d6e63', border: '1px solid #ffe082', borderRadius: 6, cursor: 'pointer' }} onClick={() => setBannerTampil(false)}>Tutup</button>
+          </span>
+        </div>
+      )}
+      {sortedKompi.map(kompi => {
+        const anggotaList = Object.values(kompiData[kompi]).sort((a,b) => (a.name||'').localeCompare(b.name||''))
+        return (
+          <div key={kompi} style={{ ...S.card, marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: '#1565c0' }}>{kompi}</h3>
+              <button style={{ ...S.filterBtn, padding: '6px 14px', fontSize: 12 }}
+                onClick={() => setTambahKompi(tambahKompi === kompi ? null : kompi)}>
+                {tambahKompi === kompi ? 'Tutup pencarian' : '+ Tambah Anggota'}
+              </button>
+            </div>
+            {tambahKompi === kompi && (
+              <div style={{ marginBottom: 12 }}>
+                <PilihAnggota
+                  members={members}
+                  sudahAda={new Set([...manualMids, ...Object.keys(kompiData[kompi])])}
+                  kompiAwal={kompi}
+                  onPilih={(mid) => tambahAnggotaManual(mid)}
+                  onTutup={() => setTambahKompi(null)}
+                />
+              </div>
+            )}
+            <table style={S.table}>
+              <thead><tr>{['Potong', 'No', 'Pangkat', 'Nama', 'NRP', 'Tagihan Bln Ini', 'Tunggakan', 'Total Potong', 'Bayar'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <tbody>{anggotaList.map((m, i) => {
+                const mid = m.mid
+                const isBayar = bayarMid === mid
+                const tg = tunggakanEfektif(m)
+                const isAdj = selisihManual(mid) !== 0
+                const isEdit = editMid === mid
+                return (
+                <tr key={i} style={{ ...S.tr, background: isBayar ? '#fff3e0' : (isAdj ? '#fffdf5' : undefined) }}>
+                  <td style={{ ...S.td, textAlign: 'center' }}>
+                    <input type="checkbox" style={{ width: 16, height: 16, cursor: 'pointer' }}
+                      checked={!tanpaBayar.has(mid)} onChange={() => togglePilih(mid)}
+                      title={tanpaBayar.has(mid) ? 'Belum bayar — tidak ikut ditandai lunas' : 'Ikut ditandai sudah dipotong'} />
+                  </td>
+                  <td style={S.td}>{i+1}</td><td style={S.td}>{m.pangkat}</td>
+                  <td style={{ ...S.td, fontWeight: 600 }}>
+                    {m.name}
+                    {m.manual && (
+                      <>
+                        <span title="Ditambahkan manual" style={{ marginLeft: 6, fontSize: 10, padding: '1px 6px', borderRadius: 4, background: '#e3f2fd', color: '#1565c0', fontWeight: 700 }}>MANUAL</span>
+                        <button title="Keluarkan dari daftar" style={{ marginLeft: 6, border: 'none', background: 'transparent', color: '#c62828', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}
+                          onClick={() => hapusAnggotaManual(mid)}>&times;</button>
+                      </>
+                    )}
+                  </td>
+                  <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{m.nrp}</td>
+                  <td style={{ ...S.td, textAlign: 'right' }}>{formatRp(m.totalTagihan)}</td>
+                  <td style={{ ...S.td, textAlign: 'right' }}>
+                    {isEdit ? (
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center', justifyContent: 'flex-end' }}>
+                        <input style={{ ...S.input, width: 110, fontSize: 12, padding: '4px 8px', textAlign: 'right' }} type="number" min="0" value={editVal} autoFocus
+                          onChange={e => setEditVal(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') simpanEdit(mid, m.totalTunggakan); if (e.key === 'Escape') setEditMid(null) }} />
+                        <button title="Simpan" style={{ fontSize: 11, padding: '4px 8px', background: '#2e7d32', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }} onClick={() => simpanEdit(mid, m.totalTunggakan)}>✓</button>
+                        <button title="Batal" style={{ fontSize: 11, padding: '4px 8px', background: '#999', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }} onClick={() => setEditMid(null)}>✕</button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end' }}>
+                        {isAdj && <span title={'Hitungan sistem: ' + formatRp(m.totalTunggakan) + ' + manual ' + formatRp(selisihManual(mid))} style={{ fontSize: 10, color: '#9e9e9e', textDecoration: 'line-through' }}>{formatRp(m.totalTunggakan)}</span>}
+                        <span onClick={() => mulaiEdit(mid, tg)} title={warisan[mid] != null ? 'Diwarisi dari periode sebelumnya (belum lunas) — klik untuk ubah' : 'Klik untuk ubah tunggakan'}
+                          style={{ cursor: 'pointer', borderBottom: '1px dashed #c62828', color: tg > 0 ? '#c62828' : '#6b7280', fontWeight: tg > 0 ? 700 : 400 }}>
+                          {formatRp(tg)}{isAdj ? ' •' : ''}
+                        </span>
+                        {isAdj && <button title="Kembalikan ke nilai asli" style={{ fontSize: 10, padding: '2px 6px', background: '#eee', color: '#666', border: 'none', borderRadius: 4, cursor: 'pointer' }} onClick={() => resetAdjust(mid)}>↺</button>}
+                      </div>
+                    )}
+                  </td>
+                  <td style={{ ...S.td, textAlign: 'right', fontWeight: 700 }}>{formatRp(m.totalTagihan + tg)}</td>
+                  <td style={{ ...S.td, minWidth: isBayar ? 200 : 60 }}>
+                    {(m.totalTunggakan > 0 || m.totalTagihan > 0) && !isBayar && (
+                      <button style={{ fontSize: 11, padding: '4px 10px', background: '#2e7d32', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}
+                        onClick={() => { setBayarMid(mid); setBayarAmount('') }}>💰 Bayar</button>
+                    )}
+                    {isBayar && (
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <input style={{ ...S.input, width: 100, fontSize: 12, padding: '4px 8px', textAlign: 'right' }} type="number" value={bayarAmount} onChange={e => setBayarAmount(e.target.value)} placeholder="Jumlah..." autoFocus />
+                        <button style={{ fontSize: 11, padding: '4px 8px', background: '#2e7d32', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }} onClick={() => prosesBayarTunggakan(mid)}>✓</button>
+                        <button style={{ fontSize: 11, padding: '4px 8px', background: '#999', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }} onClick={() => setBayarMid(null)}>✕</button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              )})}
+              <tr style={{ background: '#f5f6fa', fontWeight: 700 }}>
+                <td style={S.td} colSpan={5}>Subtotal {kompi} ({anggotaList.length} anggota)</td>
+                <td style={{ ...S.td, textAlign: 'right' }}>{formatRp(anggotaList.reduce((a, m) => a + m.totalTagihan, 0))}</td>
+                <td style={{ ...S.td, textAlign: 'right', color: '#c62828' }}>{formatRp(anggotaList.reduce((a, m) => a + tunggakanEfektif(m), 0))}</td>
+                <td style={{ ...S.td, textAlign: 'right', color: '#2e7d32' }}>{formatRp(anggotaList.reduce((a, m) => a + m.totalTagihan + tunggakanEfektif(m), 0))}</td>
+                <td style={S.td}></td>
+              </tr>
+              </tbody>
+            </table>
+          </div>
+        )
+      })}
+      {sortedKompi.length === 0 && <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>Tidak ada tagihan kredit dalam periode ini</div>}
+    </div>
+  )
+}
+
+// =============================================
+// 9. LABA PER ANGGOTA (untuk SHU)
+// =============================================
+export function LabaPerAnggota({ transactions, members, products, settings }) {
+  const [year, setYear] = useState(new Date().getFullYear())
+
+  const yearStr = String(year)
+  // Hitung laba per anggota (buang record RETURN & nota retur penuh; retur sebagian sudah mengecilkan nota)
+  const memberProfit = {}
+  transactions.filter(t => (t.date||'').startsWith(yearStr) && t.caraBayar !== 'RETURN' && !t.returned).forEach(tx => {
+    const mid = tx.memberId || '_umum'
+    if (!memberProfit[mid]) memberProfit[mid] = { totalBeli: 0, totalLaba: 0, txCount: 0 }
+    memberProfit[mid].txCount++
+    memberProfit[mid].totalBeli += (tx.total||0)
+
+    // Hitung laba = harga jual - HPP. HPP pakai harga beli SAAT transaksi (it.buyPrice), fallback ke master untuk data lama
+    ;(tx.items||[]).forEach(it => {
+      const prod = products.find(p => p.id === it.productId)
+      const hpp = (it.buyPrice != null ? it.buyPrice : (prod?.buyPrice||0)) * (it.qty||0)
+      const revenue = (it.price||0) * (it.qty||0) * (1 - (it.diskon||0)/100)
+      memberProfit[mid].totalLaba += (revenue - hpp)
+    })
+  })
+
+  const sortedMembers = Object.entries(memberProfit)
+    .map(([mid, data]) => {
+      const m = members.find(x => x.id === mid)
+      return { ...data, mid, name: m?.name || 'Non-Anggota', pangkat: m?.pangkat||'-', nrp: m?.nrp||'-', kompi: m?.kompi||'-' }
+    })
+    .sort((a, b) => b.totalLaba - a.totalLaba)
+
+  const totalLabaSemua = sortedMembers.reduce((a, m) => a + m.totalLaba, 0)
+  const totalBeliSemua = sortedMembers.reduce((a, m) => a + m.totalBeli, 0)
+
+  function cetakLaba() {
+    const win = window.open('', '_blank')
+    win.document.write(`<!DOCTYPE html><html><head><style>
+      @page{margin:12mm;size:A4}body{font-family:Arial;font-size:11px}
+      h1{font-size:16px;text-align:center;margin:0}h2{font-size:13px;text-align:center;color:#666;margin:4px 0 12px}
+      table{width:100%;border-collapse:collapse}th{background:#f5f5f5;padding:5px 8px;border:1px solid #ccc;font-size:10px}
+      td{padding:4px 8px;border:1px solid #ccc;font-size:10px}.r{text-align:right}.b{font-weight:bold}
+      .total td{background:#1565c0;color:#fff;font-weight:bold}
+      .footer{text-align:center;font-size:9px;color:#999;margin-top:16px}@media print{button{display:none}}
+    </style></head><body>
+      <h1>${settings?.name || 'KOPERASI YONIF 527/BY'}</h1>
+      <h2>LABA PER ANGGOTA — TAHUN ${year}<br>Untuk Perhitungan SHU</h2>
+      <table><tr><th>No</th><th>Pangkat</th><th>Nama</th><th>NRP</th><th>Kompi</th><th class="r">Transaksi</th><th class="r">Total Belanja</th><th class="r">Laba Diberikan</th><th class="r">% Kontribusi</th></tr>
+      ${sortedMembers.map((m, i) => '<tr><td>'+(i+1)+'</td><td>'+m.pangkat+'</td><td class="b">'+m.name+'</td><td>'+m.nrp+'</td><td>'+m.kompi+'</td><td class="r">'+m.txCount+'</td><td class="r">'+Number(m.totalBeli).toLocaleString('id-ID')+'</td><td class="r">'+Number(Math.round(m.totalLaba)).toLocaleString('id-ID')+'</td><td class="r">'+(totalLabaSemua>0?((m.totalLaba/totalLabaSemua)*100).toFixed(1):0)+'%</td></tr>').join('')}
+      <tr class="total"><td colspan="6" class="r">TOTAL</td><td class="r">${Number(totalBeliSemua).toLocaleString('id-ID')}</td><td class="r">${Number(Math.round(totalLabaSemua)).toLocaleString('id-ID')}</td><td class="r">100%</td></tr>
+      </table>
+      <div class="footer">Dicetak: ${new Date().toLocaleString('id-ID')}</div>
+      <script>setTimeout(()=>{window.print()},500)<\/script></body></html>`)
+    win.document.close()
+  }
+
+  return (
+    <div>
+      <div style={S.pageHead}><h2 style={S.title}>Laba per Anggota (SHU)</h2>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <select style={S.input} value={year} onChange={e => setYear(Number(e.target.value))}>
+            {[2024,2025,2026,2027].map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <button style={{ ...S.primaryBtn, background: '#2e7d32' }} onClick={cetakLaba}>Cetak Laporan</button>
+        </div>
+      </div>
+      <div style={S.grid3}>
+        <div style={S.statCard}><div style={S.statLabel}>Total Laba dari Anggota</div><div style={{ ...S.statVal, color: '#2e7d32' }}>{formatRp(Math.round(totalLabaSemua))}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Total Belanja Anggota</div><div style={S.statVal}>{formatRp(totalBeliSemua)}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Jumlah Anggota Aktif Belanja</div><div style={S.statVal}>{sortedMembers.filter(m => m.mid !== '_umum').length}</div></div>
+      </div>
+      <div style={S.card}>
+        <table style={S.table}>
+          <thead><tr>{['No', 'Pangkat', 'Nama', 'NRP', 'Kompi', 'Transaksi', 'Total Belanja', 'Laba Diberikan', '% SHU'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <tbody>{sortedMembers.map((m, i) => (
+            <tr key={m.mid} style={S.tr}>
+              <td style={S.td}>{i+1}</td>
+              <td style={S.td}>{m.pangkat}</td>
+              <td style={{ ...S.td, fontWeight: 600 }}>{m.name}</td>
+              <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{m.nrp}</td>
+              <td style={S.td}>{m.kompi}</td>
+              <td style={{ ...S.td, textAlign: 'right' }}>{m.txCount}</td>
+              <td style={{ ...S.td, textAlign: 'right' }}>{formatRp(m.totalBeli)}</td>
+              <td style={{ ...S.td, textAlign: 'right', fontWeight: 600, color: '#2e7d32' }}>{formatRp(Math.round(m.totalLaba))}</td>
+              <td style={{ ...S.td, textAlign: 'right' }}>{totalLabaSemua > 0 ? ((m.totalLaba/totalLabaSemua)*100).toFixed(1) : 0}%</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+      <div style={{ ...S.card, background: '#f5f6fa', fontSize: 13, color: '#6b7280' }}>
+        <strong>Cara baca:</strong> "Laba Diberikan" = selisih harga jual - harga beli dari semua transaksi anggota tersebut.
+        "% SHU" = kontribusi laba anggota terhadap total laba. Untuk pembagian SHU, kalikan persentase ini dengan dana SHU Jasa Anggota.
+      </div>
+    </div>
+  )
+}
+
+const IC = {
+  plus: <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>,
+}
+
+const S = {
+  title: { fontSize: 22, fontWeight: 700, marginBottom: 20 },
+  pageHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  grid2: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, marginBottom: 16 },
+  grid3: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 20 },
+  statCard: { background: '#fff', borderRadius: 12, padding: 18, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
+  statLabel: { fontSize: 12, color: '#6b7280', marginBottom: 4 },
+  statVal: { fontSize: 20, fontWeight: 700 },
+  card: { background: '#fff', borderRadius: 12, padding: 18, boxShadow: '0 1px 3px rgba(0,0,0,0.06)', marginBottom: 14 },
+  table: { width: '100%', fontSize: 13 },
+  th: { textAlign: 'left', padding: '10px 12px', borderBottom: '2px solid #e5e7eb', color: '#6b7280', fontWeight: 600, fontSize: 11, textTransform: 'uppercase' },
+  td: { padding: '10px 12px', borderBottom: '1px solid #e5e7eb' },
+  tr: { transition: 'background 0.1s' },
+  badge: { display: 'inline-block', padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600 },
+  primaryBtn: { display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', background: '#1565c0', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 },
+  linkBtn: { border: 'none', background: 'transparent', cursor: 'pointer', padding: 4, color: '#1565c0', fontWeight: 600, fontSize: 12 },
+  filterBtn: { padding: '5px 12px', border: '1px solid #e5e7eb', background: '#fff', borderRadius: 6, cursor: 'pointer', fontSize: 12 },
+  filterActive: { background: '#1565c0', color: '#fff', borderColor: '#1565c0' },
+  form: { display: 'flex', flexDirection: 'column', gap: 12 },
+  formLabel: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, fontWeight: 600, color: '#6b7280' },
+  input: { padding: '9px 12px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 14, outline: 'none' },
+}
