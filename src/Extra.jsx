@@ -2013,17 +2013,28 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   // 5. Group per kompi → per anggota
   const kompiData = {}
 
+  // Tagihan pembeli UMUM (tanpa anggota) — tidak bisa dipotong gaji.
+  // Dikumpulkan terpisah supaya tidak mengacaukan daftar potong juru bayar.
+  const tagihanUmum = []
+
   function addToKompi(record, isTunggakan) {
     const member = members.find(m => m.id === record.memberId)
-    const kompi = member?.kompi || 'NON-ANGGOTA'
+
+    // BUKAN anggota (pembeli umum, atau anggotanya sudah dihapus):
+    // tidak mungkin dipotong dari gaji, jadi dikeluarkan dari daftar.
+    if (!member) { tagihanUmum.push(record); return }
+
+    // Anggota terdaftar tapi kompinya belum diisi — tetap ditagih,
+    // tapi dikelompokkan jelas supaya ketahuan dan bisa dilengkapi.
+    const kompi = (member.kompi || '').trim() || 'BELUM ADA KOMPI'
     if (filterKompi !== 'all' && kompi !== filterKompi) return
     if (!kompiData[kompi]) kompiData[kompi] = {}
     const mid = record.memberId || 'umum'
     if (!kompiData[kompi][mid]) {
       const sp = splitPangkat(member, record.customerName)
       kompiData[kompi][mid] = {
-        member, mid, pangkat: sp.pangkat, nrp: member?.nrp || '-',
-        name: sp.nama || 'Umum', items: [], totalTagihan: 0, totalTunggakan: 0, tunggakanItems: []
+        member, mid, pangkat: sp.pangkat, nrp: member.nrp || '-',
+        name: sp.nama || member.name || '-', items: [], totalTagihan: 0, totalTunggakan: 0, tunggakanItems: []
       }
     }
     if (isTunggakan) {
@@ -2222,6 +2233,17 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
           </div>
         )
         return null
+      })()}
+      {(() => {
+        const nilaiUmum = tagihanUmum.reduce((a, k) => a + (k.sisa || 0), 0)
+        if (tagihanUmum.length === 0) return null
+        return (
+          <div style={{ background: '#fff8e1', border: '1px solid #ffe082', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12.5, lineHeight: 1.7, color: '#8d6e63' }}>
+            <b>{tagihanUmum.length} tagihan kredit senilai {formatRp(nilaiUmum)} TIDAK dimasukkan ke daftar potong gaji</b> —
+            pembelinya bukan anggota terdaftar (pembeli umum, atau anggotanya sudah dihapus).
+            Gaji mereka tidak bisa dipotong, jadi tagih lewat menu <b>Piutang Pelanggan</b>.
+          </div>
+        )
       })()}
       {diLuarPeriode.length > 0 && (
         <div style={{ background: '#e3f2fd', border: '1px solid #90caf9', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12.5, lineHeight: 1.7, color: '#0d47a1' }}>
