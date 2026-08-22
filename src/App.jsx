@@ -5,7 +5,7 @@ import {
 import { Products, Suppliers, StockIn, POS } from './Inventory'
 import { KasMasukKeluar, JurnalUmum, LabaRugi, HitungSHU, CetakKwitansi } from './Finance'
 import { ExportData, RekapBulanan, GrafikTrend, AuditTrail, createAuditLog, LaporanPenjualan } from './Reporting'
-import { ReturBarang, PiutangPage, HargaBertingkat, MutasiStok, SetoranHarian } from './Legacy'
+import { ReturBarang, PiutangPage, HargaBertingkat, MutasiStok, SetoranHarian, StockOpname } from './Legacy'
 import { HutangSupplier, BackupRestore, DashboardCharts, cetakStruk, cetakLaporanPDF, KartuAnggota, cetakSemuaKartu, LaporanTutupBuku, StokHistori, TagihanJuyar, LabaPerAnggota } from './Extra'
 import logoSrc from '/logo.png?url'
 
@@ -77,6 +77,7 @@ export default function App() {
   const [mutasis, setMutasis] = useState([])
   const [setorans, setSetorans] = useState([])
   const [hutangs, setHutangs] = useState([])
+  const [opnames, setOpnames] = useState([])
   const [settings, setSettings] = useState({
     name: 'KOPERASI YONIF 527/BY', simpPokok: 500000, simpWajib: 100000, bungaPinjaman: 1.5, maxPinjaman: 10000000, kasPin: '527'
   })
@@ -133,6 +134,7 @@ export default function App() {
         unsubs.push(listenCollection('mutasis', setMutasis))
         unsubs.push(listenCollection('setorans', setSetorans))
         unsubs.push(listenCollection('hutangs', setHutangs))
+        unsubs.push(listenCollection('opnames', setOpnames))
 
         try {
           const s = await Promise.race([getOne('settings', 'main'), timeout(5000)])
@@ -565,6 +567,10 @@ export default function App() {
     }
   }
 
+  async function saveOpname(op) {
+    op.id = genId()
+    await setOne('opnames', op.id, op)
+  }
   async function saveRetur(r) { r.id = genId(); await setOne('returs', r.id, r); await logAction('Retur', 'create', `Retur ${r.noRetur}: ${r.productName} x${r.qty}`) }
   async function savePiutang(p) { if (!p.id) p.id = genId(); await setOne('piutangs', p.id, p) }
   async function bayarPiutang(piutang, amount) {
@@ -689,6 +695,7 @@ export default function App() {
     { id: 'retur', label: 'Retur Barang', icon: I.truck, roles: ['admin','bendahara'] },
     { id: 'harga', label: 'Harga Bertingkat', icon: I.box, roles: ['admin','bendahara'] },
     { id: 'mutasi', label: 'Mutasi Stok', icon: I.box, roles: ['admin','bendahara'] },
+    { id: 'opname', label: 'Stock Opname', icon: I.box, roles: ['admin','bendahara'] },
     { id: '_sep2', label: 'KEUANGAN', sep: true, roles: ['admin','bendahara','ketua'] },
     { id: 'kas', label: 'Kas Masuk/Keluar', icon: I.wallet, roles: ['admin','bendahara'] },
     { id: 'jurnal', label: 'Jurnal Umum', icon: I.chart, roles: ['admin','bendahara'] },
@@ -789,6 +796,23 @@ export default function App() {
 
       {/* MAIN */}
       <main className="app-main" style={S.main}>
+        {(() => {
+          // PENGINGAT BACKUP — tampil di halaman mana pun, bukan hanya di menu Backup.
+          // Browser tidak bisa menjalankan tugas terjadwal saat aplikasi tertutup,
+          // jadi pengingat saat aplikasi dibuka adalah cara paling andal.
+          const t = settings?.lastBackupAt
+          const hari = t ? Math.floor((Date.now() - new Date(t).getTime()) / 86400000) : 999
+          if (hari < 7 || page === 'backup') return null
+          return (
+            <div style={{ background: '#fff3e0', border: '1px solid #ffb74d', color: '#e65100', padding: '10px 14px', borderRadius: 8, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, flexWrap: 'wrap' }}>
+              <span style={{ flex: 1 }}>
+                {t ? 'Backup terakhir ' + hari + ' hari lalu.' : 'Data ini belum pernah di-backup.'} Kalau data hilang, tidak ada cadangan yang bisa dipulihkan.
+              </span>
+              <button style={{ background: '#e65100', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', cursor: 'pointer', fontWeight: 600, fontSize: 12 }}
+                onClick={() => setPage('backup')}>Backup Sekarang</button>
+            </div>
+          )
+        })()}
         {dbAlert && (
           <div style={{ background: '#c62828', color: '#fff', padding: '10px 14px', borderRadius: 8, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, fontWeight: 600 }}>
             <span style={{ flex: 1 }}>⚠️ {dbAlert}</span>
@@ -800,7 +824,7 @@ export default function App() {
         {page === 'members' && <Members {...{ members, saveMember, deleteMember, memberSavings, memberLoans, setModal, showToast, settings, logoSrc }} />}
         {/* Simpanan & Pinjaman halaman dihapus */}
         {page === 'tutupbuku' && <LaporanTutupBuku transactions={transactions} members={members} settings={settings} />}
-        {page === 'juyar' && <TagihanJuyar {...{ transactions, piutangs, members, settings, savePiutang, bayarPiutang, showToast, setModal, logAction }} />}
+        {page === 'juyar' && <TagihanJuyar {...{ transactions, piutangs, members, settings, savePiutang, bayarPiutang, showToast, setModal, logAction, kasData, jurnalData }} />}
         {page === 'labaanggota' && <LabaPerAnggota {...{ transactions, members, products, settings }} />}
         {/* Neraca halaman dihapus */}
         {page === 'products' && <Products {...{ products, saveProduct, deleteProduct, suppliers, setModal, showToast, transactions, stockInData }} />}
@@ -810,6 +834,7 @@ export default function App() {
         {page === 'suppliers' && <Suppliers {...{ suppliers, saveSupplier, deleteSupplier, products, setModal, showToast }} />}
         {page === 'retur' && <ReturBarang {...{ returs, saveRetur, products, suppliers, updateProductStock, adjustProductStock, setModal, showToast }} />}
         {page === 'harga' && <HargaBertingkat {...{ products, saveProduct, setModal, showToast }} />}
+        {page === 'opname' && <StockOpname {...{ opnames, saveOpname, products, adjustProductStock, saveMutasi, user, showToast, logAction }} />}
         {page === 'mutasi' && <MutasiStok {...{ mutasis, saveMutasi, products, updateProductStock, adjustProductStock, setModal, showToast }} />}
         {page === 'kas' && <KasMasukKeluar {...{ kasData, saveKas, deleteKas, setModal, showToast, settings, user }} />}
         {page === 'jurnal' && <JurnalUmum {...{ jurnalData, saveJurnal, deleteJurnal, setModal, showToast }} />}
@@ -829,7 +854,7 @@ export default function App() {
         }} />}
         {page === 'audit' && <AuditTrail {...{ auditLogs, members, getMember }} />}
         {page === 'notif' && <NotifikasiPage loans={loans} members={members} getMember={getMember} />}
-        {page === 'backup' && <BackupRestore {...{ members, savings, loans, products, suppliers, kasData, jurnalData, transactions, stockInData, piutangs, hutangs, returs, mutasis, setorans, settings, users, showToast, deleteCollection, removeOne,
+        {page === 'backup' && <BackupRestore {...{ members, savings, loans, products, suppliers, kasData, jurnalData, transactions, stockInData, piutangs, hutangs, returs, mutasis, setorans, settings, users, opnames, showToast, deleteCollection, removeOne, saveSettings, logAction,
           saveImportedProducts: async (items, onProgress) => { return await batchSet('products', items, onProgress) },
           saveImportedMembers: async (items, onProgress) => { return await batchSet('members', items, onProgress) }
         }} />}

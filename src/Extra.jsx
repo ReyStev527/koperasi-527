@@ -1414,7 +1414,7 @@ function periode26(acuan, geser) {
   return { mulai: toLocalDate(mulai), akhir: toLocalDate(akhir) }
 }
 
-export function TagihanJuyar({ transactions, piutangs, members, settings, savePiutang, bayarPiutang, showToast, setModal, logAction }) {
+export function TagihanJuyar({ transactions, piutangs, members, settings, savePiutang, bayarPiutang, showToast, setModal, logAction, kasData, jurnalData }) {
   const now = new Date()
   const defaultEnd = new Date(now.getFullYear(), now.getMonth(), 25)
   const defaultStart = new Date(defaultEnd); defaultStart.setMonth(defaultStart.getMonth() - 1); defaultStart.setDate(26)
@@ -1476,10 +1476,13 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
           try {
             const lama = JSON.parse(sebelumnya.json) || {}
             for (const [mid, nilai] of Object.entries(lama)) {
-              // Hanya yang BELUM disentuh di periode ini, dan nilainya masih ada
-              if (!(mid in milikPeriode) && nilai != null && Number(nilai) > 0) {
-                diwarisi[mid] = Number(nilai)
-              }
+              if (mid in milikPeriode) continue          // sudah disentuh di periode ini
+              if (nilai == null) continue                // sengaja dikembalikan ke hitungan sistem
+              // Dukung dua bentuk: angka lama, dan bentuk baru { n, d }
+              const a = (typeof nilai === 'number') ? { n: nilai, d: 0 }
+                      : (nilai && nilai.n != null) ? { n: Number(nilai.n)||0, d: Number(nilai.d)||0 }
+                      : null
+              if (a && (a.n - a.d) > 0) diwarisi[mid] = a
             }
           } catch {}
         }
@@ -1593,11 +1596,16 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
     setEditMid(mid)
     setEditVal(String(Math.round(nilaiSekarang || 0)))
   }
-  function simpanEdit(mid) {
+  function simpanEdit(mid, dasarSistem) {
     const v = Number(editVal)
     if (isNaN(v) || v < 0) { showToast('Nilai tunggakan tidak valid', 'error'); return }
-    const sebelum = adjust[mid]
-    simpanAdjust({ ...adjust, [mid]: Math.round(v) })
+    const a0 = bacaAdj(adjust[mid])
+    const sebelum = a0 ? a0.n : null
+    const dasar = Number(dasarSistem) || 0
+    // Angka yang diketik = tunggakan yang benar SAAT INI.
+    // Yang disimpan selisihnya terhadap hitungan sistem, supaya bulan depan
+    // tagihan baru tetap ikut bertambah, bukan tertimpa.
+    simpanAdjust({ ...adjust, [mid]: { n: Math.round(v), d: dasar } })
     setEditMid(null)
     // AUDIT: penyesuaian tunggakan mengubah nominal potong gaji secara manual,
     // jadi wajib tercatat siapa yang mengubah dan dari berapa jadi berapa.
@@ -1630,8 +1638,29 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   // diketik user selalu dipaksa jadi Rp 0 — sehingga "Total Potong tidak berubah".
   // Sekarang angka yang diketik user DIHORMATI apa adanya.
   // Pengurangan otomatis saat pembayaran tetap jalan (lihat prosesBayarTunggakan).
+  // Penyesuaian disimpan sebagai { n: nilai_diketik, d: nilai_sistem_saat_diketik }.
+  // Yang berlaku adalah SELISIHNYA (n - d), bukan angka mutlak.
+  //
+  // BUG YANG DIPERBAIKI: dulu angka manual MENGGANTIKAN hitungan sistem.
+  // Akibatnya tagihan baru yang jatuh tempo bulan berikutnya ikut tertelan —
+  // contoh nyata: tunggakan manual 2.590.700 + tagihan 254.600 seharusnya
+  // jadi 2.845.300 bulan depan, tapi yang tampil tetap 2.590.700.
+  // Format angka lama (tanpa d) dianggap d = 0 supaya tetap terbaca.
+  function bacaAdj(v) {
+    if (v == null) return null
+    if (typeof v === 'number') return { n: v, d: 0 }
+    if (typeof v === 'object' && v.n != null) return { n: Number(v.n) || 0, d: Number(v.d) || 0 }
+    return null
+  }
   function tunggakanEfektif(m) {
-    return adjust[m.mid] != null ? adjust[m.mid] : m.totalTunggakan
+    const a = bacaAdj(adjust[m.mid])
+    if (!a) return m.totalTunggakan
+    return Math.max(0, (m.totalTunggakan || 0) + (a.n - a.d))
+  }
+  // Bagian yang murni ditambahkan manual (di luar hitungan sistem)
+  function selisihManual(mid) {
+    const a = bacaAdj(adjust[mid])
+    return a ? a.n - a.d : 0
   }
 
   async function prosesBayarTunggakan(mid) {
@@ -1689,11 +1718,12 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
 
     // 4. TUNGGAKAN OTOMATIS TERHITUNG: penyesuaian manual dikurangi HANYA sebesar
     // porsi yang membayar tunggakan (bukan seluruh pembayaran). Habis → hapus.
-    if (adjust[mid] != null && paidTunggakan > 0) {
-      // Sisa ditulis apa adanya (termasuk 0) supaya tidak muncul lagi
-      // sebagai warisan dari periode sebelumnya.
-      const sisaAdj = Math.max(0, adjust[mid] - paidTunggakan)
-      simpanAdjust({ ...adjust, [mid]: sisaAdj })
+    const aBayar = bacaAdj(adjust[mid])
+    if (aBayar && paidTunggakan > 0) {
+      // Kurangi bagian manualnya; ditulis apa adanya (termasuk 0) supaya
+      // tidak muncul lagi sebagai warisan dari periode sebelumnya.
+      const nBaru = Math.max(aBayar.d, aBayar.n - paidTunggakan)
+      simpanAdjust({ ...adjust, [mid]: { n: nBaru, d: aBayar.d } })
     }
 
     showToast('Pembayaran ' + formatRp(amount - remaining) + ' berhasil — ' + paidCount + ' piutang diupdate' + (remaining > 0 ? ' (sisa ' + formatRp(remaining) + ' tidak terpakai, semua piutang lunas)' : ''))
@@ -1714,24 +1744,119 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   // (sesuai kenyataan: juru bayar menyetor sekali, bukan per nota).
   // =====================================================================
   const [sedangTutup, setSedangTutup] = useState(false)
+  // Anggota yang DIKECUALIKAN dari penutupan (belum bayar).
+  // Bawaannya kosong = semua dianggap sudah dipotong; hilangkan centang
+  // pada anggota yang belum membayar.
+  const [tanpaBayar, setTanpaBayar] = useState(new Set())
+  function togglePilih(mid) {
+    setTanpaBayar(prev => { const n = new Set(prev); n.has(mid) ? n.delete(mid) : n.add(mid); return n })
+  }
+
+  // Penanda yang ditinggalkan proses penutupan periode — dipakai untuk MEMBATALKAN
+  const refTutup = 'JUYAR-' + startDate + '_' + endDate
+  const ketTutup = 'Potong gaji ' + startDate + ' s/d ' + endDate
+
+  // Catatan piutang yang dilunasi oleh penutupan periode ini
+  const piutangDitutup = (piutangs || []).filter(p =>
+    (p.payments || []).some(x => x && x.ket === ketTutup))
+  const sudahDitutup = piutangDitutup.length > 0
+  const nilaiDitutup = piutangDitutup.reduce((a, p) =>
+    a + (p.payments || []).filter(x => x && x.ket === ketTutup).reduce((b, x) => b + (Number(x.amount) || 0), 0), 0)
+
+  // =====================================================================
+  // BATALKAN PENUTUPAN PERIODE
+  // Mengembalikan seluruh tagihan yang telanjur ditandai lunas, beserta
+  // catatan kas dan jurnalnya. Aman: hanya menyentuh data yang dibuat oleh
+  // penutupan periode ini (dikenali dari penanda "Potong gaji <periode>").
+  // =====================================================================
+  const [sedangBatal, setSedangBatal] = useState(false)
+
+  async function batalkanPenutupan() {
+    if (sedangBatal) return
+    if (!sudahDitutup) { showToast('Periode ini belum pernah ditandai lunas', 'error'); return }
+    if (!confirm(
+      'BATALKAN penutupan periode ' + startDate + ' s/d ' + endDate + '?\n\n' +
+      piutangDitutup.length + ' tagihan senilai ' + formatRp(nilaiDitutup) + ' akan dikembalikan\n' +
+      'menjadi BELUM LUNAS, dan catatan kas serta jurnalnya dihapus.\n\n' +
+      'Pakai ini kalau tombol "Tandai Sudah Dipotong" tertekan tidak sengaja.'
+    )) return
+
+    setSedangBatal(true)
+    let balik = 0, gagal = 0
+    try {
+      const { setOne, removeOne, getOne } = await import('./db')
+
+      for (const p of piutangDitutup) {
+        try {
+          const sisaPay = (p.payments || []).filter(x => !(x && x.ket === ketTutup))
+          const dibalik = (p.payments || []).filter(x => x && x.ket === ketTutup)
+            .reduce((a, x) => a + (Number(x.amount) || 0), 0)
+
+          if (p.fromTxId && sisaPay.length === 0) {
+            // Catatan ini DIBUAT oleh penutupan (dari nota kredit lama) → hapus
+            await removeOne('piutangs', p.id)
+          } else {
+            // Catatan lama yang diperbarui → kembalikan angkanya
+            const tb = Math.max(0, (p.totalBayar || 0) - dibalik)
+            await setOne('piutangs', p.id, {
+              ...p, totalBayar: tb, sisa: Math.max(0, (p.total || 0) - tb),
+              status: tb >= (p.total || 0) ? 'LUNAS' : 'KREDIT', payments: sisaPay,
+            })
+          }
+          balik++
+        } catch (err) { gagal++; console.error('Batal piutang gagal:', p.id, err) }
+      }
+
+      // Hapus kas & jurnal bawaan penutupan
+      for (const k of (kasData || []).filter(x => x.ref === refTutup)) {
+        try { await removeOne('kas', k.id) } catch (err) { console.error(err) }
+      }
+      for (const j of (jurnalData || []).filter(x => x.ref === refTutup)) {
+        try { await removeOne('jurnal', j.id) } catch (err) { console.error(err) }
+      }
+
+      // Kembalikan penyesuaian manual dari cadangan yang disimpan saat menutup
+      try {
+        const snap = await getOne('juyarAdjust', 'juyar_tutup_' + startDate + '_' + endDate)
+        if (snap && snap.json) {
+          const isi = JSON.parse(snap.json)
+          if (isi && isi.adjust) { simpanAdjust(isi.adjust); }
+          await removeOne('juyarAdjust', 'juyar_tutup_' + startDate + '_' + endDate)
+        }
+      } catch (err) { console.error('Kembalikan penyesuaian gagal:', err) }
+
+      if (logAction) await logAction('Tagihan Juyar', 'batal-tutup',
+        'Penutupan periode ' + startDate + ' s/d ' + endDate + ' DIBATALKAN: ' +
+        balik + ' tagihan dikembalikan, ' + formatRp(nilaiDitutup) + (gagal ? ', ' + gagal + ' gagal' : ''))
+
+      showToast('Penutupan dibatalkan — ' + balik + ' tagihan kembali' + (gagal ? ' (' + gagal + ' gagal)' : ''))
+    } catch (err) {
+      console.error('Batal penutupan error:', err)
+      showToast('Gagal membatalkan: ' + (err.message || 'cek koneksi'), 'error')
+    }
+    setSedangBatal(false)
+  }
 
   async function tandaiSudahDipotong() {
     if (sedangTutup) return
     const semuaTagih = [...kreditPeriod, ...tunggakanList]
     const totalManual = semuaAnggota.reduce(
-      (a, m) => a + Math.max(0, tunggakanEfektif(m) - m.totalTunggakan), 0)
+      (a, m) => a + Math.max(0, selisihManual(m.mid)), 0)
 
     if (semuaTagih.length === 0 && totalManual === 0) {
       showToast('Tidak ada tagihan pada periode ini', 'error'); return
     }
 
+    const ikut = semuaAnggota.filter(m => !tanpaBayar.has(m.mid))
+    const dikecualikan = semuaAnggota.length - ikut.length
+    const totalIkut = ikut.reduce((a, m) => a + m.totalTagihan + tunggakanEfektif(m), 0)
     const pesan =
       'Tandai periode ' + startDate + ' s/d ' + endDate + ' SUDAH DIPOTONG GAJI?\n\n' +
-      semuaAnggota.length + ' anggota\n' +
-      'Tagihan bulan ini : ' + formatRp(totalTagihanAll) + '\n' +
-      'Tunggakan         : ' + formatRp(totalTunggakanAll) + '\n' +
-      'TOTAL             : ' + formatRp(grandTotal) + '\n\n' +
-      'Semua tagihan di atas ditandai LUNAS dan dicatat sebagai Kas Masuk.\n' +
+      ikut.length + ' anggota ikut dipotong\n' +
+      (dikecualikan > 0 ? dikecualikan + ' anggota DIKECUALIKAN (belum bayar)\n' : '') +
+      'Nilai ditandai lunas : ' + formatRp(totalIkut) + '\n\n' +
+      'Total seluruh periode: ' + formatRp(grandTotal) + '\n\n' +
+      'Tagihan anggota terpilih ditandai LUNAS dan dicatat sebagai Kas Masuk.\n' +
       'Bulan depan tidak akan muncul lagi sebagai tunggakan.\n\n' +
       'Lakukan SETELAH uang dari juru bayar benar-benar diterima.'
     if (!confirm(pesan)) return
@@ -1741,7 +1866,16 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
     try {
       const { setOne } = await import('./db')
 
+      // Cadangan penyesuaian manual — supaya pembatalan bisa mengembalikannya utuh
+      try {
+        await setOne('juyarAdjust', 'juyar_tutup_' + startDate + '_' + endDate, {
+          id: 'juyar_tutup_' + startDate + '_' + endDate,
+          json: JSON.stringify({ adjust, waktu: new Date().toISOString() }),
+        })
+      } catch (err) { console.error('Simpan cadangan gagal:', err) }
+
       for (const rec of semuaTagih) {
+        if (rec.memberId && tanpaBayar.has(rec.memberId)) continue  // dikecualikan
         const sisa = Number(rec.sisa) || 0
         if (sisa <= 0) continue
         try {
@@ -1770,7 +1904,11 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
       // Penyesuaian manual dinolkan supaya tidak terbawa lagi bulan depan
       if (Object.keys(adjust).length > 0) {
         const next = {}
-        for (const mid of Object.keys(adjust)) next[mid] = 0
+        for (const mid of Object.keys(adjust)) {
+          if (tanpaBayar.has(mid)) { next[mid] = adjust[mid]; continue }  // belum bayar, biarkan
+          const a = bacaAdj(adjust[mid])
+          next[mid] = a ? { n: a.d, d: a.d } : null   // selisih jadi 0, tidak terbawa lagi
+        }
         simpanAdjust(next)
         totalRp += totalManual
       }
@@ -1913,7 +2051,7 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   const totalTagihanAll = semuaAnggota.reduce((a, m) => a + m.totalTagihan, 0)
   const totalTunggakanAll = semuaAnggota.reduce((a, m) => a + tunggakanEfektif(m), 0)
   const grandTotal = totalTagihanAll + totalTunggakanAll
-  const jumlahDisesuaikan = semuaAnggota.filter(m => adjust[m.mid] != null).length
+  const jumlahDisesuaikan = semuaAnggota.filter(m => selisihManual(m.mid) !== 0).length
 
   const endD = new Date(endDate)
   const bulanNama = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember']
@@ -1935,7 +2073,7 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
         const anggotaList = Object.values(kompiData[kompi]).sort((a,b) => (a.name||'').localeCompare(b.name||''))
         const totalKompi = anggotaList.reduce((a, m) => a + m.totalTagihan + tunggakanEfektif(m), 0)
         return '<h3>' + kompi + '</h3><table><tr><th>No</th><th>Pangkat</th><th>Nama</th><th>NRP</th><th class="r">Tagihan Bln Ini</th><th class="r">Tunggakan</th><th class="r">Total Potong</th></tr>' +
-          anggotaList.map((m, i) => { const tg = tunggakanEfektif(m); const adj = adjust[m.mid] != null
+          anggotaList.map((m, i) => { const tg = tunggakanEfektif(m); const adj = selisihManual(m.mid) !== 0
             return '<tr><td>'+(i+1)+'</td><td>'+m.pangkat+'</td><td class="b">'+m.name+'</td><td>'+m.nrp+'</td><td class="r">'+Number(m.totalTagihan).toLocaleString('id-ID')+'</td><td class="r tunggakan">'+Number(tg).toLocaleString('id-ID')+(adj ? ' *' : '')+'</td><td class="r b">'+Number(m.totalTagihan+tg).toLocaleString('id-ID')+'</td></tr>' }).join('') +
           '<tr class="total"><td colspan="6" class="r">Total '+kompi+'</td><td class="r">'+Number(totalKompi).toLocaleString('id-ID')+'</td></tr></table>'
       }).join('')}
@@ -1954,10 +2092,23 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
           <button style={{ ...S.primaryBtn, background: '#6a1b9a', opacity: sedangTutup ? 0.6 : 1 }}
             disabled={sedangTutup} onClick={tandaiSudahDipotong}
             title="Tandai seluruh tagihan periode ini sudah dipotong gaji dan uangnya diterima">
-            {sedangTutup ? 'Memproses...' : 'Tandai Sudah Dipotong'}
+            {sedangTutup ? 'Memproses...' : ('Tandai Sudah Dipotong' + (tanpaBayar.size > 0 ? ' (' + Math.max(0, semuaAnggota.length - tanpaBayar.size) + ')' : ''))}
           </button>
         </div>
       </div>
+
+      {sudahDitutup && (
+        <div style={{ background: '#e8f5e9', border: '1px solid #81c784', borderRadius: 8, padding: '12px 16px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 13, lineHeight: 1.7, color: '#1b5e20' }}>
+            <b>Periode ini sudah ditandai dipotong gaji.</b> {piutangDitutup.length} tagihan senilai {formatRp(nilaiDitutup)} tercatat lunas.
+            <div style={{ fontSize: 12, color: '#33691e' }}>Kalau tombolnya tertekan tidak sengaja, tekan Batalkan untuk mengembalikan semuanya.</div>
+          </div>
+          <button style={{ background: '#c62828', color: '#fff', border: 'none', borderRadius: 7, padding: '8px 16px', cursor: 'pointer', fontWeight: 600, fontSize: 13, opacity: sedangBatal ? 0.6 : 1 }}
+            disabled={sedangBatal} onClick={batalkanPenutupan}>
+            {sedangBatal ? 'Mengembalikan...' : 'Batalkan Penutupan'}
+          </button>
+        </div>
+      )}
 
       {/* Penjelasan alur — supaya tidak ada lagi tagihan yang menumpuk selamanya */}
       <div style={{ background: '#ede7f6', border: '1px solid #b39ddb', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 12, lineHeight: 1.7, color: '#4527a0' }}>
@@ -2086,15 +2237,20 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
               </div>
             )}
             <table style={S.table}>
-              <thead><tr>{['No', 'Pangkat', 'Nama', 'NRP', 'Tagihan Bln Ini', 'Tunggakan', 'Total Potong', 'Bayar'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <thead><tr>{['Potong', 'No', 'Pangkat', 'Nama', 'NRP', 'Tagihan Bln Ini', 'Tunggakan', 'Total Potong', 'Bayar'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
               <tbody>{anggotaList.map((m, i) => {
                 const mid = m.mid
                 const isBayar = bayarMid === mid
                 const tg = tunggakanEfektif(m)
-                const isAdj = adjust[mid] != null
+                const isAdj = selisihManual(mid) !== 0
                 const isEdit = editMid === mid
                 return (
                 <tr key={i} style={{ ...S.tr, background: isBayar ? '#fff3e0' : (isAdj ? '#fffdf5' : undefined) }}>
+                  <td style={{ ...S.td, textAlign: 'center' }}>
+                    <input type="checkbox" style={{ width: 16, height: 16, cursor: 'pointer' }}
+                      checked={!tanpaBayar.has(mid)} onChange={() => togglePilih(mid)}
+                      title={tanpaBayar.has(mid) ? 'Belum bayar — tidak ikut ditandai lunas' : 'Ikut ditandai sudah dipotong'} />
+                  </td>
                   <td style={S.td}>{i+1}</td><td style={S.td}>{m.pangkat}</td>
                   <td style={{ ...S.td, fontWeight: 600 }}>
                     {m.name}
@@ -2113,13 +2269,13 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
                       <div style={{ display: 'flex', gap: 4, alignItems: 'center', justifyContent: 'flex-end' }}>
                         <input style={{ ...S.input, width: 110, fontSize: 12, padding: '4px 8px', textAlign: 'right' }} type="number" min="0" value={editVal} autoFocus
                           onChange={e => setEditVal(e.target.value)}
-                          onKeyDown={e => { if (e.key === 'Enter') simpanEdit(mid); if (e.key === 'Escape') setEditMid(null) }} />
-                        <button title="Simpan" style={{ fontSize: 11, padding: '4px 8px', background: '#2e7d32', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }} onClick={() => simpanEdit(mid)}>✓</button>
+                          onKeyDown={e => { if (e.key === 'Enter') simpanEdit(mid, m.totalTunggakan); if (e.key === 'Escape') setEditMid(null) }} />
+                        <button title="Simpan" style={{ fontSize: 11, padding: '4px 8px', background: '#2e7d32', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }} onClick={() => simpanEdit(mid, m.totalTunggakan)}>✓</button>
                         <button title="Batal" style={{ fontSize: 11, padding: '4px 8px', background: '#999', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }} onClick={() => setEditMid(null)}>✕</button>
                       </div>
                     ) : (
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end' }}>
-                        {isAdj && <span title={'Nilai asli: ' + formatRp(m.totalTunggakan)} style={{ fontSize: 10, color: '#9e9e9e', textDecoration: 'line-through' }}>{formatRp(m.totalTunggakan)}</span>}
+                        {isAdj && <span title={'Hitungan sistem: ' + formatRp(m.totalTunggakan) + ' + manual ' + formatRp(selisihManual(mid))} style={{ fontSize: 10, color: '#9e9e9e', textDecoration: 'line-through' }}>{formatRp(m.totalTunggakan)}</span>}
                         <span onClick={() => mulaiEdit(mid, tg)} title={warisan[mid] != null ? 'Diwarisi dari periode sebelumnya (belum lunas) — klik untuk ubah' : 'Klik untuk ubah tunggakan'}
                           style={{ cursor: 'pointer', borderBottom: '1px dashed #c62828', color: tg > 0 ? '#c62828' : '#6b7280', fontWeight: tg > 0 ? 700 : 400 }}>
                           {formatRp(tg)}{isAdj ? ' •' : ''}
@@ -2145,7 +2301,7 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
                 </tr>
               )})}
               <tr style={{ background: '#f5f6fa', fontWeight: 700 }}>
-                <td style={S.td} colSpan={4}>Subtotal {kompi} ({anggotaList.length} anggota)</td>
+                <td style={S.td} colSpan={5}>Subtotal {kompi} ({anggotaList.length} anggota)</td>
                 <td style={{ ...S.td, textAlign: 'right' }}>{formatRp(anggotaList.reduce((a, m) => a + m.totalTagihan, 0))}</td>
                 <td style={{ ...S.td, textAlign: 'right', color: '#c62828' }}>{formatRp(anggotaList.reduce((a, m) => a + tunggakanEfektif(m), 0))}</td>
                 <td style={{ ...S.td, textAlign: 'right', color: '#2e7d32' }}>{formatRp(anggotaList.reduce((a, m) => a + m.totalTagihan + tunggakanEfektif(m), 0))}</td>
