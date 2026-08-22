@@ -1403,6 +1403,17 @@ function PilihAnggota({ members, sudahAda, kompiAwal, onPilih, onTutup }) {
   )
 }
 
+// Hitung periode potong gaji (tgl 26 s/d 25) yang memuat tanggal acuan.
+// geser = 0 periode berjalan, -1 sebelumnya, +1 berikutnya.
+function periode26(acuan, geser) {
+  const d = new Date(acuan)
+  // Kalau tanggal >= 26, periode dimulai bulan ini; kalau tidak, bulan lalu
+  const basis = d.getDate() >= 26 ? d.getMonth() : d.getMonth() - 1
+  const mulai = new Date(d.getFullYear(), basis + (geser || 0), 26)
+  const akhir = new Date(d.getFullYear(), basis + (geser || 0) + 1, 25)
+  return { mulai: toLocalDate(mulai), akhir: toLocalDate(akhir) }
+}
+
 export function TagihanJuyar({ transactions, piutangs, members, settings, savePiutang, bayarPiutang, showToast, setModal, logAction }) {
   const now = new Date()
   const defaultEnd = new Date(now.getFullYear(), now.getMonth(), 25)
@@ -1690,6 +1701,110 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
     setBayarAmount('')
   }
 
+  // =====================================================================
+  // TANDAI PERIODE SUDAH DIPOTONG GAJI
+  //
+  // INILAH yang selama ini hilang. Tagihan tidak pernah ditandai lunas,
+  // sehingga setiap nota kredit menumpuk selamanya: bulan ini masuk kolom
+  // "Tagihan Bulan Ini", bulan depan otomatis pindah ke "Tunggakan",
+  // padahal uangnya sudah dipotong juru bayar.
+  //
+  // Fungsi ini menutup satu periode: seluruh tagihan + tunggakan yang tampil
+  // ditandai LUNAS, lalu dicatat SATU Kas Masuk sejumlah total potong
+  // (sesuai kenyataan: juru bayar menyetor sekali, bukan per nota).
+  // =====================================================================
+  const [sedangTutup, setSedangTutup] = useState(false)
+
+  async function tandaiSudahDipotong() {
+    if (sedangTutup) return
+    const semuaTagih = [...kreditPeriod, ...tunggakanList]
+    const totalManual = semuaAnggota.reduce(
+      (a, m) => a + Math.max(0, tunggakanEfektif(m) - m.totalTunggakan), 0)
+
+    if (semuaTagih.length === 0 && totalManual === 0) {
+      showToast('Tidak ada tagihan pada periode ini', 'error'); return
+    }
+
+    const pesan =
+      'Tandai periode ' + startDate + ' s/d ' + endDate + ' SUDAH DIPOTONG GAJI?\n\n' +
+      semuaAnggota.length + ' anggota\n' +
+      'Tagihan bulan ini : ' + formatRp(totalTagihanAll) + '\n' +
+      'Tunggakan         : ' + formatRp(totalTunggakanAll) + '\n' +
+      'TOTAL             : ' + formatRp(grandTotal) + '\n\n' +
+      'Semua tagihan di atas ditandai LUNAS dan dicatat sebagai Kas Masuk.\n' +
+      'Bulan depan tidak akan muncul lagi sebagai tunggakan.\n\n' +
+      'Lakukan SETELAH uang dari juru bayar benar-benar diterima.'
+    if (!confirm(pesan)) return
+
+    setSedangTutup(true)
+    let lunas = 0, gagal = 0, totalRp = 0
+    try {
+      const { setOne } = await import('./db')
+
+      for (const rec of semuaTagih) {
+        const sisa = Number(rec.sisa) || 0
+        if (sisa <= 0) continue
+        try {
+          if (rec.id && rec.total != null && rec.totalBayar != null) {
+            // sudah berupa catatan piutang -> tandai lunas
+            await setOne('piutangs', rec.id, {
+              ...rec, totalBayar: (rec.totalBayar || 0) + sisa, sisa: 0, status: 'LUNAS',
+              payments: [...(rec.payments || []), { date: today(), amount: sisa, ket: 'Potong gaji ' + startDate + ' s/d ' + endDate }],
+            })
+          } else {
+            // nota kredit lama tanpa catatan piutang -> buat langsung dalam keadaan lunas
+            const baru = {
+              id: genId(), noNota: rec.noNota || ('TX-' + (rec.id || '')), date: rec.date || today(),
+              memberId: rec.memberId || null, customerName: rec.customerName || 'Umum',
+              total: rec.total || sisa, dp: 0, totalBayar: rec.total || sisa, sisa: 0, status: 'LUNAS',
+              payments: [{ date: today(), amount: sisa, ket: 'Potong gaji ' + startDate + ' s/d ' + endDate }],
+              fromTxId: rec.id || null,
+            }
+            await setOne('piutangs', baru.id, baru)
+          }
+          totalRp += sisa
+          lunas++
+        } catch (err) { gagal++; console.error('Tandai lunas gagal:', rec.noNota, err) }
+      }
+
+      // Penyesuaian manual dinolkan supaya tidak terbawa lagi bulan depan
+      if (Object.keys(adjust).length > 0) {
+        const next = {}
+        for (const mid of Object.keys(adjust)) next[mid] = 0
+        simpanAdjust(next)
+        totalRp += totalManual
+      }
+
+      // SATU Kas Masuk untuk seluruh setoran juru bayar
+      if (totalRp > 0) {
+        const ref = 'JUYAR-' + startDate + '_' + endDate
+        const kas = { id: genId(), date: today(), type: 'masuk', amount: totalRp,
+          category: 'Potong Gaji (Juyar)',
+          description: 'Setoran potong gaji periode ' + startDate + ' s/d ' + endDate + ' - ' + semuaAnggota.length + ' anggota',
+          ref }
+        await setOne('kas', kas.id, kas)
+
+        const jurnal = { id: genId(), date: today(),
+          description: 'Setoran potong gaji ' + startDate + ' s/d ' + endDate,
+          entries: [
+            { account: 'Kas/Bank', type: 'debit', amount: totalRp },
+            { account: 'Piutang Anggota', type: 'kredit', amount: totalRp },
+          ], ref }
+        await setOne('jurnal', jurnal.id, jurnal)
+      }
+
+      if (logAction) await logAction('Tagihan Juyar', 'tutup-periode',
+        'Periode ' + startDate + ' s/d ' + endDate + ' ditandai sudah dipotong: ' +
+        lunas + ' tagihan lunas, total ' + formatRp(totalRp) + (gagal ? ', ' + gagal + ' gagal' : ''))
+
+      showToast('Periode ditandai lunas - ' + lunas + ' tagihan, ' + formatRp(totalRp) + ' masuk kas' + (gagal ? ' (' + gagal + ' gagal)' : ''))
+    } catch (err) {
+      console.error('Tutup periode error:', err)
+      showToast('Gagal menutup periode: ' + (err.message || 'cek koneksi'), 'error')
+    }
+    setSedangTutup(false)
+  }
+
   const kompiList = [...new Set(members.map(m => m.kompi || 'LAINNYA'))].filter(Boolean).sort()
 
   // ============================================
@@ -1727,8 +1842,19 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   const allUnpaid = [...activePiutangs, ...orphanKredit]
 
   // 4. Pisah tagihan bulan ini vs tunggakan
-  const kreditPeriod = allUnpaid.filter(k => k.date >= startDate && k.date <= endDate)
-  const tunggakanList = allUnpaid.filter(k => k.date < startDate)
+  // Pengaman tanggal: kalau kolom tanggal dikosongkan, dulu SELURUH tagihan
+  // diam-diam jadi Rp 0 tanpa penjelasan apa pun.
+  const tglMulai = startDate || '0000-01-01'
+  const tglAkhir = endDate || '9999-12-31'
+
+  const kreditPeriod = allUnpaid.filter(k => k.date >= tglMulai && k.date <= tglAkhir)
+  const tunggakanList = allUnpaid.filter(k => k.date < tglMulai)
+
+  // Nota SESUDAH tanggal "Sampai" — dulu hilang dari kedua kolom tanpa jejak.
+  // Inilah penyebab "Tagihan Bulan Ini Rp 0 padahal ada belanja": belanjanya
+  // terjadi setelah tanggal akhir periode yang sedang dipilih.
+  const diLuarPeriode = allUnpaid.filter(k => k.date > tglAkhir)
+  const nilaiDiLuar = diLuarPeriode.reduce((a, k) => a + (k.sisa || 0), 0)
 
   // 5. Group per kompi → per anggota
   const kompiData = {}
@@ -1823,13 +1949,52 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   return (
     <div>
       <div style={S.pageHead}><h2 style={S.title}>Tagihan Juyar (Potong Gaji)</h2>
-        <button style={{ ...S.primaryBtn, background: '#2e7d32' }} onClick={cetakTagihan}>Cetak {filterKompi === 'all' ? 'Semua' : filterKompi}</button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button style={{ ...S.primaryBtn, background: '#2e7d32' }} onClick={cetakTagihan}>Cetak {filterKompi === 'all' ? 'Semua' : filterKompi}</button>
+          <button style={{ ...S.primaryBtn, background: '#6a1b9a', opacity: sedangTutup ? 0.6 : 1 }}
+            disabled={sedangTutup} onClick={tandaiSudahDipotong}
+            title="Tandai seluruh tagihan periode ini sudah dipotong gaji dan uangnya diterima">
+            {sedangTutup ? 'Memproses...' : 'Tandai Sudah Dipotong'}
+          </button>
+        </div>
+      </div>
+
+      {/* Penjelasan alur — supaya tidak ada lagi tagihan yang menumpuk selamanya */}
+      <div style={{ background: '#ede7f6', border: '1px solid #b39ddb', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 12, lineHeight: 1.7, color: '#4527a0' }}>
+        <b>Alur setiap bulan:</b> cetak daftar &rarr; serahkan ke juru bayar &rarr; setelah uang diterima,
+        klik <b>Tandai Sudah Dipotong</b>. Tanpa langkah terakhir itu, tagihan bulan ini akan
+        muncul lagi sebagai <b>tunggakan</b> bulan depan, terus menumpuk walau sebenarnya sudah dibayar.
       </div>
       <div style={{ ...S.card, marginBottom: 16 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, alignItems: 'end' }}>
           <label style={S.formLabel}>Dari (tgl 26)<input style={S.input} type="date" value={startDate} onChange={e => setStartDate(e.target.value)} /></label>
           <label style={S.formLabel}>Sampai (tgl 25)<input style={S.input} type="date" value={endDate} onChange={e => setEndDate(e.target.value)} /></label>
           <label style={S.formLabel}>Filter Kompi<select style={S.input} value={filterKompi} onChange={e => setFilterKompi(e.target.value)}><option value="all">Semua Kompi</option>{kompiList.map(k => <option key={k} value={k}>{k}</option>)}</select></label>
+        </div>
+
+        {/* Pemilih periode otomatis — mencegah salah isi tanggal, penyebab
+            "Tagihan Bulan Ini Rp 0 padahal ada belanja". */}
+        <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 600 }}>Pilih cepat:</span>
+          {[
+            { label: '\u25c0 Periode Sebelumnya', geser: -1 },
+            { label: 'Periode Berjalan', geser: 0 },
+            { label: 'Periode Berikutnya \u25b6', geser: 1 },
+          ].map(b => {
+            const pd = periode26(new Date(), b.geser)
+            const aktif = startDate === pd.mulai && endDate === pd.akhir
+            return (
+              <button key={b.label}
+                style={{ ...S.filterBtn, ...(aktif ? S.filterActive : {}), padding: '6px 12px' }}
+                title={pd.mulai + ' s/d ' + pd.akhir}
+                onClick={() => { setStartDate(pd.mulai); setEndDate(pd.akhir) }}>
+                {b.label}
+              </button>
+            )
+          })}
+          <span style={{ fontSize: 11, color: '#9e9e9e' }}>
+            Periode berjalan: {periode26(new Date(), 0).mulai} s/d {periode26(new Date(), 0).akhir}
+          </span>
         </div>
       </div>
       {/* Tambah anggota manual — pencarian langsung ke seluruh daftar anggota */}
@@ -1855,10 +2020,35 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
       </div>
 
       <div style={S.grid3}>
-        <div style={S.statCard}><div style={S.statLabel}>Tagihan Bulan Ini</div><div style={{ ...S.statVal, color: '#1565c0' }}>{formatRp(totalTagihanAll)}</div></div>
-        <div style={S.statCard}><div style={S.statLabel}>Tunggakan Bulan Lalu</div><div style={{ ...S.statVal, color: '#c62828' }}>{formatRp(totalTunggakanAll)}</div>{jumlahDisesuaikan > 0 && <div style={{ fontSize: 11, color: '#e65100' }}>{jumlahDisesuaikan} disesuaikan manual</div>}</div>
+        <div style={S.statCard}><div style={S.statLabel}>Tagihan Periode Ini ({startDate ? startDate.slice(8,10)+'/'+startDate.slice(5,7) : '?'} &ndash; {endDate ? endDate.slice(8,10)+'/'+endDate.slice(5,7) : '?'})</div><div style={{ ...S.statVal, color: '#1565c0' }}>{formatRp(totalTagihanAll)}</div></div>
+        <div style={S.statCard}><div style={S.statLabel}>Tunggakan (sebelum {startDate ? startDate.slice(8,10)+'/'+startDate.slice(5,7) : '?'})</div><div style={{ ...S.statVal, color: '#c62828' }}>{formatRp(totalTunggakanAll)}</div>{jumlahDisesuaikan > 0 && <div style={{ fontSize: 11, color: '#e65100' }}>{jumlahDisesuaikan} disesuaikan manual</div>}</div>
         <div style={S.statCard}><div style={S.statLabel}>Grand Total Potong</div><div style={{ ...S.statVal, color: '#2e7d32' }}>{formatRp(grandTotal)}</div><div style={{ fontSize: 11, color: '#999' }}>{semuaAnggota.length} anggota</div></div>
       </div>
+      {(() => {
+        // Rentang tanggal tidak wajar — penyebab paling sering "Tagihan Rp 0".
+        if (!startDate || !endDate) return (
+          <div style={{ background: '#ffebee', border: '1px solid #ef9a9a', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12.5, color: '#c62828' }}>
+            <b>Tanggal periode belum lengkap.</b> Isi kolom Dari dan Sampai, atau tekan tombol <b>Periode Berjalan</b> di atas.
+          </div>
+        )
+        const hari = Math.round((new Date(endDate) - new Date(startDate)) / 86400000) + 1
+        if (hari < 20) return (
+          <div style={{ background: '#ffebee', border: '1px solid #ef9a9a', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12.5, lineHeight: 1.7, color: '#c62828' }}>
+            <b>Rentang tanggal cuma {hari} hari</b> ({startDate} s/d {endDate}), padahal satu periode potong gaji seharusnya sekitar 31 hari.
+            Belanja di luar rentang sesempit ini tidak masuk kolom Tagihan — itulah sebabnya angkanya Rp 0.
+            Tekan tombol <b>Periode Berjalan</b> di atas untuk membetulkannya.
+          </div>
+        )
+        return null
+      })()}
+      {diLuarPeriode.length > 0 && (
+        <div style={{ background: '#e3f2fd', border: '1px solid #90caf9', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12.5, lineHeight: 1.7, color: '#0d47a1' }}>
+          <b>{diLuarPeriode.length} nota kredit senilai {formatRp(nilaiDiLuar)} berada DI LUAR periode ini</b> —
+          tanggalnya setelah {endDate}, jadi belum masuk hitungan Tagihan maupun Tunggakan.
+          {totalTagihanAll === 0 && <> Inilah sebabnya kolom <b>Tagihan Bulan Ini</b> masih Rp 0.</>}
+          {' '}Ubah tanggal <b>Sampai</b> supaya nota-nota itu ikut terhitung.
+        </div>
+      )}
       {jumlahDisesuaikan > 0 && bannerTampil && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', background: '#fff8e1', border: '1px solid #ffe082', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 12 }}>
           <span style={{ color: '#e65100' }}>
