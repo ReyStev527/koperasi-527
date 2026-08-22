@@ -1272,6 +1272,80 @@ const td = { padding: '8px 12px', borderBottom: '1px solid #e5e7eb' }
 // 8. TAGIHAN JUYAR (Potong Gaji) per Kompi
 // + TUNGGAKAN ketika tidak bisa dipotong
 // =============================================
+// =============================================
+// PEMILIH ANGGOTA DENGAN PENCARIAN
+// Daftar anggota koperasi ratusan orang — memilih lewat dropdown biasa
+// berarti menggulir satu per satu. Di sini cukup ketik sebagian nama,
+// NRP, kompi, atau no anggota; hasilnya langsung tersaring.
+// =============================================
+function PilihAnggota({ members, sudahAda, kompiAwal, onPilih, onTutup }) {
+  const [q, setQ] = useState('')
+  const [kompiFilter, setKompiFilter] = useState(kompiAwal || '')
+
+  const kompiOpsi = [...new Set(members.map(m => (m.kompi || '').trim()).filter(Boolean))].sort()
+
+  const kata = q.trim().toLowerCase()
+  const semua = members.filter(m => !sudahAda.has(m.id))
+  const terfilterKompi = kompiFilter
+    ? semua.filter(m => (m.kompi || 'NON-ANGGOTA') === kompiFilter)
+    : semua
+  const hasil = (kata
+    ? terfilterKompi.filter(m =>
+        String(m.name || '').toLowerCase().includes(kata) ||
+        String(m.nrp || '').toLowerCase().includes(kata) ||
+        String(m.no || '').toLowerCase().includes(kata) ||
+        String(m.pangkat || '').toLowerCase().includes(kata) ||
+        String(m.kompi || '').toLowerCase().includes(kata))
+    : terfilterKompi
+  ).sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
+
+  const tampil = hasil.slice(0, 30)
+
+  return (
+    <div style={{ border: '1px solid #cfd8dc', borderRadius: 8, padding: 12, background: '#fafcfd' }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+        <input autoFocus style={{ ...S.input, flex: '1 1 260px', fontSize: 13, padding: '7px 10px' }}
+          placeholder="Ketik nama / NRP / no anggota..."
+          value={q} onChange={e => setQ(e.target.value)} />
+        <select style={{ ...S.input, width: 165, fontSize: 12, padding: '7px 8px' }}
+          value={kompiFilter} onChange={e => setKompiFilter(e.target.value)}>
+          <option value="">Semua kompi</option>
+          {kompiOpsi.map(k => <option key={k} value={k}>{k}</option>)}
+          <option value="NON-ANGGOTA">(tanpa kompi)</option>
+        </select>
+        {onTutup && <button style={{ ...S.filterBtn, padding: '7px 12px', fontSize: 12 }} onClick={onTutup}>Tutup</button>}
+      </div>
+
+      <div style={{ fontSize: 11, color: '#607d8b', marginBottom: 6 }}>
+        Ketemu <b>{hasil.length}</b> anggota{kata ? ' untuk "' + q + '"' : ''} — dari total {members.length} anggota terdaftar
+        {hasil.length > 30 ? '. Menampilkan 30 teratas, ketik lebih spesifik untuk mempersempit.' : ''}
+      </div>
+
+      <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid #e0e0e0', borderRadius: 6, background: '#fff' }}>
+        {tampil.length === 0 && (
+          <div style={{ padding: 14, fontSize: 13, color: '#78909c', textAlign: 'center' }}>
+            {semua.length === 0 ? 'Semua anggota sudah ada di daftar tagihan.' : 'Tidak ada anggota yang cocok. Coba kata kunci lain.'}
+          </div>
+        )}
+        {tampil.map(m => (
+          <div key={m.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '7px 10px', borderBottom: '1px solid #f0f0f0' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>
+                {(m.pangkat ? m.pangkat + ' ' : '') + (m.name || '(tanpa nama)')}
+              </div>
+              <div style={{ fontSize: 11, color: '#78909c', fontFamily: 'monospace' }}>
+                {(m.kompi || 'tanpa kompi')} · NRP {m.nrp || '-'}{m.no ? ' · No ' + m.no : ''}
+              </div>
+            </div>
+            <button style={{ ...S.primaryBtn, padding: '5px 12px', fontSize: 12 }}
+              onClick={() => onPilih(m.id)}>Tambah</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function TagihanJuyar({ transactions, piutangs, members, settings, savePiutang, bayarPiutang, showToast, setModal, logAction }) {
   const now = new Date()
   const defaultEnd = new Date(now.getFullYear(), now.getMonth(), 25)
@@ -1326,9 +1400,7 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   const manualKey = 'juyar_manual_' + startDate + '_' + endDate
   const [manualMids, setManualMids] = useState([])
   const [tambahKompi, setTambahKompi] = useState(null) // kompi yang sedang membuka form tambah
-  const [pilihMid, setPilihMid] = useState('')
-  const [gKompi, setGKompi] = useState('')   // pemilih global (untuk kompi yang belum punya baris)
-  const [gMid, setGMid] = useState('')
+  // (pemilih dropdown lama dihapus — diganti komponen PilihAnggota yang bisa dicari)
 
   useEffect(() => {
     let alive = true
@@ -1360,7 +1432,6 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
       if (logAction) logAction('Tunggakan', 'tambah-anggota',
         'Tambah manual: ' + (nm?.name || mid) + ' [' + (nm?.kompi || '-') + '] periode ' + startDate + ' s/d ' + endDate)
     } catch {}
-    setPilihMid('')
     setTambahKompi(null)
     showToast('Anggota ditambahkan — klik angka Tunggakan untuk mengisi nominal')
   }
@@ -1578,6 +1649,9 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
   })
 
   const sortedKompi = Object.keys(kompiData).sort()
+  // Semua anggota yang SUDAH tampil di daftar tagihan (dari kompi mana pun)
+  const midTampil = new Set()
+  for (const k of sortedKompi) for (const mid of Object.keys(kompiData[k])) midTampil.add(mid)
   // Total-total memakai tunggakan EFEKTIF (sudah termasuk penyesuaian manual)
   const semuaAnggota = Object.values(kompiData).flatMap(m => Object.values(m))
   const totalTagihanAll = semuaAnggota.reduce((a, m) => a + m.totalTagihan, 0)
@@ -1628,32 +1702,25 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
           <label style={S.formLabel}>Filter Kompi<select style={S.input} value={filterKompi} onChange={e => setFilterKompi(e.target.value)}><option value="all">Semua Kompi</option>{kompiList.map(k => <option key={k} value={k}>{k}</option>)}</select></label>
         </div>
       </div>
-      {/* Tambah anggota manual — berlaku juga untuk kompi yang belum punya baris sama sekali */}
+      {/* Tambah anggota manual — pencarian langsung ke seluruh daftar anggota */}
       <div style={{ ...S.card, marginBottom: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Tambah Anggota Manual</div>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Tambah Anggota Manual</div>
         <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>
-          Untuk anggota yang belum punya nota kredit tapi tetap harus dipotong. Setelah ditambahkan,
-          klik angka di kolom <b>Tunggakan</b> pada barisnya untuk mengisi nominal.
+          Untuk anggota yang belum punya nota kredit tapi tetap harus dipotong. Ketik namanya untuk mencari —
+          seluruh <b>{members.length} anggota</b> bisa dicari dari sini. Setelah ditambahkan, klik angka di kolom
+          <b> Tunggakan</b> pada barisnya untuk mengisi nominal.
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <select style={{ ...S.input, width: 180, fontSize: 12, padding: '6px 8px' }} value={gKompi}
-            onChange={e => { setGKompi(e.target.value); setGMid('') }}>
-            <option value="">— pilih kompi —</option>
-            {kompiList.map(k => <option key={k} value={k}>{k}</option>)}
-          </select>
-          <select style={{ ...S.input, width: 300, fontSize: 12, padding: '6px 8px' }} value={gMid}
-            onChange={e => setGMid(e.target.value)} disabled={!gKompi}>
-            <option value="">{gKompi ? '— pilih anggota —' : 'pilih kompi dulu'}</option>
-            {members.filter(mm => (mm.kompi || 'NON-ANGGOTA') === gKompi)
-              .filter(mm => !manualMids.includes(mm.id))
-              .sort((a,b) => (a.name||'').localeCompare(b.name||''))
-              .map(mm => <option key={mm.id} value={mm.id}>{(mm.pangkat ? mm.pangkat + ' ' : '') + (mm.name||'')}{mm.nrp ? ' — ' + mm.nrp : ''}</option>)}
-          </select>
-          <button style={{ ...S.primaryBtn, padding: '7px 16px', fontSize: 12 }}
-            onClick={() => { tambahAnggotaManual(gMid); setGMid('') }}>Tambah ke Daftar</button>
-          {manualMids.length > 0 && (
-            <span style={{ fontSize: 12, color: '#1565c0' }}>{manualMids.length} anggota ditambahkan manual</span>
-          )}
+        <PilihAnggota
+          members={members}
+          sudahAda={new Set([...manualMids, ...midTampil])}
+          kompiAwal=""
+          onPilih={(mid) => tambahAnggotaManual(mid)}
+          onTutup={null}
+        />
+        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 12, marginTop: 10, color: '#546e7a' }}>
+          <span>Sudah di daftar tagihan: <b style={{ color: '#1565c0' }}>{midTampil.size}</b> dari {members.length} anggota</span>
+          <span>Belum masuk: <b>{Math.max(0, members.length - midTampil.size)}</b> anggota (tidak punya tagihan/tunggakan)</span>
+          {manualMids.length > 0 && <span>Ditambahkan manual: <b style={{ color: '#1565c0' }}>{manualMids.length}</b></span>}
         </div>
       </div>
 
@@ -1674,24 +1741,22 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
           <div key={kompi} style={{ ...S.card, marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
               <h3 style={{ fontSize: 16, fontWeight: 700, color: '#1565c0' }}>{kompi}</h3>
-              {tambahKompi === kompi ? (
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <select style={{ ...S.input, width: 250, fontSize: 12, padding: '5px 8px' }} value={pilihMid} onChange={e => setPilihMid(e.target.value)}>
-                    <option value="">— pilih anggota {kompi} —</option>
-                    {members
-                      .filter(mm => (mm.kompi || 'NON-ANGGOTA') === kompi)
-                      .filter(mm => !kompiData[kompi][mm.id])
-                      .sort((a,b) => (a.name||'').localeCompare(b.name||''))
-                      .map(mm => <option key={mm.id} value={mm.id}>{(mm.pangkat ? mm.pangkat + ' ' : '') + (mm.name||'')} {mm.nrp ? '— ' + mm.nrp : ''}</option>)}
-                  </select>
-                  <button style={{ ...S.primaryBtn, padding: '6px 12px', fontSize: 12 }} onClick={() => tambahAnggotaManual(pilihMid)}>Tambah</button>
-                  <button style={{ ...S.filterBtn, padding: '6px 12px', fontSize: 12 }} onClick={() => { setTambahKompi(null); setPilihMid('') }}>Batal</button>
-                </div>
-              ) : (
-                <button style={{ ...S.filterBtn, padding: '6px 14px', fontSize: 12 }}
-                  onClick={() => { setTambahKompi(kompi); setPilihMid('') }}>+ Tambah Anggota</button>
-              )}
+              <button style={{ ...S.filterBtn, padding: '6px 14px', fontSize: 12 }}
+                onClick={() => setTambahKompi(tambahKompi === kompi ? null : kompi)}>
+                {tambahKompi === kompi ? 'Tutup pencarian' : '+ Tambah Anggota'}
+              </button>
             </div>
+            {tambahKompi === kompi && (
+              <div style={{ marginBottom: 12 }}>
+                <PilihAnggota
+                  members={members}
+                  sudahAda={new Set([...manualMids, ...Object.keys(kompiData[kompi])])}
+                  kompiAwal={kompi}
+                  onPilih={(mid) => tambahAnggotaManual(mid)}
+                  onTutup={() => setTambahKompi(null)}
+                />
+              </div>
+            )}
             <table style={S.table}>
               <thead><tr>{['No', 'Pangkat', 'Nama', 'NRP', 'Tagihan Bln Ini', 'Tunggakan', 'Total Potong', 'Bayar'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
               <tbody>{anggotaList.map((m, i) => {
