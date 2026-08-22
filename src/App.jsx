@@ -61,6 +61,7 @@ export default function App() {
 
   // Data state
   const [users, setUsers] = useState([])
+  const [usersLoaded, setUsersLoaded] = useState(false) // true = daftar user SUDAH terbaca dari server
   const [members, setMembers] = useState([])
   const [savings, setSavings] = useState([])
   const [loans, setLoans] = useState([])
@@ -113,7 +114,7 @@ export default function App() {
         }
 
         // Realtime listeners — data otomatis sinkron antar device
-        unsubs.push(listenCollection('users', setUsers))
+        unsubs.push(listenCollection('users', (arr) => { setUsers(arr); setUsersLoaded(true) }))
         unsubs.push(listenCollection('members', setMembers))
         unsubs.push(listenCollection('savings', setSavings))
         unsubs.push(listenCollection('loans', setLoans))
@@ -160,10 +161,17 @@ export default function App() {
   ]
 
   function handleLogin(username, password) {
-    // Daftar akun diambil dari database.
-    // defaultUsers HANYA dipakai kalau database benar-benar kosong (instalasi baru),
-    // dan TIDAK PERNAH ditulis balik ke database — inilah perbaikan bug
-    // "akun lama hidup lagi setelah dihapus".
+    // BUG BESAR YANG DIPERBAIKI DI SINI:
+    // dulu, kalau daftar user BELUM termuat (internet lambat, atau kuota
+    // Firebase habis sehingga pembacaan GAGAL), `users` masih kosong dan
+    // aplikasi langsung memakai akun bawaan — sehingga admin/admin123
+    // tetap bisa masuk walau password sudah diganti, bahkan menimpa balik
+    // password barunya. Sekarang akun bawaan HANYA dipakai kalau server
+    // sudah menjawab dan datanya memang benar-benar kosong.
+    if (!usersLoaded && users.length === 0) {
+      showToast('Data pengguna belum termuat — tunggu 2 detik lalu coba lagi', 'error')
+      return false
+    }
     const allUsers = users.length > 0 ? users : defaultUsers
     let found = allUsers.find(u => u.username === username && u.password === password)
 
@@ -1307,7 +1315,7 @@ function SettingsPage({ settings, saveSettings, showToast, users, saveUser, dele
             <label style={S.formLabel}>Maks. Pinjaman (Rp)<input style={S.input} type="number" value={d.maxPinjaman} onChange={e => set('maxPinjaman', Number(e.target.value))} /></label>
             <button style={{ ...S.primaryBtn, width: '100%', marginTop: 8 }} onClick={async () => { const { kasPin, ...rest } = d; await saveSettings({ ...rest, kasPin: settings?.kasPin || '527' }); showToast('Pengaturan disimpan') }}>Simpan Pengaturan</button>
             <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #eee' }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#374151' }}>\ud83d\udd12 PIN Akses Kas</div>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#374151' }}>PIN Akses Kas</div>
               <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>PIN diminta saat akan menambah/menghapus data Kas Masuk & Keluar</p>
               <UbahPinKas settings={settings} saveSettings={saveSettings} showToast={showToast} currentSettings={d} setD={setD} />
             </div>
@@ -1348,7 +1356,7 @@ function SettingsPage({ settings, saveSettings, showToast, users, saveUser, dele
                 <td style={S.td}>{u.name}</td>
                 <td style={S.td}><span style={{ ...S.badge, background: u.role === 'admin' ? 'var(--r)20' : 'var(--b)20', color: u.role === 'admin' ? 'var(--r)' : 'var(--b)', textTransform: 'capitalize' }}>{u.role}</span></td>
                 <td style={{ ...S.td, whiteSpace: 'nowrap' }}>
-                  {isAdmin && <button style={{ ...S.smallBtn, color: 'var(--b)', fontSize: 11 }} onClick={() => setEditPwUser(editPwUser?.id === u.id ? null : u)} title="Ubah username / nama / role / password">\u270f\ufe0f</button>}
+                  {isAdmin && <button style={{ ...S.smallBtn, color: 'var(--b)', fontSize: 11 }} onClick={() => setEditPwUser(editPwUser?.id === u.id ? null : u)} title="Ubah username / nama / role / password">Ubah</button>}
                   {isAdmin && u.id !== user.id && <button style={{ ...S.smallBtn, color: 'var(--r)' }} title="Hapus user" onClick={async () => {
                     // Proteksi: jangan sampai tidak ada admin tersisa
                     if (u.role === 'admin' && users.filter(x => x.role === 'admin').length <= 1) {
@@ -1552,7 +1560,7 @@ function UbahPasswordUser({ targetUser, saveUser, showToast, onClose }) {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <div style={{ fontSize: 13, fontWeight: 700 }}>\ud83d\udd11 Ubah Password: <span style={{ color: 'var(--b)' }}>{targetUser.username}</span></div>
+        <div style={{ fontSize: 13, fontWeight: 700 }}>Ubah Password: <span style={{ color: 'var(--b)' }}>{targetUser.username}</span></div>
         <button style={S.smallBtn} onClick={onClose}>{I.x}</button>
       </div>
       {error && <div style={{ padding: '6px 10px', background: '#ffebee', color: '#c62828', borderRadius: 6, marginBottom: 8, fontSize: 12 }}>{error}</div>}

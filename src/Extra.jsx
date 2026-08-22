@@ -1320,6 +1320,52 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
     return () => { alive = false }
   }, [adjustKey])
 
+  // --- ANGGOTA MANUAL: dipaksa muncul di daftar walau tidak punya piutang ---
+  // Contoh pemakaian: anggota yang tagihannya dicatat di luar sistem, atau
+  // titipan potongan yang belum berupa nota kredit.
+  const manualKey = 'juyar_manual_' + startDate + '_' + endDate
+  const [manualMids, setManualMids] = useState([])
+  const [tambahKompi, setTambahKompi] = useState(null) // kompi yang sedang membuka form tambah
+  const [pilihMid, setPilihMid] = useState('')
+  const [gKompi, setGKompi] = useState('')   // pemilih global (untuk kompi yang belum punya baris)
+  const [gMid, setGMid] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const { getOne } = await import('./db')
+        const r = await getOne('juyarAdjust', manualKey)
+        if (!alive) return
+        setManualMids(r && r.json ? (JSON.parse(r.json) || []) : [])
+      } catch (err) { console.error('Muat anggota manual gagal:', err); if (alive) setManualMids([]) }
+    })()
+    setTambahKompi(null)
+    return () => { alive = false }
+  }, [manualKey])
+
+  function simpanManual(next) {
+    setManualMids(next)
+    import('./db')
+      .then(({ setOne }) => setOne('juyarAdjust', manualKey, { id: manualKey, json: JSON.stringify(next) }))
+      .catch(err => { console.error(err); showToast('Daftar anggota manual gagal tersimpan ke server', 'error') })
+  }
+
+  function tambahAnggotaManual(mid) {
+    if (!mid) { showToast('Pilih anggota dulu', 'error'); return }
+    if (manualMids.includes(mid)) { showToast('Anggota itu sudah ada di daftar', 'error'); return }
+    simpanManual([...manualMids, mid])
+    setPilihMid('')
+    setTambahKompi(null)
+    showToast('Anggota ditambahkan — klik angka Tunggakan untuk mengisi nominal')
+  }
+
+  function hapusAnggotaManual(mid) {
+    if (!confirm('Keluarkan anggota ini dari daftar tagihan?')) return
+    simpanManual(manualMids.filter(x => x !== mid))
+    const next = { ...adjust }; delete next[mid]; simpanAdjust(next)
+  }
+
   function simpanAdjust(next) {
     setAdjust(next)
     // json string utuh (bukan object) supaya penghapusan key ikut tersimpan (merge Firestore tidak menghapus key)
@@ -1351,10 +1397,14 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
     showToast('Semua penyesuaian tunggakan direset')
   }
   // Tunggakan efektif: pakai nilai manual bila ada, kalau tidak pakai hasil hitung.
-  // Nilai manual TIDAK BOLEH melebihi hitungan sistem — jadi kalau piutang sudah
-  // dibayar (dari menu mana pun), tunggakan otomatis ikut turun.
+  //
+  // BUG YANG DIPERBAIKI: dulu di sini ada Math.min(nilaiManual, hitunganSistem).
+  // Akibatnya untuk anggota yang tunggakan sistemnya Rp 0, berapa pun angka yang
+  // diketik user selalu dipaksa jadi Rp 0 — sehingga "Total Potong tidak berubah".
+  // Sekarang angka yang diketik user DIHORMATI apa adanya.
+  // Pengurangan otomatis saat pembayaran tetap jalan (lihat prosesBayarTunggakan).
   function tunggakanEfektif(m) {
-    return adjust[m.mid] != null ? Math.min(adjust[m.mid], m.totalTunggakan) : m.totalTunggakan
+    return adjust[m.mid] != null ? adjust[m.mid] : m.totalTunggakan
   }
 
   async function prosesBayarTunggakan(mid) {
@@ -1442,12 +1492,15 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
 
   // 2. Cari transaksi KREDIT yang TIDAK punya piutang (data lama)
   const piutangNotas = new Set(piutangs.map(p => p.noNota).filter(Boolean))
-  const piutangMemberDates = new Set(piutangs.map(p => (p.memberId||'') + '_' + (p.date||'')))
+  // Dulu dedup hanya pakai (anggota + tanggal) — kalau satu anggota punya DUA nota
+  // kredit di tanggal sama dan hanya satu yang punya catatan piutang, nota kedua
+  // ikut terbuang → tagihan kurang hitung. Sekarang nominalnya ikut dibandingkan.
+  const piutangMemberDates = new Set(piutangs.map(p => (p.memberId||'') + '_' + (p.date||'') + '_' + (p.total||0)))
   const orphanKredit = (transactions||[]).filter(t => {
     if (t.caraBayar !== 'KREDIT') return false
     if (t.returned) return false // nota yang sudah diretur penuh jangan ditagih
     if (t.noNota && piutangNotas.has(t.noNota)) return false // sudah ada piutang
-    if (piutangMemberDates.has((t.memberId||'') + '_' + (t.date||''))) return false
+    if (piutangMemberDates.has((t.memberId||'') + '_' + (t.date||'') + '_' + (t.total||0))) return false
     const sisa = (t.total||0) - (t.payment||0)
     return sisa > 0
   }).map(t => ({
@@ -1489,6 +1542,26 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
 
   kreditPeriod.forEach(k => addToKompi(k, false))
   tunggakanList.forEach(k => addToKompi(k, true))
+
+  // Anggota yang ditambahkan MANUAL: dipaksa muncul walau tidak punya piutang,
+  // dengan tagihan & tunggakan 0 (nominalnya diisi lewat kolom Tunggakan).
+  manualMids.forEach(mid => {
+    const member = members.find(m => m.id === mid)
+    if (!member) return
+    const kompi = member.kompi || 'NON-ANGGOTA'
+    if (filterKompi !== 'all' && kompi !== filterKompi) return
+    if (!kompiData[kompi]) kompiData[kompi] = {}
+    if (!kompiData[kompi][mid]) {
+      const sp = splitPangkat(member, member.name)
+      kompiData[kompi][mid] = {
+        member, mid, pangkat: sp.pangkat, nrp: member.nrp || '-',
+        name: sp.nama || member.name || '-', items: [], totalTagihan: 0,
+        totalTunggakan: 0, tunggakanItems: [], manual: true,
+      }
+    } else {
+      kompiData[kompi][mid].manual = true
+    }
+  })
 
   const sortedKompi = Object.keys(kompiData).sort()
   // Total-total memakai tunggakan EFEKTIF (sudah termasuk penyesuaian manual)
@@ -1541,6 +1614,35 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
           <label style={S.formLabel}>Filter Kompi<select style={S.input} value={filterKompi} onChange={e => setFilterKompi(e.target.value)}><option value="all">Semua Kompi</option>{kompiList.map(k => <option key={k} value={k}>{k}</option>)}</select></label>
         </div>
       </div>
+      {/* Tambah anggota manual — berlaku juga untuk kompi yang belum punya baris sama sekali */}
+      <div style={{ ...S.card, marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Tambah Anggota Manual</div>
+        <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>
+          Untuk anggota yang belum punya nota kredit tapi tetap harus dipotong. Setelah ditambahkan,
+          klik angka di kolom <b>Tunggakan</b> pada barisnya untuk mengisi nominal.
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select style={{ ...S.input, width: 180, fontSize: 12, padding: '6px 8px' }} value={gKompi}
+            onChange={e => { setGKompi(e.target.value); setGMid('') }}>
+            <option value="">— pilih kompi —</option>
+            {kompiList.map(k => <option key={k} value={k}>{k}</option>)}
+          </select>
+          <select style={{ ...S.input, width: 300, fontSize: 12, padding: '6px 8px' }} value={gMid}
+            onChange={e => setGMid(e.target.value)} disabled={!gKompi}>
+            <option value="">{gKompi ? '— pilih anggota —' : 'pilih kompi dulu'}</option>
+            {members.filter(mm => (mm.kompi || 'NON-ANGGOTA') === gKompi)
+              .filter(mm => !manualMids.includes(mm.id))
+              .sort((a,b) => (a.name||'').localeCompare(b.name||''))
+              .map(mm => <option key={mm.id} value={mm.id}>{(mm.pangkat ? mm.pangkat + ' ' : '') + (mm.name||'')}{mm.nrp ? ' — ' + mm.nrp : ''}</option>)}
+          </select>
+          <button style={{ ...S.primaryBtn, padding: '7px 16px', fontSize: 12 }}
+            onClick={() => { tambahAnggotaManual(gMid); setGMid('') }}>Tambah ke Daftar</button>
+          {manualMids.length > 0 && (
+            <span style={{ fontSize: 12, color: '#1565c0' }}>{manualMids.length} anggota ditambahkan manual</span>
+          )}
+        </div>
+      </div>
+
       <div style={S.grid3}>
         <div style={S.statCard}><div style={S.statLabel}>Tagihan Bulan Ini</div><div style={{ ...S.statVal, color: '#1565c0' }}>{formatRp(totalTagihanAll)}</div></div>
         <div style={S.statCard}><div style={S.statLabel}>Tunggakan Bulan Lalu</div><div style={{ ...S.statVal, color: '#c62828' }}>{formatRp(totalTunggakanAll)}</div>{jumlahDisesuaikan > 0 && <div style={{ fontSize: 11, color: '#e65100' }}>{jumlahDisesuaikan} disesuaikan manual</div>}</div>
@@ -1556,7 +1658,26 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
         const anggotaList = Object.values(kompiData[kompi]).sort((a,b) => (a.name||'').localeCompare(b.name||''))
         return (
           <div key={kompi} style={{ ...S.card, marginBottom: 16 }}>
-            <h3 style={{ fontSize: 16, fontWeight: 700, color: '#1565c0', marginBottom: 12 }}>{kompi}</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: '#1565c0' }}>{kompi}</h3>
+              {tambahKompi === kompi ? (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <select style={{ ...S.input, width: 250, fontSize: 12, padding: '5px 8px' }} value={pilihMid} onChange={e => setPilihMid(e.target.value)}>
+                    <option value="">— pilih anggota {kompi} —</option>
+                    {members
+                      .filter(mm => (mm.kompi || 'NON-ANGGOTA') === kompi)
+                      .filter(mm => !kompiData[kompi][mm.id])
+                      .sort((a,b) => (a.name||'').localeCompare(b.name||''))
+                      .map(mm => <option key={mm.id} value={mm.id}>{(mm.pangkat ? mm.pangkat + ' ' : '') + (mm.name||'')} {mm.nrp ? '— ' + mm.nrp : ''}</option>)}
+                  </select>
+                  <button style={{ ...S.primaryBtn, padding: '6px 12px', fontSize: 12 }} onClick={() => tambahAnggotaManual(pilihMid)}>Tambah</button>
+                  <button style={{ ...S.filterBtn, padding: '6px 12px', fontSize: 12 }} onClick={() => { setTambahKompi(null); setPilihMid('') }}>Batal</button>
+                </div>
+              ) : (
+                <button style={{ ...S.filterBtn, padding: '6px 14px', fontSize: 12 }}
+                  onClick={() => { setTambahKompi(kompi); setPilihMid('') }}>+ Tambah Anggota</button>
+              )}
+            </div>
             <table style={S.table}>
               <thead><tr>{['No', 'Pangkat', 'Nama', 'NRP', 'Tagihan Bln Ini', 'Tunggakan', 'Total Potong', 'Bayar'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
               <tbody>{anggotaList.map((m, i) => {
@@ -1568,7 +1689,16 @@ export function TagihanJuyar({ transactions, piutangs, members, settings, savePi
                 return (
                 <tr key={i} style={{ ...S.tr, background: isBayar ? '#fff3e0' : (isAdj ? '#fffdf5' : undefined) }}>
                   <td style={S.td}>{i+1}</td><td style={S.td}>{m.pangkat}</td>
-                  <td style={{ ...S.td, fontWeight: 600 }}>{m.name}</td>
+                  <td style={{ ...S.td, fontWeight: 600 }}>
+                    {m.name}
+                    {m.manual && (
+                      <>
+                        <span title="Ditambahkan manual" style={{ marginLeft: 6, fontSize: 10, padding: '1px 6px', borderRadius: 4, background: '#e3f2fd', color: '#1565c0', fontWeight: 700 }}>MANUAL</span>
+                        <button title="Keluarkan dari daftar" style={{ marginLeft: 6, border: 'none', background: 'transparent', color: '#c62828', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}
+                          onClick={() => hapusAnggotaManual(mid)}>&times;</button>
+                      </>
+                    )}
+                  </td>
                   <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 11 }}>{m.nrp}</td>
                   <td style={{ ...S.td, textAlign: 'right' }}>{formatRp(m.totalTagihan)}</td>
                   <td style={{ ...S.td, textAlign: 'right' }}>
